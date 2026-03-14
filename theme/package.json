@@ -1,0 +1,13 @@
+{
+  "name": "ecosystem-theme",
+  "version": "0.1.0",
+  "description": "Shared CSS theme variables for the app ecosystem",
+  "main": "ecosystem-theme.css",
+  "files": [
+    "ecosystem-theme.css",
+    "ecosystem-theme-light.css",
+    "ecosystem-theme-mm.css"
+  ],
+  "keywords": ["ecosystem", "theme", "css"],
+  "license": "UNLICENSED"
+}

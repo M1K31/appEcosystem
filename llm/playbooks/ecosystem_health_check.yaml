@@ -1,0 +1,44 @@
+name: Ecosystem Health Check
+description: >
+  Check the health of all ecosystem services, report their status,
+  and recommend actions for any unhealthy or degraded services.
+category: ecosystem
+variables: []
+
+steps:
+  - name: Registry Status
+    goal: >
+      Query the ecosystem registry at http://localhost:8500/services to get
+      all registered services and their current health status.
+      Report each service's name, port, status, and last check time.
+    use_knowledge: true
+    context_from: []
+    timeout: 30
+
+  - name: Individual Health Checks
+    goal: >
+      For each service returned by the registry, perform a direct health
+      check by hitting its health endpoint:
+      - AI_For_Survival: http://localhost:8000/health
+      - OpenEye: http://localhost:8200/api/ecosystem/health
+      - MagicMirror: http://localhost:8080/api/v1/health
+      - AsusGuard: http://localhost:8088/api/status
+
+      Record response time, HTTP status code, and any error details.
+    use_knowledge: true
+    context_from:
+      - Registry Status
+    timeout: 60
+
+  - name: Health Report
+    goal: >
+      Compile a summary report with:
+      - Overall ecosystem health (all healthy / degraded / critical)
+      - Per-service status table (name, port, status, response time)
+      - Any services that are down or degraded
+      - Recommended actions for unhealthy services (restart, check logs, etc.)
+    use_knowledge: true
+    context_from:
+      - Registry Status
+      - Individual Health Checks
+    timeout: 30

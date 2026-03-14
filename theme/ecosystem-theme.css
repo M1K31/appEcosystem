@@ -1,0 +1,93 @@
+/*
+ * Ecosystem Shared Theme - Dark Professional
+ * Extracted from OpenEye's unified theme system.
+ * CSS custom properties only - no base style overrides.
+ * Import this file in any project to inherit the ecosystem design tokens.
+ */
+
+:root {
+  /* 8pt Grid Spacing */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+  --spacing-2xl: 48px;
+
+  /* Touch Targets (WCAG 2.1 AA) */
+  --touch-target-min: 44px;
+
+  /* Border Radius */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+
+  /* Elevation System */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.24);
+  --shadow-md: 0 3px 6px rgba(0, 0, 0, 0.15), 0 2px 4px rgba(0, 0, 0, 0.12);
+  --shadow-lg: 0 10px 20px rgba(0, 0, 0, 0.15), 0 3px 6px rgba(0, 0, 0, 0.10);
+  --shadow-xl: 0 15px 25px rgba(0, 0, 0, 0.15), 0 5px 10px rgba(0, 0, 0, 0.05);
+
+  /* Animation */
+  --anim-fast: 0.15s;
+  --anim-normal: 0.25s;
+  --anim-slow: 0.35s;
+  --anim-ease: cubic-bezier(0.25, 0.8, 0.25, 1);
+
+  /* Background Colors */
+  --bg-main: #262626;
+  --bg-panel: #333333;
+  --bg-input: #2a2a2a;
+  --bg-hover: #404040;
+
+  /* Text Colors */
+  --text-primary: #ffffff;
+  --text-secondary: #cccccc;
+  --text-tertiary: #8E8E93;
+  --text-link: #007bff;
+
+  /* Border Colors */
+  --border-panel: #4d4d4d;
+  --border-input: #666666;
+
+  /* State Colors */
+  --state-active: #606060;
+  --color-success: #28a745;
+  --color-error: #dc3545;
+  --color-warning: #ffc107;
+
+  /* Theme Aliases */
+  --theme-primary: #007bff;
+  --theme-primary-dark: #0056b3;
+  --theme-secondary: #6c757d;
+  --theme-background: var(--bg-main);
+  --theme-text: var(--text-primary);
+  --theme-text-secondary: var(--text-secondary);
+  --theme-card-bg: var(--bg-panel);
+  --theme-border: var(--border-panel);
+  --theme-accent: #007bff;
+  --theme-success: var(--color-success);
+  --theme-error: var(--color-error);
+  --theme-warning: var(--color-warning);
+
+  /* Component Colors */
+  --accent-color: #007AFF;
+  --accent-color-alpha: rgba(0, 122, 255, 0.1);
+  --background-primary: #262626;
+  --background-secondary: #333333;
+  --card-background: #333333;
+  --input-background: #2a2a2a;
+  --border-color: #666666;
+  --border-hover: #777777;
+
+  /* Button Colors */
+  --button-primary-bg: #007AFF;
+  --button-primary-text: #FFFFFF;
+  --button-primary-hover-bg: #0051D5;
+  --button-secondary-bg: transparent;
+  --button-secondary-text: #007AFF;
+  --button-secondary-border: #007AFF;
+  --button-destructive-bg: #dc3545;
+  --button-destructive-text: #FFFFFF;
+}

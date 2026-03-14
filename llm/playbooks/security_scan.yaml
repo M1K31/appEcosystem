@@ -1,0 +1,58 @@
+name: Security Scan
+description: >
+  Cross-project security scan that checks OpenEye camera alerts,
+  AsusGuard network logs, and AI_For_Survival threat analysis to
+  produce a unified security posture report.
+category: security
+variables: []
+
+steps:
+  - name: Camera Security Status
+    goal: >
+      Query OpenEye at http://localhost:8200/api/alerts for recent
+      security alerts. Check for any active motion or person detection
+      events. Report the count, severity, and timestamps of recent alerts.
+    use_knowledge: true
+    context_from: []
+    timeout: 30
+
+  - name: Network Threat Analysis
+    goal: >
+      Query AsusGuard at http://localhost:8088/api/logs/recent for
+      recent network log entries. Look for:
+      - Blocked connections or firewall events
+      - Unusual traffic patterns
+      - New or unknown devices on the network
+      Report any anomalies with source IP, timestamp, and event type.
+    use_knowledge: true
+    context_from: []
+    timeout: 30
+
+  - name: AI Threat Correlation
+    goal: >
+      Send the findings from camera alerts and network logs to
+      AI_For_Survival at http://localhost:8000/api/chat for correlation
+      analysis. Ask it to:
+      - Identify any patterns across camera and network events
+      - Flag potential coordinated threats
+      - Suggest priority actions
+    use_knowledge: true
+    context_from:
+      - Camera Security Status
+      - Network Threat Analysis
+    timeout: 60
+
+  - name: Security Report
+    goal: >
+      Compile a unified security posture report with:
+      - Overall threat level (low / medium / high / critical)
+      - Physical security summary (from OpenEye)
+      - Network security summary (from AsusGuard)
+      - Correlated findings (from AI_For_Survival)
+      - Recommended actions ordered by priority
+    use_knowledge: true
+    context_from:
+      - Camera Security Status
+      - Network Threat Analysis
+      - AI Threat Correlation
+    timeout: 30

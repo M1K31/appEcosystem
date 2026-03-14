@@ -1,0 +1,66 @@
+name: Log Analysis Triage
+description: >
+  Collect and triage logs from all ecosystem services. Identifies errors,
+  warnings, and anomalies across the stack, then correlates findings.
+category: incident-response
+variables: []
+
+steps:
+  - name: Collect Service Logs
+    goal: >
+      Gather recent log data from each ecosystem service:
+      - AsusGuard: http://localhost:8088/api/logs/recent (network/router logs)
+      - OpenEye: http://localhost:8200/api/ecosystem/health (includes recent events)
+      - AI_For_Survival: http://localhost:8000/health (service health + metrics)
+
+      For each service, capture the last 100 log entries or status data.
+      Note any services that fail to respond.
+    use_knowledge: true
+    context_from: []
+    timeout: 60
+
+  - name: Error Extraction
+    goal: >
+      From the collected logs, extract:
+      - All ERROR and CRITICAL level entries
+      - All WARNING entries from the last hour
+      - Any HTTP 5xx responses
+      - Connection failures or timeouts between services
+      - Stack traces or exception messages
+
+      Group errors by service and severity.
+    use_knowledge: true
+    context_from:
+      - Collect Service Logs
+    timeout: 30
+
+  - name: Pattern Analysis
+    goal: >
+      Analyze the extracted errors and warnings for patterns:
+      - Recurring errors (same error appearing multiple times)
+      - Cascading failures (error in one service causing errors in others)
+      - Time-correlated events (multiple services failing around the same time)
+      - Resource exhaustion indicators (memory, disk, connections)
+
+      Report each pattern with affected services and timeline.
+    use_knowledge: true
+    context_from:
+      - Collect Service Logs
+      - Error Extraction
+    timeout: 30
+
+  - name: Triage Report
+    goal: >
+      Produce a prioritized triage report:
+      - P0 (Critical): Service down or data loss risk
+      - P1 (High): Degraded functionality affecting users
+      - P2 (Medium): Warnings that may escalate
+      - P3 (Low): Informational findings
+
+      For each finding, include: service, description, evidence, and
+      recommended remediation steps.
+    use_knowledge: true
+    context_from:
+      - Error Extraction
+      - Pattern Analysis
+    timeout: 30

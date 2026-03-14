@@ -1,0 +1,146 @@
+"""Tests for cross-language HMAC auth compatibility."""
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent / "auth" / "python"))
+
+from ecosystem_auth.tokens import (
+    generate_secure_token,
+    hash_token,
+    sign_payload,
+    verify_signature,
+    verify_token_hash,
+    create_ecosystem_token,
+    verify_ecosystem_token,
+)
+
+
+class TestTokenGeneration:
+    def test_generate_secure_token_length(self):
+        token = generate_secure_token(32)
+        assert len(token) == 64  # hex encoding doubles length
+
+    def test_generate_secure_token_uniqueness(self):
+        t1 = generate_secure_token()
+        t2 = generate_secure_token()
+        assert t1 != t2
+
+
+class TestTokenHashing:
+    def test_hash_token_deterministic(self):
+        token = "test-token-123"
+        h1 = hash_token(token)
+        h2 = hash_token(token)
+        assert h1 == h2
+
+    def test_verify_token_hash_valid(self):
+        token = "my-secret-token"
+        h = hash_token(token)
+        assert verify_token_hash(token, h)
+
+    def test_verify_token_hash_invalid(self):
+        assert not verify_token_hash("token", "wrong-hash")
+
+
+class TestPayloadSigning:
+    def test_sign_payload_deterministic(self):
+        payload = {"action": "test", "value": 42}
+        secret = "test-secret"
+        sig1 = sign_payload(payload, secret)
+        sig2 = sign_payload(payload, secret)
+        assert sig1 == sig2
+
+    def test_sign_payload_key_order_independent(self):
+        """Sorted keys means order shouldn't matter."""
+        secret = "test-secret"
+        sig1 = sign_payload({"b": 2, "a": 1}, secret)
+        sig2 = sign_payload({"a": 1, "b": 2}, secret)
+        assert sig1 == sig2
+
+    def test_verify_signature_valid(self):
+        payload = {"event": "security.alert", "source": "openeye"}
+        secret = "hmac-secret"
+        sig = sign_payload(payload, secret)
+        assert verify_signature(payload, sig, secret)
+
+    def test_verify_signature_tampered(self):
+        payload = {"event": "security.alert"}
+        secret = "hmac-secret"
+        sig = sign_payload(payload, secret)
+        payload["event"] = "security.tampered"
+        assert not verify_signature(payload, sig, secret)
+
+    def test_verify_signature_wrong_secret(self):
+        payload = {"data": "test"}
+        sig = sign_payload(payload, "secret1")
+        assert not verify_signature(payload, sig, "secret2")
+
+
+class TestEcosystemTokens:
+    def test_create_and_verify(self):
+        secret = "test-ecosystem-secret"
+        token_data = create_ecosystem_token(secret, "openeye")
+        assert verify_ecosystem_token(token_data, secret)
+
+    def test_expired_token(self):
+        secret = "test-secret"
+        token_data = create_ecosystem_token(secret, "openeye", ttl_seconds=-1)
+        assert not verify_ecosystem_token(token_data, secret)
+
+    def test_wrong_secret(self):
+        token_data = create_ecosystem_token("secret1", "openeye")
+        assert not verify_ecosystem_token(token_data, "secret2")
+
+
+class TestCrossLanguageCompatibility:
+    """Verify Python and JS produce identical HMAC signatures."""
+
+    JS_TOKEN_PATH = Path(__file__).parent.parent / "auth" / "js" / "src" / "tokens.js"
+
+    @pytest.fixture
+    def node_available(self):
+        try:
+            subprocess.run(["node", "--version"], capture_output=True, check=True)
+            return True
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            pytest.skip("Node.js not available")
+
+    def test_sign_payload_matches_js(self, node_available):
+        payload = {"action": "test", "number": 42, "nested": {"key": "value"}}
+        secret = "cross-language-test-secret"
+
+        py_sig = sign_payload(payload, secret)
+
+        js_code = f"""
+        const {{ signPayload }} = require('{self.JS_TOKEN_PATH}');
+        const payload = {json.dumps(payload)};
+        console.log(signPayload(payload, '{secret}'));
+        """
+        result = subprocess.run(
+            ["node", "-e", js_code], capture_output=True, text=True
+        )
+        js_sig = result.stdout.strip()
+
+        assert py_sig == js_sig, f"Python: {py_sig}, JS: {js_sig}"
+
+    def test_hash_token_matches_js(self, node_available):
+        token = "test-token-for-hashing"
+
+        py_hash = hash_token(token)
+
+        js_code = f"""
+        const {{ hashToken }} = require('{self.JS_TOKEN_PATH}');
+        console.log(hashToken('{token}'));
+        """
+        result = subprocess.run(
+            ["node", "-e", js_code], capture_output=True, text=True
+        )
+        js_hash = result.stdout.strip()
+
+        assert py_hash == js_hash

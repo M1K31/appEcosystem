@@ -1,0 +1,15 @@
+{
+  "name": "ecosystem-auth",
+  "version": "0.1.0",
+  "description": "Shared HMAC-SHA256 authentication for the app ecosystem (Node.js)",
+  "main": "src/tokens.js",
+  "exports": {
+    ".": "./src/tokens.js",
+    "./middleware": "./src/middleware.js"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "keywords": ["ecosystem", "auth", "hmac"],
+  "license": "UNLICENSED"
+}

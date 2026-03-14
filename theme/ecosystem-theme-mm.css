@@ -1,0 +1,45 @@
+/*
+ * Ecosystem Theme - MagicMirror Compatible Subset
+ * Dark-only, variables-only, no base style overrides.
+ * MagicMirror modules can use these variables for consistent styling.
+ *
+ * Usage in a MagicMirror module CSS:
+ *   @import url('/path/to/ecosystem-theme-mm.css');
+ *   .my-module { background: var(--eco-bg-panel); }
+ */
+
+:root {
+  /* Prefixed with eco- to avoid conflicts with MagicMirror's own variables */
+  --eco-bg-main: #262626;
+  --eco-bg-panel: #333333;
+  --eco-bg-input: #2a2a2a;
+  --eco-bg-hover: #404040;
+
+  --eco-text-primary: #ffffff;
+  --eco-text-secondary: #cccccc;
+  --eco-text-link: #007bff;
+
+  --eco-border-panel: #4d4d4d;
+  --eco-border-input: #666666;
+
+  --eco-color-success: #28a745;
+  --eco-color-error: #dc3545;
+  --eco-color-warning: #ffc107;
+  --eco-color-accent: #007AFF;
+
+  --eco-radius-sm: 8px;
+  --eco-radius-md: 12px;
+  --eco-radius-lg: 16px;
+
+  --eco-spacing-xs: 4px;
+  --eco-spacing-sm: 8px;
+  --eco-spacing-md: 16px;
+  --eco-spacing-lg: 24px;
+
+  --eco-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.24);
+  --eco-shadow-md: 0 3px 6px rgba(0, 0, 0, 0.15), 0 2px 4px rgba(0, 0, 0, 0.12);
+
+  --eco-anim-fast: 0.15s;
+  --eco-anim-normal: 0.25s;
+  --eco-anim-ease: cubic-bezier(0.25, 0.8, 0.25, 1);
+}

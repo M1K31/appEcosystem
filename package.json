@@ -1,0 +1,10 @@
+{
+  "name": "app-ecosystem",
+  "version": "0.1.0",
+  "private": true,
+  "description": "JS workspace root for the app ecosystem",
+  "workspaces": [
+    "auth/js",
+    "theme"
+  ]
+}
