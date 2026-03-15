@@ -1,0 +1,9 @@
+{
+  "name": "ecosystem-client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Ecosystem client library for Node.js (MagicMirror)",
+  "main": "src/index.js",
+  "dependencies": {},
+  "devDependencies": {}
+}
