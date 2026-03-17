@@ -3,7 +3,10 @@
 import argparse
 import sys
 
-from .commands import cmd_install, cmd_start, cmd_status, cmd_stop, cmd_uninstall
+from .commands import (
+    cmd_install, cmd_logs, cmd_start, cmd_start_all,
+    cmd_status, cmd_stop, cmd_stop_all, cmd_uninstall,
+)
 
 
 def main():
@@ -13,9 +16,18 @@ def main():
     )
     sub = parser.add_subparsers(dest="command", help="Available commands")
 
-    sub.add_parser("start", help="Start the ecosystem registry and services")
-    sub.add_parser("stop", help="Stop the ecosystem registry and services")
+    sub.add_parser("start", help="Start the ecosystem registry only")
+    sub.add_parser("stop", help="Stop the ecosystem registry only")
+    sub.add_parser("start-all", help="Start registry and all projects")
+    sub.add_parser("stop-all", help="Stop all projects and registry")
     sub.add_parser("status", help="Show health status of all services")
+
+    logs_parser = sub.add_parser("logs", help="View project logs")
+    logs_parser.add_argument("project", nargs="?", default=None,
+                             help="Project key (omit to list available logs)")
+    logs_parser.add_argument("-n", "--lines", type=int, default=50,
+                             help="Number of lines to show (default: 50)")
+
     sub.add_parser("install", help="Install ecosystem as a system service (launchd)")
     sub.add_parser("uninstall", help="Remove ecosystem system service")
 
@@ -24,12 +36,16 @@ def main():
     commands = {
         "start": cmd_start,
         "stop": cmd_stop,
+        "start-all": cmd_start_all,
+        "stop-all": cmd_stop_all,
         "status": cmd_status,
         "install": cmd_install,
         "uninstall": cmd_uninstall,
     }
 
-    if args.command in commands:
+    if args.command == "logs":
+        sys.exit(cmd_logs(args.project, args.lines))
+    elif args.command in commands:
         sys.exit(commands[args.command]())
     else:
         parser.print_help()

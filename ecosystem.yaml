@@ -3,8 +3,8 @@
 
 ecosystem:
   name: "appEcosystem"
-  version: "0.1.0"
-  base_path: "/Volumes/ASSD/GitProjects"
+  version: "0.2.0"
+  base_path: "/Volumes/Locker2/GitHub"
 
 # Shared HMAC secret for inter-service authentication
 # In production, use environment variable ECOSYSTEM_HMAC_SECRET
@@ -33,39 +33,45 @@ events:
   hmac_signing: true
 
 # Project definitions
+# Each project defines its path, port, health endpoint, and start command.
+# start_command is run from the project's path directory.
 projects:
   ai_for_survival:
     name: "AI_For_Survival"
-    path: "${base_path}/AI_For_Survival"
+    path: "AI-for-Survival/backend"
     host: "localhost"
     port: 8000
     health_endpoint: "/health"
     stack: "python-fastapi"
+    start_command: "python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000"
     description: "AI-powered survival assistant with RAG pipeline"
 
   openeye:
     name: "OpenEye"
-    path: "${base_path}/OpenEye-OpenCV_Home_Security"
+    path: "OpenEye-OpenCV_Home_Security/opencv_surveillance"
     host: "localhost"
     port: 8200
     health_endpoint: "/api/ecosystem/health"
     stack: "python-fastapi-react"
+    start_command: "python -m uvicorn backend.main:app --host 0.0.0.0 --port 8200"
     description: "OpenCV home security surveillance system"
 
   magicmirror:
     name: "MagicMirror"
-    path: "${base_path}/MagicMirror"
+    path: "MagicMirror-Custom"
     host: "localhost"
     port: 8080
     health_endpoint: "/api/v1/health"
     stack: "nodejs-electron-express"
+    start_command: "node serveronly"
     description: "Smart mirror with modular widget system"
 
   asusguard:
     name: "AsusGuard"
-    path: "${base_path}/logAnalysis"
+    path: "LogAnalysis"
     host: "localhost"
     port: 8088
     health_endpoint: "/api/status"
     stack: "python-flask"
+    start_command: "python -m asusguard.dashboard"
     description: "Router log analysis and network security monitor"
