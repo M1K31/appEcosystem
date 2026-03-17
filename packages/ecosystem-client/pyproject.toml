@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ecosystem-client"
+version = "0.1.0"
+description = "Client library for appEcosystem inter-service communication"
+requires-python = ">=3.10"
+dependencies = [
+    "httpx>=0.24.0",
+]
+
+[project.optional-dependencies]
+mdns = ["zeroconf>=0.80.0"]
+yaml = ["pyyaml>=6.0"]
+dev = ["pytest>=7.0", "pytest-asyncio>=0.21"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ecosystem_client*"]
