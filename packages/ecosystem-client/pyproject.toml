@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "ecosystem-client"
 version = "0.1.0"
 description = "Client library for appEcosystem inter-service communication"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 dependencies = [
     "httpx>=0.24.0",
 ]
