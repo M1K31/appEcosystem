@@ -16,11 +16,12 @@ logger = logging.getLogger(__name__)
 # Module-level singletons initialized in lifespan
 registry: ServiceRegistry = None  # type: ignore
 health_monitor: HealthMonitor = None  # type: ignore
+event_bus: EventBus = None  # type: ignore
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global registry, health_monitor
+    global registry, health_monitor, event_bus
 
     persistence_path = os.environ.get(
         "ECOSYSTEM_REGISTRY_FILE", "data/registry.json"
@@ -30,8 +31,21 @@ async def lifespan(app: FastAPI):
     # Pre-register projects from ecosystem.yaml if available
     _register_static_projects(registry)
 
+    try:
+        from events.event_bus import EventBus
+        event_bus = EventBus(registry=registry)
+    except ImportError:
+        event_bus = None
+        logger.debug("Event bus not available — unhealthy events won't be published")
+
     interval = int(os.environ.get("ECOSYSTEM_HEALTH_INTERVAL", "30"))
-    health_monitor = HealthMonitor(registry=registry, interval_seconds=interval)
+    max_failures = int(os.environ.get("ECOSYSTEM_MAX_FAILURES", "5"))
+    health_monitor = HealthMonitor(
+        registry=registry,
+        interval_seconds=interval,
+        max_failures=max_failures,
+        event_bus=event_bus,
+    )
     await health_monitor.start()
 
     logger.info("Ecosystem registry started")
@@ -83,6 +97,12 @@ async def list_services():
     return registry.get_all()
 
 
+@app.get("/services/priority", response_model=list[ServiceRecord])
+async def list_services_by_priority():
+    """List all services sorted by priority (highest first, healthy first)."""
+    return registry.get_by_priority()
+
+
 @app.get("/services/{name}", response_model=ServiceRecord)
 async def get_service(name: str):
     """Get a specific service by name."""
@@ -120,6 +140,7 @@ def _register_static_projects(reg: ServiceRegistry) -> None:
                     host=proj.get("host", "localhost"),
                     port=proj["port"],
                     health_endpoint=proj.get("health_endpoint", "/health"),
+                    priority=proj.get("priority", 0),
                     metadata={"stack": proj.get("stack", ""), "description": proj.get("description", "")},
                 )
             )

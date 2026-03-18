@@ -30,6 +30,7 @@ class ServiceRegistration(BaseModel):
         description="Event types this service subscribes to (e.g., ['security.*'])",
     )
     metadata: dict = Field(default_factory=dict)
+    priority: int = Field(default=0, description="Higher priority = preferred service (0=default)")
 
 
 class ServiceRecord(BaseModel):
@@ -43,6 +44,7 @@ class ServiceRecord(BaseModel):
     webhook_url: Optional[str] = None
     subscriptions: list[str] = Field(default_factory=list)
     metadata: dict = Field(default_factory=dict)
+    priority: int = 0
     status: HealthStatus = HealthStatus.UNKNOWN
     last_health_check: Optional[float] = None
     last_healthy: Optional[float] = None

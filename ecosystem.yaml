@@ -42,6 +42,7 @@ projects:
     host: "localhost"
     port: 8000
     health_endpoint: "/health"
+    priority: 100          # Preferred ecosystem manager
     stack: "python-fastapi"
     start_command: "python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000"
     description: "AI-powered survival assistant with RAG pipeline"
@@ -52,6 +53,7 @@ projects:
     host: "localhost"
     port: 8200
     health_endpoint: "/api/health"
+    priority: 50           # Fallback ecosystem manager
     stack: "python-fastapi-react"
     start_command: "python -m uvicorn backend.main:app --host 0.0.0.0 --port 8200"
     description: "OpenCV home security surveillance system"
@@ -62,6 +64,7 @@ projects:
     host: "localhost"
     port: 8080
     health_endpoint: "/api/v1/health"
+    priority: 10
     stack: "nodejs-electron-express"
     start_command: "node serveronly"
     description: "Smart mirror with modular widget system"
@@ -72,6 +75,7 @@ projects:
     host: "localhost"
     port: 8088
     health_endpoint: "/api/status"
+    priority: 10
     stack: "python-flask"
     start_command: "python -m asusguard.dashboard"
     description: "Router log analysis and network security monitor"

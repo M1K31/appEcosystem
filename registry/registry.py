@@ -38,6 +38,7 @@ class ServiceRegistry:
             webhook_url=registration.webhook_url,
             subscriptions=registration.subscriptions,
             metadata=registration.metadata,
+            priority=registration.priority,
             status=HealthStatus.UNKNOWN,
             registered_at=time.time(),
         )
@@ -62,6 +63,17 @@ class ServiceRegistry:
     def get_all(self) -> list[ServiceRecord]:
         """Get all registered services."""
         return list(self._services.values())
+
+    def get_by_priority(self) -> list[ServiceRecord]:
+        """Get all services sorted by priority (highest first), healthy first."""
+        return sorted(
+            self._services.values(),
+            key=lambda s: (
+                s.status == HealthStatus.HEALTHY,  # healthy first
+                s.priority,                         # then by priority
+            ),
+            reverse=True,
+        )
 
     def update_health(
         self,

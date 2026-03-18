@@ -26,10 +26,14 @@ class HealthMonitor:
         registry: ServiceRegistry,
         interval_seconds: int = 30,
         timeout_seconds: int = 5,
+        max_failures: int = 5,
+        event_bus=None,
     ):
         self.registry = registry
         self.interval = interval_seconds
         self.timeout = timeout_seconds
+        self.max_failures = max_failures
+        self._event_bus = event_bus
         self._task: Optional[asyncio.Task] = None
         self._running = False
 
@@ -117,6 +121,32 @@ class HealthMonitor:
                 if unhealthy:
                     names = ", ".join(r.service_name for r in unhealthy)
                     logger.warning(f"Unhealthy services: {names}")
+
+                # Auto-deregister services that exceed max consecutive failures
+                for result in results:
+                    record = self.registry.get(result.service_name)
+                    if record and record.consecutive_failures >= self.max_failures:
+                        logger.warning(
+                            f"Auto-deregistering {result.service_name} "
+                            f"after {record.consecutive_failures} consecutive failures"
+                        )
+                        # Publish unhealthy event before removal
+                        if self._event_bus:
+                            try:
+                                from events.schemas import EventEnvelope
+                                await self._event_bus.publish(EventEnvelope(
+                                    type="ecosystem.service_unhealthy",
+                                    source="registry",
+                                    data={
+                                        "service": result.service_name,
+                                        "last_status": result.status.value,
+                                        "consecutive_failures": record.consecutive_failures,
+                                        "priority": record.priority,
+                                    },
+                                ))
+                            except Exception as e:
+                                logger.debug(f"Failed to publish unhealthy event: {e}")
+                        self.registry.deregister(result.service_name)
             except Exception as e:
                 logger.error(f"Health poll error: {e}")
             await asyncio.sleep(self.interval)
