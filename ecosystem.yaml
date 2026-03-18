@@ -39,7 +39,7 @@ projects:
   ai_for_survival:
     name: "AI_For_Survival"
     path: "AI-for-Survival/backend"
-    host: "localhost"
+    host: "192.168.50.73"
     port: 8000
     health_endpoint: "/health"
     priority: 100          # Preferred ecosystem manager
@@ -50,7 +50,7 @@ projects:
   openeye:
     name: "OpenEye"
     path: "OpenEye-OpenCV_Home_Security/opencv_surveillance"
-    host: "localhost"
+    host: "192.168.50.73"
     port: 8200
     health_endpoint: "/api/health"
     priority: 50           # Fallback ecosystem manager
@@ -61,7 +61,7 @@ projects:
   magicmirror:
     name: "MagicMirror"
     path: "MagicMirror-Custom"
-    host: "localhost"
+    host: "192.168.50.73"
     port: 8080
     health_endpoint: "/api/v1/health"
     priority: 10
@@ -72,7 +72,7 @@ projects:
   asusguard:
     name: "AsusGuard"
     path: "LogAnalysis"
-    host: "localhost"
+    host: "192.168.50.73"
     port: 8088
     health_endpoint: "/api/status"
     priority: 10
