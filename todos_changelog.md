@@ -24,9 +24,9 @@ This document tracks completed changes, active items, and planned improvements f
 - [x] **Magic Mirror Color Degrade**: Create a specialized high-contrast monochrome utility class for MagicMirror's HUD display, respecting its limited color-serving hardware. [RESOLVED]
 
 ### Phase 4: DevOps, Lifecycle & Orchestration
-- [ ] **Ecosystem Process Daemonization**: Generate robust lifecycle scripts with signal interception (`SIGINT`, `SIGTERM`) for graceful shutdowns.
-- [ ] **Timeout to SIGKILL Escalation**: Refactor `cmd_stop_all` to poll active processes and force-terminate with `SIGKILL` (signal 9) if they fail to shut down gracefully within 5 seconds.
-- [ ] **Linux systemd Installer**: Create systemd configuration templates to support Arm Linux (Raspberry Pi) and Intel Linux deployment parity with macOS launchd.
+- [x] **Ecosystem Process Daemonization**: Generate robust lifecycle scripts with signal interception (`SIGINT`, `SIGTERM`) for graceful shutdowns. [RESOLVED]
+- [x] **Timeout to SIGKILL Escalation**: Refactor `cmd_stop_all` to poll active processes and force-terminate with `SIGKILL` (signal 9) if they fail to shut down gracefully within 5 seconds. [RESOLVED]
+- [x] **Linux systemd Installer**: Create systemd configuration templates to support Arm Linux (Raspberry Pi) and Intel Linux deployment parity with macOS launchd. [RESOLVED]
 
 ---
 
