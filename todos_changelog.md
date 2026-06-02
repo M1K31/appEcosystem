@@ -13,10 +13,10 @@ This document tracks completed changes, active items, and planned improvements f
 - [x] **Bind Token Field**: Include the generated secure random `token` hex in the HMAC signature payload of the ecosystem token so that the random token actually acts as a cryptographic anchor. [RESOLVED]
 
 ### Phase 2: Architecture & Code Quality
-- [ ] **FastAPI Event Loop Blocking**: Fix the `Zeroconf` discovery blocking issue. Currently, `EcosystemDiscovery.discover_services()` calls `time.sleep(2)`, which blocks the main thread and halts the entire FastAPI event loop for 2 seconds. Rewrite to use `asyncio.sleep()` or run it inside an executor thread pool using `asyncio.to_thread`.
-- [ ] **Client Connection Pooling**: Replace inline `async with httpx.AsyncClient()` instances inside loops (e.g. in `HealthMonitor` checks and `EventBus` webhook delivery retries) with a single, persistent, and shared `httpx.AsyncClient` session.
-- [ ] **Safe Start Command Split**: Refactor `subprocess.Popen(cmd.split())` inside `cli/commands.py` to use `shlex.split(cmd)` to safely handle start commands with shell arguments and quotes.
-- [ ] **Self-Contained Client Packaging**: Restructure the Python client package (`packages/ecosystem-client`) to bundle or depend on the `ecosystem_auth` package to prevent runtime `ImportError` on client-only installations.
+- [x] **FastAPI Event Loop Blocking**: Fix the `Zeroconf` discovery blocking issue. Currently, `EcosystemDiscovery.discover_services()` calls `time.sleep(2)`, which blocks the main thread and halts the entire FastAPI event loop for 2 seconds. Rewrite to use `asyncio.sleep()` or run it inside an executor thread pool using `asyncio.to_thread`. [RESOLVED]
+- [x] **Client Connection Pooling**: Replace inline `async with httpx.AsyncClient()` instances inside loops (e.g. in `HealthMonitor` checks and `EventBus` webhook delivery retries) with a single, persistent, and shared `httpx.AsyncClient` session. [RESOLVED]
+- [x] **Safe Start Command Split**: Refactor `subprocess.Popen(cmd.split())` inside `cli/commands.py` to use `shlex.split(cmd)` to safely handle start commands with shell arguments and quotes. [RESOLVED]
+- [x] **Self-Contained Client Packaging**: Restructure the Python client package (`packages/ecosystem-client`) to bundle or depend on the `ecosystem_auth` package to prevent runtime `ImportError` on client-only installations. [RESOLVED]
 
 ### Phase 3: UI/UX & Theming
 - [ ] **Unified Theme Switcher**: Build a global CSS layout that toggles classes between Light Mode (`ecosystem-theme-light.css`) and Dark Mode (`ecosystem-theme.css`) dynamically.
