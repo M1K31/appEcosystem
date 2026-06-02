@@ -19,9 +19,9 @@ This document tracks completed changes, active items, and planned improvements f
 - [x] **Self-Contained Client Packaging**: Restructure the Python client package (`packages/ecosystem-client`) to bundle or depend on the `ecosystem_auth` package to prevent runtime `ImportError` on client-only installations. [RESOLVED]
 
 ### Phase 3: UI/UX & Theming
-- [ ] **Unified Theme Switcher**: Build a global CSS layout that toggles classes between Light Mode (`ecosystem-theme-light.css`) and Dark Mode (`ecosystem-theme.css`) dynamically.
-- [ ] **Apple HIG Responsive Layout**: Implement custom grid systems using the 8pt spacing system (`--spacing-xs` to `--spacing-2xl`) and ensure all interactive elements maintain the `--touch-target-min` of `44px`.
-- [ ] **Magic Mirror Color Degrade**: Create a specialized high-contrast monochrome utility class for MagicMirror's HUD display, respecting its limited color-serving hardware.
+- [x] **Unified Theme Switcher**: Build a global CSS layout that toggles classes between Light Mode (`ecosystem-theme-light.css`) and Dark Mode (`ecosystem-theme.css`) dynamically. [RESOLVED]
+- [x] **Apple HIG Responsive Layout**: Implement custom grid systems using the 8pt spacing system (`--spacing-xs` to `--spacing-2xl`) and ensure all interactive elements maintain the `--touch-target-min` of `44px`. [RESOLVED]
+- [x] **Magic Mirror Color Degrade**: Create a specialized high-contrast monochrome utility class for MagicMirror's HUD display, respecting its limited color-serving hardware. [RESOLVED]
 
 ### Phase 4: DevOps, Lifecycle & Orchestration
 - [ ] **Ecosystem Process Daemonization**: Generate robust lifecycle scripts with signal interception (`SIGINT`, `SIGTERM`) for graceful shutdowns.
