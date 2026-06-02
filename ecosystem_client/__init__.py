@@ -10,6 +10,7 @@ from .config import EcosystemConfig
 from .discovery import DiscoveryManager, DiscoveryMode
 from .event_publisher import EventPublisher
 from .event_subscriber import EventSubscriber
+from .log_handler import EcosystemLogHandler
 from .peer import Peer
 
 __version__ = "0.1.0"

@@ -32,6 +32,13 @@ events:
   retry_delay_seconds: 5
   hmac_signing: true
 
+# Cyber Claude Harness integration
+cyber_harness:
+  enabled: true
+  daemon_url: "http://localhost:8088"
+  prefer_harness: true
+  fallback_to_legacy: true
+
 # Project definitions
 # Each project defines its path, port, health endpoint, and start command.
 # start_command is run from the project's path directory.
@@ -79,3 +86,14 @@ projects:
     stack: "python-flask"
     start_command: "python -m asusguard.dashboard"
     description: "Router log analysis and network security monitor"
+
+  asusguard_daemon:
+    name: "AsusGuard_Daemon"
+    path: "CybersecurityTeam/cyber-claude-agents"
+    host: "192.168.50.73"
+    port: 8088
+    health_endpoint: "/api/status"
+    priority: 15
+    stack: "python-aiohttp"
+    start_command: "python -m daemon.asusguard_daemon"
+    description: "Cyber Claude Harness daemon — preferred security analysis backend"

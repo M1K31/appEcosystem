@@ -28,17 +28,27 @@ function getEcosystemSecret() {
 function requireEcosystemAuth(req, res, next) {
   const secret = getEcosystemSecret();
 
-  // Check HMAC signature header (for webhook/event payloads)
+  // Check HMAC signature header (for webhook/event payloads or GET commands)
   const signature = req.headers["x-ecosystem-signature"];
   if (signature) {
-    if (!req.body || typeof req.body !== "object") {
-      return res.status(400).json({ detail: "Invalid JSON body" });
+    if (req.method === "GET" || req.method === "DELETE") {
+      const fullUrl = req.protocol + "://" + req.get("host") + req.originalUrl;
+      const payloadToVerify = { url: fullUrl, method: req.method };
+      if (!verifySignature(payloadToVerify, signature, secret)) {
+        return res.status(401).json({ detail: "Invalid ecosystem signature" });
+      }
+      req.ecosystemAuth = { auth_method: "hmac", payload: payloadToVerify };
+      return next();
+    } else {
+      if (!req.body || typeof req.body !== "object") {
+        return res.status(400).json({ detail: "Invalid JSON body" });
+      }
+      if (!verifySignature(req.body, signature, secret)) {
+        return res.status(401).json({ detail: "Invalid ecosystem signature" });
+      }
+      req.ecosystemAuth = { auth_method: "hmac", payload: req.body };
+      return next();
     }
-    if (!verifySignature(req.body, signature, secret)) {
-      return res.status(401).json({ detail: "Invalid ecosystem signature" });
-    }
-    req.ecosystemAuth = { auth_method: "hmac", payload: req.body };
-    return next();
   }
 
   // Check Bearer token (for service-to-service calls)

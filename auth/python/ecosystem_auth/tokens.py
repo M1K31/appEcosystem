@@ -52,14 +52,20 @@ def create_ecosystem_token(secret: str, service_name: str, ttl_seconds: int = 86
     Returns a dict with token, issued_at, expires_at, and signature.
     """
     now = int(time.time())
+    token = generate_secure_token()
     token_data = {
-        "token": generate_secure_token(),
+        "token": token,
         "service": service_name,
         "issued_at": now,
         "expires_at": now + ttl_seconds,
     }
     token_data["signature"] = sign_payload(
-        {"service": service_name, "issued_at": now, "expires_at": now + ttl_seconds},
+        {
+            "token": token,
+            "service": service_name,
+            "issued_at": now,
+            "expires_at": now + ttl_seconds,
+        },
         secret,
     )
     return token_data
@@ -74,6 +80,7 @@ def verify_ecosystem_token(token_data: dict, secret: str) -> bool:
         return False
 
     expected_payload = {
+        "token": token_data.get("token", ""),
         "service": token_data.get("service", ""),
         "issued_at": token_data.get("issued_at", 0),
         "expires_at": token_data.get("expires_at", 0),

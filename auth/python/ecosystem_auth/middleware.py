@@ -24,27 +24,31 @@ async def require_ecosystem_auth(
     """
     FastAPI dependency that validates ecosystem HMAC-signed requests.
 
-    Checks the X-Ecosystem-Signature header against the request body,
+    Checks the X-Ecosystem-Signature header against the request body or URL/method,
     or validates a Bearer token from the Authorization header.
     """
     secret = get_ecosystem_secret()
 
-    # Check HMAC signature header (for webhook/event payloads)
+    # Check HMAC signature header (for webhook/event payloads or GET commands)
     signature = request.headers.get("X-Ecosystem-Signature")
     if signature:
-        try:
-            body = await request.json()
-        except Exception:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid JSON body",
-            )
-        if not verify_signature(body, signature, secret):
+        if request.method in ("GET", "DELETE"):
+            # GET/DELETE requests sign the URL and method instead of the body
+            payload_to_verify = {"url": str(request.url), "method": request.method}
+        else:
+            try:
+                payload_to_verify = await request.json()
+            except Exception:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid JSON body",
+                )
+        if not verify_signature(payload_to_verify, signature, secret):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid ecosystem signature",
             )
-        return {"auth_method": "hmac", "payload": body}
+        return {"auth_method": "hmac", "payload": payload_to_verify}
 
     # Check Bearer token (for service-to-service calls)
     if credentials:

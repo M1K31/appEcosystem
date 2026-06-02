@@ -8,6 +8,9 @@ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 echo "=== Stopping Ecosystem ==="
 
 cd "$ROOT_DIR"
+if [ -f "$ROOT_DIR/.venv/bin/activate" ]; then
+    source "$ROOT_DIR/.venv/bin/activate"
+fi
 python -m cli.main stop
 
 echo "Ecosystem registry stopped."

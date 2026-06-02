@@ -7,8 +7,13 @@ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 
 echo "=== Starting Ecosystem ==="
 
-# Start registry
+# Activate venv if available
 cd "$ROOT_DIR"
+if [ -f "$ROOT_DIR/.venv/bin/activate" ]; then
+    source "$ROOT_DIR/.venv/bin/activate"
+fi
+
+# Start registry
 python -m cli.main start
 
 echo ""

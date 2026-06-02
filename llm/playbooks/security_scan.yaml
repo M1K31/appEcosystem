@@ -17,6 +17,8 @@ steps:
     timeout: 30
 
   - name: Network Threat Analysis
+    # Prefer cyber-claude-harness for network threat analysis
+    prefer_harness: true
     goal: >
       Query AsusGuard at http://localhost:8088/api/logs/recent for
       recent network log entries. Look for:
@@ -29,6 +31,8 @@ steps:
     timeout: 30
 
   - name: AI Threat Correlation
+    # Prefer cyber-claude-harness for cross-domain threat correlation
+    prefer_harness: true
     goal: >
       Send the findings from camera alerts and network logs to
       AI_For_Survival at http://localhost:8000/api/chat for correlation
@@ -43,6 +47,8 @@ steps:
     timeout: 60
 
   - name: Security Report
+    # Prefer cyber-claude-harness for security report compilation
+    prefer_harness: true
     goal: >
       Compile a unified security posture report with:
       - Overall threat level (low / medium / high / critical)

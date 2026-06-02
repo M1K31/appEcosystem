@@ -97,6 +97,13 @@ class TestEcosystemTokens:
         token_data = create_ecosystem_token("secret1", "openeye")
         assert not verify_ecosystem_token(token_data, "secret2")
 
+    def test_tampered_token_payload(self):
+        secret = "test-secret"
+        token_data = create_ecosystem_token(secret, "openeye")
+        # Change the token value itself - must invalidate signature now
+        token_data["token"] = "tampered-token-value"
+        assert not verify_ecosystem_token(token_data, secret)
+
 
 class TestCrossLanguageCompatibility:
     """Verify Python and JS produce identical HMAC signatures."""

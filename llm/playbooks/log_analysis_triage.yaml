@@ -20,6 +20,8 @@ steps:
     timeout: 60
 
   - name: Error Extraction
+    # Prefer cyber-claude-harness for LLM-driven log analysis
+    prefer_harness: true
     goal: >
       From the collected logs, extract:
       - All ERROR and CRITICAL level entries
@@ -35,6 +37,8 @@ steps:
     timeout: 30
 
   - name: Pattern Analysis
+    # Prefer cyber-claude-harness for pattern correlation
+    prefer_harness: true
     goal: >
       Analyze the extracted errors and warnings for patterns:
       - Recurring errors (same error appearing multiple times)
@@ -50,6 +54,8 @@ steps:
     timeout: 30
 
   - name: Triage Report
+    # Prefer cyber-claude-harness for triage generation
+    prefer_harness: true
     goal: >
       Produce a prioritized triage report:
       - P0 (Critical): Service down or data loss risk

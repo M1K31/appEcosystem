@@ -1,15 +1,22 @@
 """FastAPI application for the ecosystem service registry."""
 
+from __future__ import annotations
+
 import logging
 import os
 from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from auth.python.ecosystem_auth.middleware import require_ecosystem_auth
 
 from .health_monitor import HealthMonitor
 from .models import HealthCheckResult, ServiceRecord, ServiceRegistration
 from .registry import ServiceRegistry
+
+if TYPE_CHECKING:
+    from events.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
 
@@ -77,14 +84,20 @@ async def health():
 
 
 @app.post("/register", response_model=ServiceRecord, status_code=status.HTTP_201_CREATED)
-async def register_service(registration: ServiceRegistration):
+async def register_service(
+    registration: ServiceRegistration,
+    auth: dict = Depends(require_ecosystem_auth),
+):
     """Register a new service with the ecosystem."""
     record = registry.register(registration)
     return record
 
 
 @app.delete("/deregister/{name}")
-async def deregister_service(name: str):
+async def deregister_service(
+    name: str,
+    auth: dict = Depends(require_ecosystem_auth),
+):
     """Remove a service from the registry."""
     if not registry.deregister(name):
         raise HTTPException(status_code=404, detail=f"Service '{name}' not found")

@@ -59,13 +59,18 @@ class DiscoveryManager {
     async registerSelf(name, host, port, healthEndpoint, webhookUrl, subscriptions) {
         if (this.mode !== DiscoveryMode.REGISTRY) return false;
         try {
-            const payload = JSON.stringify({
+            const dataObj = {
                 name, host, port,
                 health_endpoint: healthEndpoint,
                 webhook_url: webhookUrl,
                 subscriptions: subscriptions || [],
+            };
+            const payload = JSON.stringify(dataObj);
+            const { signPayload } = require("../../auth/js/src/tokens");
+            const signature = signPayload(dataObj, this.config.hmacSecret);
+            await this._post(`${this.config.registryUrl}/register`, payload, {
+                "X-Ecosystem-Signature": signature
             });
-            await this._post(`${this.config.registryUrl}/register`, payload);
             return true;
         } catch {
             return false;
@@ -75,7 +80,12 @@ class DiscoveryManager {
     async deregisterSelf(name) {
         if (this.mode !== DiscoveryMode.REGISTRY) return false;
         try {
-            await this._delete(`${this.config.registryUrl}/deregister/${name}`);
+            const url = `${this.config.registryUrl}/deregister/${name}`;
+            const { signPayload } = require("../../auth/js/src/tokens");
+            const signature = signPayload({ url, method: "DELETE" }, this.config.hmacSecret);
+            await this._delete(url, {
+                "X-Ecosystem-Signature": signature
+            });
             return true;
         } catch {
             return false;
@@ -128,13 +138,17 @@ class DiscoveryManager {
         });
     }
 
-    _post(url, body) {
+    _post(url, body, customHeaders = {}) {
         return new Promise((resolve, reject) => {
             const parsed = new URL(url);
             const lib = parsed.protocol === "https:" ? https : http;
+            const headers = Object.assign({
+                "Content-Type": "application/json",
+                "Content-Length": Buffer.byteLength(body)
+            }, customHeaders);
             const req = lib.request({
                 hostname: parsed.hostname, port: parsed.port, path: parsed.pathname,
-                method: "POST", headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+                method: "POST", headers,
                 timeout: this.config.requestTimeout,
             }, (res) => {
                 let data = "";
@@ -151,13 +165,13 @@ class DiscoveryManager {
         });
     }
 
-    _delete(url) {
+    _delete(url, customHeaders = {}) {
         return new Promise((resolve, reject) => {
             const parsed = new URL(url);
             const lib = parsed.protocol === "https:" ? https : http;
             const req = lib.request({
                 hostname: parsed.hostname, port: parsed.port, path: parsed.pathname,
-                method: "DELETE", timeout: this.config.requestTimeout,
+                method: "DELETE", headers: customHeaders, timeout: this.config.requestTimeout,
             }, (res) => {
                 let data = "";
                 res.on("data", (chunk) => data += chunk);

@@ -80,14 +80,20 @@ function verifySignature(payload, signature, secret) {
  */
 function createEcosystemToken(secret, serviceName, ttlSeconds = 86400) {
   const now = Math.floor(Date.now() / 1000);
+  const token = generateSecureToken();
   const tokenData = {
-    token: generateSecureToken(),
+    token: token,
     service: serviceName,
     issued_at: now,
     expires_at: now + ttlSeconds,
   };
   tokenData.signature = signPayload(
-    { service: serviceName, issued_at: now, expires_at: now + ttlSeconds },
+    {
+      token: token,
+      service: serviceName,
+      issued_at: now,
+      expires_at: now + ttlSeconds,
+    },
     secret
   );
   return tokenData;
@@ -105,6 +111,7 @@ function verifyEcosystemToken(tokenData, secret) {
     return false;
   }
   const expectedPayload = {
+    token: tokenData.token || "",
     service: tokenData.service || "",
     issued_at: tokenData.issued_at || 0,
     expires_at: tokenData.expires_at || 0,

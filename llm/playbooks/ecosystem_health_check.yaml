@@ -16,6 +16,8 @@ steps:
     timeout: 30
 
   - name: Individual Health Checks
+    # Prefer cyber-claude-harness for health analysis
+    prefer_harness: true
     goal: >
       For each service returned by the registry, perform a direct health
       check by hitting its health endpoint:
@@ -31,6 +33,8 @@ steps:
     timeout: 60
 
   - name: Health Report
+    # Prefer cyber-claude-harness for health report generation
+    prefer_harness: true
     goal: >
       Compile a summary report with:
       - Overall ecosystem health (all healthy / degraded / critical)

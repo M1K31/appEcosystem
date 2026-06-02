@@ -10,8 +10,20 @@ echo "=== Installing Ecosystem Service ==="
 # Create data directory
 mkdir -p "$ROOT_DIR/data"
 
-# Install Python dependencies
+# Create or reuse virtual environment
 cd "$ROOT_DIR"
+VENV_DIR="$ROOT_DIR/.venv"
+
+if [ ! -d "$VENV_DIR" ]; then
+    echo "Creating virtual environment at .venv/..."
+    python3 -m venv "$VENV_DIR"
+fi
+
+# Activate venv and install
+source "$VENV_DIR/bin/activate"
+pip install --upgrade pip -q
+
+# Install Python dependencies
 pip install -e ".[dev]" 2>/dev/null || pip install -e .
 
 # Install JS dependencies
@@ -24,4 +36,6 @@ python -m cli.main install
 
 echo ""
 echo "Installation complete. The registry will start automatically on login."
+echo "Virtual environment: $VENV_DIR"
+echo "Activate with: source .venv/bin/activate"
 echo "Check status with: python -m cli.main status"

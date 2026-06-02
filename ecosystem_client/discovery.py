@@ -143,8 +143,16 @@ class DiscoveryManager:
                 "subscriptions": subscriptions or [],
                 "priority": priority,
             }
+            from ecosystem_auth.tokens import sign_payload
+            headers = {
+                "X-Ecosystem-Signature": sign_payload(payload, self.config.hmac_secret)
+            }
             async with httpx.AsyncClient(timeout=self.config.request_timeout) as client:
-                resp = await client.post(f"{self.config.registry_url}/register", json=payload)
+                resp = await client.post(
+                    f"{self.config.registry_url}/register",
+                    json=payload,
+                    headers=headers,
+                )
                 resp.raise_for_status()
                 logger.info(f"Registered with ecosystem registry as '{name}'")
                 return True
@@ -157,8 +165,14 @@ class DiscoveryManager:
         if self._mode != DiscoveryMode.REGISTRY:
             return False
         try:
+            url = f"{self.config.registry_url}/deregister/{name}"
+            from ecosystem_auth.tokens import sign_payload
+            payload_to_sign = {"url": url, "method": "DELETE"}
+            headers = {
+                "X-Ecosystem-Signature": sign_payload(payload_to_sign, self.config.hmac_secret)
+            }
             async with httpx.AsyncClient(timeout=self.config.request_timeout) as client:
-                resp = await client.delete(f"{self.config.registry_url}/deregister/{name}")
+                resp = await client.delete(url, headers=headers)
                 return resp.status_code < 400
         except Exception:
             return False
