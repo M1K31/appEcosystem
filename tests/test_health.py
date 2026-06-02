@@ -31,31 +31,25 @@ class TestHealthMonitor:
         mock_response = AsyncMock()
         mock_response.status_code = 200
 
-        with patch("registry.health_monitor.httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.get = AsyncMock(return_value=mock_response)
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_cls.return_value = mock_client
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        monitor._client = mock_client
 
-            result = await monitor.check_one("test-svc")
-            assert result.status == HealthStatus.HEALTHY
-            assert result.response_time_ms is not None
+        result = await monitor.check_one("test-svc")
+        assert result.status == HealthStatus.HEALTHY
+        assert result.response_time_ms is not None
 
     @pytest.mark.asyncio
     async def test_check_one_connection_error(self, monitor):
         import httpx
 
-        with patch("registry.health_monitor.httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_cls.return_value = mock_client
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
+        monitor._client = mock_client
 
-            result = await monitor.check_one("test-svc")
-            assert result.status == HealthStatus.UNHEALTHY
-            assert "Connection refused" in result.detail
+        result = await monitor.check_one("test-svc")
+        assert result.status == HealthStatus.UNHEALTHY
+        assert "Connection refused" in result.detail
 
     @pytest.mark.asyncio
     async def test_check_one_unknown_service(self, monitor):
@@ -67,13 +61,10 @@ class TestHealthMonitor:
         mock_response = AsyncMock()
         mock_response.status_code = 200
 
-        with patch("registry.health_monitor.httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.get = AsyncMock(return_value=mock_response)
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_cls.return_value = mock_client
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        monitor._client = mock_client
 
-            results = await monitor.check_all()
-            assert len(results) == 1
-            assert results[0].service_name == "test-svc"
+        results = await monitor.check_all()
+        assert len(results) == 1
+        assert results[0].service_name == "test-svc"

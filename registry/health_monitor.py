@@ -36,6 +36,7 @@ class HealthMonitor:
         self._event_bus = event_bus
         self._task: Optional[asyncio.Task] = None
         self._running = False
+        self._client = httpx.AsyncClient(timeout=timeout_seconds)
 
     async def start(self) -> None:
         """Start the health monitoring background task."""
@@ -52,6 +53,7 @@ class HealthMonitor:
                 await self._task
             except asyncio.CancelledError:
                 pass
+        await self._client.aclose()
         logger.info("Health monitor stopped")
 
     async def check_one(self, service_name: str) -> HealthCheckResult:
@@ -68,8 +70,7 @@ class HealthMonitor:
         start = time.time()
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                resp = await client.get(url)
+            resp = await self._client.get(url)
             elapsed_ms = (time.time() - start) * 1000
 
             if resp.status_code == 200:

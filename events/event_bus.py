@@ -37,6 +37,11 @@ class EventBus:
         self.retry_attempts = retry_attempts
         self.retry_delay = retry_delay
         self.timeout = timeout
+        self._client = httpx.AsyncClient(timeout=timeout)
+
+    async def close(self) -> None:
+        """Close the persistent HTTP connection pool."""
+        await self._client.aclose()
 
     async def publish(self, event: EventEnvelope) -> dict:
         """
@@ -96,8 +101,7 @@ class EventBus:
 
         for attempt in range(1, self.retry_attempts + 1):
             try:
-                async with httpx.AsyncClient(timeout=self.timeout) as client:
-                    resp = await client.post(webhook_url, json=payload, headers=headers)
+                resp = await self._client.post(webhook_url, json=payload, headers=headers)
                 if resp.status_code < 400:
                     logger.debug(
                         f"Delivered {event.type} to {service_name} (attempt {attempt})"

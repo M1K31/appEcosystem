@@ -1,6 +1,7 @@
 """Service discovery with three-mode cascade: registry -> mDNS -> static -> standalone."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from enum import Enum
 from typing import Any
@@ -45,7 +46,7 @@ class DiscoveryManager:
             return self._mode
 
         # 2. Check mDNS
-        self._mdns_peers = self._check_mdns()
+        self._mdns_peers = await asyncio.to_thread(self._check_mdns)
         if self._mdns_peers:
             self._mode = DiscoveryMode.PEER_TO_PEER
             logger.info(f"Found {len(self._mdns_peers)} peers via mDNS — peer-to-peer mode")

@@ -59,6 +59,8 @@ async def lifespan(app: FastAPI):
     yield
 
     await health_monitor.stop()
+    if event_bus:
+        await event_bus.close()
     logger.info("Ecosystem registry stopped")
 
 
