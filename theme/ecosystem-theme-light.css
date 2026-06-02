@@ -1,38 +1,31 @@
 /*
- * Ecosystem Shared Theme - Light Mode Overrides
- * Import after ecosystem-theme.css to switch to light mode.
+ * appEcosystem - Light Mode Flat Overrides (ecosystem-theme-light.css)
+ * For backward compatibility in client projects that import light overrides directly on :root.
  */
 
 :root {
-  --bg-main: #f5f5f5;
-  --bg-panel: #ffffff;
-  --bg-input: #ffffff;
-  --bg-hover: #e8e8e8;
+  --theme-name: "light";
+  --bg-main: hsl(220, 20%, 96%);     /* Light Slate */
+  --bg-panel: hsl(220, 0%, 100%);    /* Pure White Card */
+  --bg-input: hsl(220, 10%, 92%);    /* Soft Grey Input */
+  --bg-hover: hsl(220, 10%, 88%);    /* Soft Active Hover */
 
-  --text-primary: #1a1a1a;
-  --text-secondary: #555555;
-  --text-tertiary: #888888;
-  --text-link: #0056b3;
+  --text-primary: hsl(220, 20%, 12%);
+  --text-secondary: hsl(220, 15%, 35%);
+  --text-tertiary: hsl(220, 10%, 55%);
 
-  --border-panel: #dddddd;
-  --border-input: #cccccc;
+  --border-panel: hsla(220, 20%, 12%, 0.08);
+  --border-input: hsla(220, 20%, 12%, 0.12);
 
-  --state-active: #d0d0d0;
+  --color-accent: hsl(210, 100%, 50%);     /* iOS Classic Blue */
+  --color-success: hsl(120, 60%, 42%);     /* Classic Green */
+  --color-error: hsl(0, 80%, 52%);         /* Classic Red */
+  --color-warning: hsl(35, 100%, 48%);     /* Classic Orange */
 
-  --theme-background: var(--bg-main);
-  --theme-text: var(--text-primary);
-  --theme-text-secondary: var(--text-secondary);
-  --theme-card-bg: var(--bg-panel);
-  --theme-border: var(--border-panel);
+  --shadow-md: 0 4px 12px hsla(220, 20%, 12%, 0.04);
+  --shadow-lg: 0 16px 32px hsla(220, 20%, 12%, 0.08);
 
-  --background-primary: #f5f5f5;
-  --background-secondary: #ffffff;
-  --card-background: #ffffff;
-  --input-background: #ffffff;
-  --border-color: #cccccc;
-  --border-hover: #aaaaaa;
-
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.12);
-  --shadow-md: 0 3px 6px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.06);
-  --shadow-lg: 0 10px 20px rgba(0, 0, 0, 0.08), 0 3px 6px rgba(0, 0, 0, 0.05);
+  --glass-bg: hsla(220, 0%, 100%, 0.85);
+  --glass-blur: blur(15px);
+  --glass-border: hsla(220, 20%, 12%, 0.08);
 }

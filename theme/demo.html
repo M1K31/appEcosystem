@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Industries LLC - Ecosystem Control Hub</title>
+  <link rel="stylesheet" href="./ecosystem-theme.css">
+  <style>
+    /* Custom page styles using the design tokens in ecosystem-theme.css */
+    body {
+      padding: var(--spacing-lg);
+    }
+    
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    /* Glassmorphism Navigation Bar */
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: var(--spacing-md) var(--spacing-lg);
+      background-color: var(--glass-bg);
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-md);
+      box-shadow: var(--shadow-md);
+      margin-bottom: var(--spacing-xl);
+    }
+
+    .brand-logo {
+      display: flex;
+      align-items: center;
+      gap: var(--spacing-sm);
+    }
+
+    .brand-logo svg {
+      width: 32px;
+      height: 32px;
+      fill: var(--color-accent);
+      transition: transform var(--anim-normal) var(--anim-ease);
+    }
+
+    .brand-logo:hover svg {
+      transform: rotate(45deg);
+    }
+
+    .brand-title {
+      font-size: 1.25rem;
+      margin: 0;
+    }
+
+    /* Switcher Controls (strict HIG min-height 44px) */
+    .theme-switcher {
+      display: flex;
+      background-color: var(--bg-input);
+      border: 1px solid var(--border-input);
+      padding: var(--spacing-xs);
+      border-radius: var(--radius-pill);
+      gap: 2px;
+    }
+
+    .btn-switch {
+      min-height: var(--touch-target-min);
+      padding: 0 var(--spacing-md);
+      border: none;
+      background: transparent;
+      color: var(--text-secondary);
+      font-family: var(--font-body);
+      font-weight: 500;
+      border-radius: var(--radius-pill);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background-color var(--anim-fast) var(--anim-ease),
+                  color var(--anim-fast) var(--anim-ease),
+                  transform var(--anim-fast) var(--anim-ease);
+    }
+
+    .btn-switch:hover {
+      color: var(--text-primary);
+      transform: scale(1.03);
+    }
+
+    .btn-switch.active {
+      background-color: var(--color-accent);
+      color: white !important;
+      box-shadow: var(--shadow-sm);
+    }
+
+    /* Responsive Grid System */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: var(--spacing-lg);
+      margin-bottom: var(--spacing-xl);
+    }
+
+    /* Premium Services Cards */
+    .card {
+      background-color: var(--bg-panel);
+      border: 1px solid var(--border-panel);
+      border-radius: var(--radius-lg);
+      padding: var(--spacing-lg);
+      box-shadow: var(--shadow-md);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      transition: transform var(--anim-normal) var(--anim-ease),
+                  box-shadow var(--anim-normal) var(--anim-ease);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 4px;
+      background: linear-gradient(90deg, var(--color-accent), var(--color-success));
+      opacity: 0.8;
+    }
+
+    .card:hover {
+      transform: translateY(-4px);
+      box-shadow: var(--shadow-lg);
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: start;
+      margin-bottom: var(--spacing-md);
+    }
+
+    .card-title {
+      font-size: 1.15rem;
+      margin: 0;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--spacing-xs);
+      padding: var(--spacing-xs) var(--spacing-sm);
+      border-radius: var(--radius-pill);
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .status-badge.healthy {
+      background-color: hsla(120, 60%, 48%, 0.15);
+      color: var(--color-success);
+    }
+
+    .status-badge.degraded {
+      background-color: hsla(35, 100%, 55%, 0.15);
+      color: var(--color-warning);
+    }
+
+    .status-badge.down {
+      background-color: hsla(0, 85%, 60%, 0.15);
+      color: var(--color-error);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: currentColor;
+    }
+
+    .card-body {
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+      margin-bottom: var(--spacing-lg);
+      flex-grow: 1;
+    }
+
+    .card-meta {
+      display: flex;
+      gap: var(--spacing-md);
+      font-size: 0.8rem;
+      color: var(--text-tertiary);
+      border-top: 1px solid var(--border-panel);
+      padding-top: var(--spacing-sm);
+      margin-bottom: var(--spacing-md);
+    }
+
+    /* Premium HIG Buttons (Strict touch-target minimum 44px) */
+    .card-actions {
+      display: flex;
+      gap: var(--spacing-sm);
+    }
+
+    .btn {
+      min-height: var(--touch-target-min);
+      padding: 0 var(--spacing-md);
+      border: 1px solid var(--border-input);
+      background-color: var(--bg-input);
+      color: var(--text-primary);
+      border-radius: var(--radius-md);
+      font-family: var(--font-body);
+      font-size: 0.9rem;
+      font-weight: 500;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: var(--spacing-xs);
+      flex-grow: 1;
+      transition: background-color var(--anim-fast) var(--anim-ease),
+                  border-color var(--anim-fast) var(--anim-ease),
+                  transform var(--anim-fast) var(--anim-ease);
+    }
+
+    .btn:hover {
+      background-color: var(--bg-hover);
+      border-color: var(--color-accent);
+    }
+
+    .btn:active {
+      transform: scale(0.97);
+    }
+
+    .btn-primary {
+      background-color: var(--color-accent);
+      color: white;
+      border: none;
+    }
+
+    .btn-primary:hover {
+      background-color: var(--color-accent);
+      filter: brightness(1.15);
+    }
+
+    /* Live Event Logs Feed Widget */
+    .widget {
+      background-color: var(--bg-panel);
+      border: 1px solid var(--border-panel);
+      border-radius: var(--radius-lg);
+      padding: var(--spacing-lg);
+      box-shadow: var(--shadow-md);
+    }
+
+    .widget-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: var(--spacing-md);
+      border-bottom: 1px solid var(--border-panel);
+      padding-bottom: var(--spacing-sm);
+    }
+
+    .log-feed {
+      height: 250px;
+      overflow-y: auto;
+      background-color: var(--bg-main);
+      border: 1px solid var(--border-input);
+      border-radius: var(--radius-md);
+      padding: var(--spacing-md);
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 0.85rem;
+      display: flex;
+      flex-direction: column;
+      gap: var(--spacing-xs);
+    }
+
+    .log-row {
+      display: flex;
+      gap: var(--spacing-md);
+      border-bottom: 1px dashed var(--border-panel);
+      padding-bottom: 2px;
+      animation: slideIn var(--anim-normal) var(--anim-ease);
+    }
+
+    .log-timestamp {
+      color: var(--text-tertiary);
+    }
+
+    .log-source {
+      color: var(--color-accent);
+      font-weight: bold;
+    }
+
+    .log-msg {
+      color: var(--text-primary);
+    }
+
+    .log-msg.error {
+      color: var(--color-error);
+    }
+
+    .log-msg.success {
+      color: var(--color-success);
+    }
+
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    
+    <!-- Top Navigation Header -->
+    <header>
+      <div class="brand-logo">
+        <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+          <polygon points="50,15 90,80 10,80" stroke="currentColor" stroke-width="8" fill="none"/>
+          <circle cx="50" cy="50" r="15" />
+        </svg>
+        <h1 class="brand-title">Ecosystem Control Hub</h1>
+      </div>
+      
+      <!-- Theme Selector Switcher -->
+      <div class="theme-switcher" role="radiogroup" aria-label="Theme selection">
+        <button class="btn-switch active" data-theme="dark" role="radio" aria-checked="true">Dark</button>
+        <button class="btn-switch" data-theme="light" role="radio" aria-checked="false">Light</button>
+        <button class="btn-switch" data-theme="cyberpunk" role="radio" aria-checked="false">Cyberpunk</button>
+      </div>
+    </header>
+
+    <!-- Services Grid Layout -->
+    <div class="grid">
+      
+      <!-- Card: AI-for-Survival -->
+      <div class="card">
+        <div>
+          <div class="card-header">
+            <h3 class="card-title">AI_For_Survival</h3>
+            <span class="status-badge healthy">
+              <span class="status-dot"></span>
+              Healthy
+            </span>
+          </div>
+          <div class="card-body">
+            AI-powered offline assistant managing active defense triages and command orchestration under cybersecurity playbooks.
+          </div>
+          <div class="card-meta">
+            <span>Port: 8000</span>
+            <span>Stack: FastAPI</span>
+          </div>
+        </div>
+        <div class="card-actions">
+          <button class="btn btn-primary" onclick="simulateEvent('ai_for_survival', 'ai.playbook_triggered', 'Running threat sandbox playbook')">Run Playbook</button>
+          <button class="btn" onclick="addLog('ai_for_survival', 'Re-indexing knowledge base with OpenEye descriptors', 'success')">Re-Index</button>
+        </div>
+      </div>
+
+      <!-- Card: OpenEye -->
+      <div class="card">
+        <div>
+          <div class="card-header">
+            <h3 class="card-title">OpenEye OpenCV</h3>
+            <span class="status-badge healthy">
+              <span class="status-dot"></span>
+              Healthy
+            </span>
+          </div>
+          <div class="card-body">
+            Video surveillance and physical object tracking. Monitors home zones and logs visual security threats dynamically.
+          </div>
+          <div class="card-meta">
+            <span>Port: 8200</span>
+            <span>Stack: OpenCV + React</span>
+          </div>
+        </div>
+        <div class="card-actions">
+          <button class="btn btn-primary" onclick="simulateEvent('openeye', 'security.alert', 'Motion detected in Zone A (Front Door)')">Trigger Alert</button>
+          <button class="btn" onclick="addLog('openeye', 'Camera streams feed - 4 RTSP channels online')">Stream Feed</button>
+        </div>
+      </div>
+
+      <!-- Card: AsusGuard -->
+      <div class="card">
+        <div>
+          <div class="card-header">
+            <h3 class="card-title">AsusGuard Network</h3>
+            <span class="status-badge degraded">
+              <span class="status-dot"></span>
+              Degraded
+            </span>
+          </div>
+          <div class="card-body">
+            Parses router logs, isolates rogue network devices, blocks malicious domains, and logs threat signatures.
+          </div>
+          <div class="card-meta">
+            <span>Port: 8088</span>
+            <span>Stack: Flask syslog</span>
+          </div>
+        </div>
+        <div class="card-actions">
+          <button class="btn btn-primary" onclick="simulateEvent('asusguard', 'security.threat_blocked', 'IP 192.168.50.12 blocked due to excessive queries')">Block Malicious IP</button>
+          <button class="btn" onclick="addLog('asusguard', 'High query load logged on router interface', 'error')">Check Load</button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Webhook Event Stream Widget -->
+    <div class="widget">
+      <div class="widget-header">
+        <h3>Ecosystem Webhook event bus (Live Stream)</h3>
+        <button class="btn" style="min-height: 36px; padding: 0 var(--spacing-sm);" onclick="clearLogs()">Clear Feed</button>
+      </div>
+      <div class="log-feed" id="log-feed">
+        <div class="log-row">
+          <span class="log-timestamp">[11:04:12]</span>
+          <span class="log-source">[registry]</span>
+          <span class="log-msg success">Ecosystem service registry started cleanly on port 8500</span>
+        </div>
+        <div class="log-row">
+          <span class="log-timestamp">[11:04:13]</span>
+          <span class="log-source">[registry]</span>
+          <span class="log-msg">mDNS Service Browser registered under '_ecosystem._tcp.local.'</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Dynamic Theme Switcher script -->
+  <script>
+    // Theme Switcher Logic
+    const switchers = document.querySelectorAll('.btn-switch');
+    switchers.forEach(button => {
+      button.addEventListener('click', () => {
+        const theme = button.getAttribute('data-theme');
+        
+        // Remove active class from all and assign to selected
+        switchers.forEach(b => {
+          b.classList.remove('active');
+          b.setAttribute('aria-checked', 'false');
+        });
+        button.classList.add('active');
+        button.setAttribute('aria-checked', 'true');
+        
+        // Set dynamic data-theme property on HTML tag
+        document.documentElement.setAttribute('data-theme', theme);
+        addLog('registry', `Global theme switched to [${theme.toUpperCase()}] mode`, 'success');
+      });
+    });
+
+    // Logging & Webhook Simulation Helpers
+    function addLog(source, message, status = '') {
+      const feed = document.getElementById('log-feed');
+      const row = document.createElement('div');
+      row.className = 'log-row';
+      
+      const now = new Date();
+      const timeStr = `[${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}]`;
+      
+      let statusClass = '';
+      if (status === 'success') statusClass = ' success';
+      if (status === 'error') statusClass = ' error';
+      
+      row.innerHTML = `
+        <span class="log-timestamp">${timeStr}</span>
+        <span class="log-source">[${source}]</span>
+        <span class="log-msg${statusClass}">${message}</span>
+      `;
+      
+      feed.appendChild(row);
+      feed.scrollTop = feed.scrollHeight;
+    }
+
+    function simulateEvent(source, eventType, detail) {
+      addLog(source, `Published Webhook Event: "${eventType}"`, 'success');
+      setTimeout(() => {
+        addLog('registry', `Event bus received "${eventType}" -> Broadcasted signature to subscribers`);
+      }, 300);
+      setTimeout(() => {
+        addLog('magicmirror', `[HUD Subscriber] Rendered Event: "${detail}"`, 'success');
+      }, 700);
+    }
+
+    function clearLogs() {
+      document.getElementById('log-feed').innerHTML = '';
+      addLog('registry', 'Live logs cleared');
+    }
+  </script>
+</body>
+</html>

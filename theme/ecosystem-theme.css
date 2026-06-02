@@ -1,93 +1,163 @@
 /*
- * Ecosystem Shared Theme - Dark Professional
- * Extracted from OpenEye's unified theme system.
- * CSS custom properties only - no base style overrides.
- * Import this file in any project to inherit the ecosystem design tokens.
+ * appEcosystem - Unified Design Token System (ecosystem-theme.css)
+ * Implements strict Apple HIG Compliance and WCAG AA accessibility.
+ * Extensible for Light, Dark, and Cyberpunk themes with smooth CSS transitions.
  */
 
-:root {
-  /* 8pt Grid Spacing */
-  --spacing-xs: 4px;
-  --spacing-sm: 8px;
-  --spacing-md: 16px;
-  --spacing-lg: 24px;
-  --spacing-xl: 32px;
-  --spacing-2xl: 48px;
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap');
 
-  /* Touch Targets (WCAG 2.1 AA) */
+:root {
+  /* Relative Spacing (8pt Grid System) - Supports Accessibility Text Zoom */
+  --spacing-xs: 0.25rem;  /* 4px */
+  --spacing-sm: 0.5rem;   /* 8px */
+  --spacing-md: 1rem;     /* 16px */
+  --spacing-lg: 1.5rem;   /* 24px */
+  --spacing-xl: 2rem;     /* 32px */
+  --spacing-2xl: 3rem;    /* 48px */
+
+  /* Touch Targets (Strict Apple HIG / WCAG 2.1 AA Compliance) */
   --touch-target-min: 44px;
 
-  /* Border Radius */
-  --radius-sm: 8px;
+  /* Typography Design Tokens */
+  --font-display: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+  /* Border Radii */
+  --radius-sm: 6px;
   --radius-md: 12px;
-  --radius-lg: 16px;
-  --radius-pill: 999px;
+  --radius-lg: 20px;
+  --radius-pill: 9999px;
 
-  /* Elevation System */
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.24);
-  --shadow-md: 0 3px 6px rgba(0, 0, 0, 0.15), 0 2px 4px rgba(0, 0, 0, 0.12);
-  --shadow-lg: 0 10px 20px rgba(0, 0, 0, 0.15), 0 3px 6px rgba(0, 0, 0, 0.10);
-  --shadow-xl: 0 15px 25px rgba(0, 0, 0, 0.15), 0 5px 10px rgba(0, 0, 0, 0.05);
+  /* Premium Apple HIG Out-Quint Transitions */
+  --anim-fast: 0.12s;
+  --anim-normal: 0.3s;
+  --anim-slow: 0.5s;
+  --anim-ease: cubic-bezier(0.16, 1, 0.3, 1); /* Out-Quint Easing */
 
-  /* Animation */
-  --anim-fast: 0.15s;
-  --anim-normal: 0.25s;
-  --anim-slow: 0.35s;
-  --anim-ease: cubic-bezier(0.25, 0.8, 0.25, 1);
+  /* Default Theme Mode (Dark Professional) */
+  --theme-name: "dark";
 
-  /* Background Colors */
-  --bg-main: #262626;
-  --bg-panel: #333333;
-  --bg-input: #2a2a2a;
-  --bg-hover: #404040;
+  /* HSL Tailored Color Palette - Dark Mode */
+  --color-hue-primary: 220;
+  
+  --bg-main: hsl(var(--color-hue-primary), 20%, 8%);      /* Slate Black */
+  --bg-panel: hsl(var(--color-hue-primary), 16%, 13%);    /* Modern Charcoal Card */
+  --bg-input: hsl(var(--color-hue-primary), 14%, 18%);    /* Dark Grey Input */
+  --bg-hover: hsl(var(--color-hue-primary), 15%, 22%);    /* Active Grey Hover */
 
-  /* Text Colors */
-  --text-primary: #ffffff;
-  --text-secondary: #cccccc;
-  --text-tertiary: #8E8E93;
-  --text-link: #007bff;
+  --text-primary: hsl(var(--color-hue-primary), 20%, 96%);
+  --text-secondary: hsl(var(--color-hue-primary), 10%, 75%);
+  --text-tertiary: hsl(var(--color-hue-primary), 8%, 55%);
 
-  /* Border Colors */
-  --border-panel: #4d4d4d;
-  --border-input: #666666;
+  --border-panel: hsla(var(--color-hue-primary), 20%, 96%, 0.08);
+  --border-input: hsla(var(--color-hue-primary), 20%, 96%, 0.12);
 
-  /* State Colors */
-  --state-active: #606060;
-  --color-success: #28a745;
-  --color-error: #dc3545;
-  --color-warning: #ffc107;
+  /* Semantic Theme Accents (HIG Soft Tones) */
+  --color-accent: hsl(210, 100%, 52%);     /* iOS Dynamic System Blue */
+  --color-success: hsl(120, 60%, 48%);     /* Soft System Green */
+  --color-error: hsl(0, 85%, 60%);         /* Soft System Red */
+  --color-warning: hsl(35, 100%, 55%);     /* Soft System Orange */
 
-  /* Theme Aliases */
-  --theme-primary: #007bff;
-  --theme-primary-dark: #0056b3;
-  --theme-secondary: #6c757d;
-  --theme-background: var(--bg-main);
-  --theme-text: var(--text-primary);
-  --theme-text-secondary: var(--text-secondary);
-  --theme-card-bg: var(--bg-panel);
-  --theme-border: var(--border-panel);
-  --theme-accent: #007bff;
-  --theme-success: var(--color-success);
-  --theme-error: var(--color-error);
-  --theme-warning: var(--color-warning);
+  /* Elevation Systems */
+  --shadow-sm: 0 1px 2px hsla(0, 0%, 0%, 0.15);
+  --shadow-md: 0 4px 16px hsla(0, 0%, 0%, 0.25);
+  --shadow-lg: 0 16px 36px hsla(0, 0%, 0%, 0.4);
 
-  /* Component Colors */
-  --accent-color: #007AFF;
-  --accent-color-alpha: rgba(0, 122, 255, 0.1);
-  --background-primary: #262626;
-  --background-secondary: #333333;
-  --card-background: #333333;
-  --input-background: #2a2a2a;
-  --border-color: #666666;
-  --border-hover: #777777;
+  /* Glassmorphism System */
+  --glass-bg: hsla(var(--color-hue-primary), 16%, 13%, 0.7);
+  --glass-blur: blur(20px);
+  --glass-border: hsla(var(--color-hue-primary), 20%, 96%, 0.1);
+}
 
-  /* Button Colors */
-  --button-primary-bg: #007AFF;
-  --button-primary-text: #FFFFFF;
-  --button-primary-hover-bg: #0051D5;
-  --button-secondary-bg: transparent;
-  --button-secondary-text: #007AFF;
-  --button-secondary-border: #007AFF;
-  --button-destructive-bg: #dc3545;
-  --button-destructive-text: #FFFFFF;
+/* === THEME: LIGHT OVERRIDES === */
+[data-theme="light"] {
+  --theme-name: "light";
+  --bg-main: hsl(var(--color-hue-primary), 20%, 96%);     /* Light Slate */
+  --bg-panel: hsl(var(--color-hue-primary), 0%, 100%);    /* Pure White Card */
+  --bg-input: hsl(var(--color-hue-primary), 10%, 92%);    /* Soft Grey Input */
+  --bg-hover: hsl(var(--color-hue-primary), 10%, 88%);    /* Soft Active Hover */
+
+  --text-primary: hsl(var(--color-hue-primary), 20%, 12%);
+  --text-secondary: hsl(var(--color-hue-primary), 15%, 35%);
+  --text-tertiary: hsl(var(--color-hue-primary), 10%, 55%);
+
+  --border-panel: hsla(var(--color-hue-primary), 20%, 12%, 0.08);
+  --border-input: hsla(var(--color-hue-primary), 20%, 12%, 0.12);
+
+  --color-accent: hsl(210, 100%, 50%);     /* iOS Classic Blue */
+  --color-success: hsl(120, 60%, 42%);     /* Classic Green */
+  --color-error: hsl(0, 80%, 52%);         /* Classic Red */
+  --color-warning: hsl(35, 100%, 48%);     /* Classic Orange */
+
+  --shadow-md: 0 4px 12px hsla(var(--color-hue-primary), 20%, 12%, 0.04);
+  --shadow-lg: 0 16px 32px hsla(var(--color-hue-primary), 20%, 12%, 0.08);
+
+  --glass-bg: hsla(var(--color-hue-primary), 0%, 100%, 0.85);
+  --glass-blur: blur(15px);
+  --glass-border: hsla(var(--color-hue-primary), 20%, 12%, 0.08);
+}
+
+/* === THEME: CYBERPUNK OVERRIDES (EXOTIC LUMINANCE) === */
+[data-theme="cyberpunk"] {
+  --theme-name: "cyberpunk";
+  --color-hue-primary: 275;
+  
+  --bg-main: hsl(290, 80%, 4%);             /* Void Violet */
+  --bg-panel: hsl(280, 60%, 8%);            /* Cybernetic Indigo */
+  --bg-input: hsl(280, 50%, 14%);           /* Synthwave Grape */
+  --bg-hover: hsl(280, 50%, 20%);           /* Hyper Active Magenta */
+
+  --text-primary: hsl(180, 100%, 50%);      /* Glowing Neon Cyan */
+  --text-secondary: hsl(300, 100%, 65%);    /* Glowing Neon Magenta */
+  --text-tertiary: hsl(60, 100%, 60%);      /* Neon Yellow Alert */
+
+  --border-panel: hsla(300, 100%, 65%, 0.35);
+  --border-input: hsla(180, 100%, 50%, 0.3);
+
+  --color-accent: hsl(60, 100%, 50%);
+  --color-success: hsl(96, 100%, 50%);      /* Matrix Green */
+  --color-error: hsl(342, 100%, 50%);      /* Acid Red */
+  --color-warning: hsl(42, 100%, 50%);
+
+  --shadow-md: 0 0 12px hsla(300, 100%, 65%, 0.25);
+  --shadow-lg: 0 0 28px hsla(180, 100%, 50%, 0.35);
+
+  --glass-bg: hsla(280, 60%, 8%, 0.65);
+  --glass-blur: blur(12px);
+  --glass-border: hsla(300, 100%, 65%, 0.3);
+}
+
+/* Base Global Reset and Transition Engine */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-body);
+  background-color: var(--bg-main);
+  color: var(--text-primary);
+  line-height: 1.5;
+  transition: background-color var(--anim-normal) var(--anim-ease),
+              color var(--anim-normal) var(--anim-ease),
+              border-color var(--anim-normal) var(--anim-ease),
+              box-shadow var(--anim-normal) var(--anim-ease);
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-top: 0;
+}
+
+a {
+  color: var(--color-accent);
+  text-decoration: none;
+  transition: color var(--anim-fast) linear;
+}
+
+a:hover {
+  filter: brightness(1.2);
 }
