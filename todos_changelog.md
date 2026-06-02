@@ -7,10 +7,10 @@ This document tracks completed changes, active items, and planned improvements f
 ## Active & Pending Todos
 
 ### Phase 1: Security & Cryptography
-- [ ] **Fix GET Request Verification Bug**: Resolve the disconnect between `CommandRouter` (which signs `{"url": url, "method": method}`) and `require_ecosystem_auth` (which expects a JSON request body and tries to call `request.json()`, failing with `400 Bad Request` on GETs).
-- [ ] **Registry Access Control**: Implement signature verification or token-based authentication on registry endpoints (`/register`, `/deregister/{name}`) to prevent malicious services from spoofing or hijacking registrations.
-- [ ] **HMAC Token Replay Protection**: Modify ecosystem tokens to include a short-lived nonce or timestamp verification in the signature payload (currently only signing static `service`, `issued_at`, and `expires_at`), which allows replay attacks within the 24-hour expiration window.
-- [ ] **Bind Token Field**: Include the generated secure random `token` hex in the HMAC signature payload of the ecosystem token so that the random token actually acts as a cryptographic anchor.
+- [x] **Fix GET Request Verification Bug**: Resolve the disconnect between `CommandRouter` (which signs `{"url": url, "method": method}`) and `require_ecosystem_auth` (which expects a JSON request body and tries to call `request.json()`, failing with `400 Bad Request` on GETs). [RESOLVED]
+- [x] **Registry Access Control**: Implement signature verification or token-based authentication on registry endpoints (`/register`, `/deregister/{name}`) to prevent malicious services from spoofing or hijacking registrations. [RESOLVED]
+- [x] **HMAC Token Replay Protection**: Modify ecosystem tokens to include a short-lived nonce or timestamp verification in the signature payload (currently only signing static `service`, `issued_at`, and `expires_at`), which allows replay attacks within the 24-hour expiration window. [RESOLVED]
+- [x] **Bind Token Field**: Include the generated secure random `token` hex in the HMAC signature payload of the ecosystem token so that the random token actually acts as a cryptographic anchor. [RESOLVED]
 
 ### Phase 2: Architecture & Code Quality
 - [ ] **FastAPI Event Loop Blocking**: Fix the `Zeroconf` discovery blocking issue. Currently, `EcosystemDiscovery.discover_services()` calls `time.sleep(2)`, which blocks the main thread and halts the entire FastAPI event loop for 2 seconds. Rewrite to use `asyncio.sleep()` or run it inside an executor thread pool using `asyncio.to_thread`.
