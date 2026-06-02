@@ -2,6 +2,7 @@
 
 import json
 import os
+import shlex
 import signal
 import subprocess
 import sys
@@ -206,7 +207,7 @@ def cmd_start_all() -> int:
         log_file = _get_log_file(key)
         with open(log_file, "a") as log_fh:
             proc = subprocess.Popen(
-                cmd.split(),
+                shlex.split(cmd),
                 cwd=str(abs_path),
                 stdout=log_fh,
                 stderr=subprocess.STDOUT,
