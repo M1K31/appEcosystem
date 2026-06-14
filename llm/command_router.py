@@ -4,6 +4,7 @@ import logging
 import os
 import time
 from typing import Any, Optional
+from urllib.parse import quote
 
 import httpx
 
@@ -44,6 +45,13 @@ class CommandRouter:
         self._harness_ok: bool | None = None
         self._harness_checked_at: float = 0
         self._harness_cache_ttl: float = 30.0
+        # Single shared, persistent connection pool. Per-request timeouts are
+        # passed at call sites so one client covers fast probes and slow analyses.
+        self._client = httpx.AsyncClient(timeout=10.0)
+
+    async def aclose(self) -> None:
+        """Close the shared HTTP connection pool."""
+        await self._client.aclose()
 
     async def refresh_manifests(self) -> None:
         """Refresh the cached capability manifests from the registry."""
@@ -108,7 +116,9 @@ class CommandRouter:
         url = f"{base_url}{endpoint.path}"
         if path_params:
             for key, value in path_params.items():
-                url = url.replace(f"{{{key}}}", str(value))
+                # URL-encode substituted values so untrusted (LLM-supplied)
+                # params cannot inject path traversal or extra path segments.
+                url = url.replace(f"{{{key}}}", quote(str(value), safe=""))
 
         headers = {}
         if endpoint.auth_required:
@@ -121,13 +131,12 @@ class CommandRouter:
             headers["X-Ecosystem-Signature"] = sign_payload(payload_to_sign, self.hmac_secret)
 
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                if endpoint.method.upper() in ("POST", "PUT", "PATCH"):
-                    resp = await client.request(
-                        endpoint.method, url, json=body, headers=headers
-                    )
-                else:
-                    resp = await client.request(endpoint.method, url, headers=headers)
+            if endpoint.method.upper() in ("POST", "PUT", "PATCH"):
+                resp = await self._client.request(
+                    endpoint.method, url, json=body, headers=headers
+                )
+            else:
+                resp = await self._client.request(endpoint.method, url, headers=headers)
 
             return {
                 "status": "ok" if resp.status_code < 400 else "error",
@@ -143,9 +152,10 @@ class CommandRouter:
         if self._harness_ok is not None and (now - self._harness_checked_at) < self._harness_cache_ttl:
             return self._harness_ok
         try:
-            async with httpx.AsyncClient(timeout=2.0) as client:
-                resp = await client.get(f"{self._HARNESS_BASE_URL}/api/status")
-                self._harness_ok = resp.status_code == 200
+            resp = await self._client.get(
+                f"{self._HARNESS_BASE_URL}/api/status", timeout=2.0
+            )
+            self._harness_ok = resp.status_code == 200
         except Exception:
             self._harness_ok = False
         self._harness_checked_at = now
@@ -156,13 +166,13 @@ class CommandRouter:
     ) -> dict[str, Any]:
         """Route a security capability through the harness daemon."""
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(
-                    f"{self._HARNESS_BASE_URL}/api/analyze",
-                    json={"project": project, "capability": capability, **body},
-                )
-                if resp.status_code == 200:
-                    return {"status": "ok", "data": resp.json(), "source": "harness"}
+            resp = await self._client.post(
+                f"{self._HARNESS_BASE_URL}/api/analyze",
+                json={"project": project, "capability": capability, **body},
+                timeout=30.0,
+            )
+            if resp.status_code == 200:
+                return {"status": "ok", "data": resp.json(), "source": "harness"}
         except Exception as e:
             logger.debug("Harness request failed: %s", e)
         return {"status": "error", "detail": "harness unavailable"}

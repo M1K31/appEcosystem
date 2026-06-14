@@ -1,6 +1,7 @@
 """Tests for CommandRouter harness-preference routing cascade."""
 
-from unittest.mock import AsyncMock, patch, MagicMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from llm.command_router import CommandRouter
@@ -19,28 +20,18 @@ class TestHarnessAvailability:
 
     @pytest.mark.asyncio
     async def test_harness_available_when_daemon_responds(self, router):
-        with patch("httpx.AsyncClient") as mock_client_cls:
-            mock_resp = MagicMock(status_code=200)
-            mock_client = AsyncMock()
-            mock_client.get = AsyncMock(return_value=mock_resp)
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_cls.return_value = mock_client
+        mock_resp = MagicMock(status_code=200)
+        router._client.get = AsyncMock(return_value=mock_resp)
 
-            result = await router._harness_available()
-            assert result is True
+        result = await router._harness_available()
+        assert result is True
 
     @pytest.mark.asyncio
     async def test_harness_unavailable_on_connection_error(self, router):
-        with patch("httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.get = AsyncMock(side_effect=ConnectionError("refused"))
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_cls.return_value = mock_client
+        router._client.get = AsyncMock(side_effect=ConnectionError("refused"))
 
-            result = await router._harness_available()
-            assert result is False
+        result = await router._harness_available()
+        assert result is False
 
     @pytest.mark.asyncio
     async def test_harness_cache_reuses_result(self, router):
@@ -123,37 +114,59 @@ class TestRouteViaHarness:
 
     @pytest.mark.asyncio
     async def test_posts_to_analyze_endpoint(self, router):
-        with patch("httpx.AsyncClient") as mock_client_cls:
-            mock_resp = MagicMock(status_code=200)
-            mock_resp.json.return_value = {"result": "analysis done", "model": "llama3"}
-            mock_client = AsyncMock()
-            mock_client.post = AsyncMock(return_value=mock_resp)
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_cls.return_value = mock_client
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {"result": "analysis done", "model": "llama3"}
+        router._client.post = AsyncMock(return_value=mock_resp)
 
-            result = await router._route_via_harness("asusguard", "threat_analysis", {"ip": "1.2.3.4"})
+        result = await router._route_via_harness("asusguard", "threat_analysis", {"ip": "1.2.3.4"})
 
-            assert result["status"] == "ok"
-            assert result["source"] == "harness"
-            # Verify correct URL and payload
-            call_args = mock_client.post.call_args
-            assert "/api/analyze" in call_args[0][0]
-            payload = call_args[1]["json"]
-            assert payload["project"] == "asusguard"
-            assert payload["capability"] == "threat_analysis"
-            assert payload["ip"] == "1.2.3.4"
+        assert result["status"] == "ok"
+        assert result["source"] == "harness"
+        # Verify correct URL and payload
+        call_args = router._client.post.call_args
+        assert "/api/analyze" in call_args[0][0]
+        payload = call_args[1]["json"]
+        assert payload["project"] == "asusguard"
+        assert payload["capability"] == "threat_analysis"
+        assert payload["ip"] == "1.2.3.4"
 
     @pytest.mark.asyncio
     async def test_returns_error_on_non_200(self, router):
-        with patch("httpx.AsyncClient") as mock_client_cls:
-            mock_resp = MagicMock(status_code=502)
-            mock_client = AsyncMock()
-            mock_client.post = AsyncMock(return_value=mock_resp)
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_cls.return_value = mock_client
+        mock_resp = MagicMock(status_code=502)
+        router._client.post = AsyncMock(return_value=mock_resp)
 
-            result = await router._route_via_harness("asusguard", "log_analysis", {})
+        result = await router._route_via_harness("asusguard", "log_analysis", {})
 
-            assert result["status"] == "error"
+        assert result["status"] == "error"
+
+
+class TestExecutePathParams:
+    """Tests for _execute() URL building and path-param encoding."""
+
+    @pytest.mark.asyncio
+    async def test_path_params_are_url_encoded(self, router):
+        """Untrusted path params must be encoded to prevent path traversal."""
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.headers = {"content-type": "application/json"}
+        mock_resp.json.return_value = {"ok": True}
+        router._client.request = AsyncMock(return_value=mock_resp)
+
+        endpoint = SimpleNamespace(
+            path="/cameras/{id}", method="GET", auth_required=False
+        )
+        await router._execute(
+            "http://svc:8200", endpoint, {"id": "../admin/secret"}, None
+        )
+
+        called_url = router._client.request.call_args[0][1]
+        # The slash is encoded, so the value stays a single path segment and
+        # cannot traverse into /admin/secret.
+        assert "../" not in called_url
+        assert "/admin/secret" not in called_url
+        assert called_url == "http://svc:8200/cameras/..%2Fadmin%2Fsecret"
+
+    @pytest.mark.asyncio
+    async def test_aclose_closes_client(self, router):
+        router._client.aclose = AsyncMock()
+        await router.aclose()
+        router._client.aclose.assert_awaited_once()
