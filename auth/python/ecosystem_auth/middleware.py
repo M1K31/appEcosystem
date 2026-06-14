@@ -1,20 +1,13 @@
 """FastAPI middleware/dependency for ecosystem authentication."""
 
-import os
 from typing import Optional
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from .tokens import verify_signature
+from .tokens import get_ecosystem_secret, verify_signature
 
 security_scheme = HTTPBearer(auto_error=False)
-
-
-def get_ecosystem_secret() -> str:
-    """Get the shared HMAC secret from environment."""
-    secret = os.environ.get("ECOSYSTEM_HMAC_SECRET", "dev-ecosystem-secret-change-in-production")
-    return secret
 
 
 async def require_ecosystem_auth(

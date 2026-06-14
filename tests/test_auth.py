@@ -11,7 +11,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(0, str(Path(__file__).parent.parent / "auth" / "python"))
 
 from ecosystem_auth.tokens import (
+    DEFAULT_DEV_SECRET,
     generate_secure_token,
+    get_ecosystem_secret,
     hash_token,
     sign_payload,
     verify_signature,
@@ -19,6 +21,31 @@ from ecosystem_auth.tokens import (
     create_ecosystem_token,
     verify_ecosystem_token,
 )
+
+
+class TestSecretResolution:
+    def test_explicit_override_wins(self):
+        assert get_ecosystem_secret("explicit-secret") == "explicit-secret"
+
+    def test_env_secret_used(self, monkeypatch):
+        monkeypatch.setenv("ECOSYSTEM_HMAC_SECRET", "from-env")
+        assert get_ecosystem_secret() == "from-env"
+
+    def test_default_allowed_in_dev(self, monkeypatch):
+        monkeypatch.delenv("ECOSYSTEM_HMAC_SECRET", raising=False)
+        monkeypatch.setenv("ECOSYSTEM_ENV", "dev")
+        assert get_ecosystem_secret() == DEFAULT_DEV_SECRET
+
+    def test_default_rejected_in_production(self, monkeypatch):
+        monkeypatch.delenv("ECOSYSTEM_HMAC_SECRET", raising=False)
+        monkeypatch.setenv("ECOSYSTEM_ENV", "production")
+        with pytest.raises(RuntimeError, match="insecure default"):
+            get_ecosystem_secret()
+
+    def test_real_secret_allowed_in_production(self, monkeypatch):
+        monkeypatch.setenv("ECOSYSTEM_ENV", "production")
+        monkeypatch.setenv("ECOSYSTEM_HMAC_SECRET", "a-real-secret")
+        assert get_ecosystem_secret() == "a-real-secret"
 
 
 class TestTokenGeneration:

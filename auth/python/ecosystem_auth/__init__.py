@@ -2,6 +2,7 @@
 
 from .tokens import (
     generate_secure_token,
+    get_ecosystem_secret,
     hash_token,
     verify_token_hash,
     sign_payload,
@@ -11,6 +12,7 @@ from .middleware import require_ecosystem_auth
 
 __all__ = [
     "generate_secure_token",
+    "get_ecosystem_secret",
     "hash_token",
     "verify_token_hash",
     "sign_payload",

@@ -36,10 +36,10 @@ class CommandRouter:
         discovery: Optional[DiscoveryAgent] = None,
         hmac_secret: Optional[str] = None,
     ):
+        from auth.python.ecosystem_auth.tokens import get_ecosystem_secret
+
         self.discovery = discovery or DiscoveryAgent()
-        self.hmac_secret = hmac_secret or os.environ.get(
-            "ECOSYSTEM_HMAC_SECRET", "dev-ecosystem-secret-change-in-production"
-        )
+        self.hmac_secret = get_ecosystem_secret(hmac_secret)
         self._manifests: dict[str, ProjectManifest] = {}
         self._harness_ok: bool | None = None
         self._harness_checked_at: float = 0

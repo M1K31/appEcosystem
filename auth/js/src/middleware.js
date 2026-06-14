@@ -5,12 +5,25 @@
 
 const { verifySignature, verifyEcosystemToken } = require("./tokens");
 
+// Insecure development default. Mirrors Python's DEFAULT_DEV_SECRET.
+const DEFAULT_DEV_SECRET = "dev-ecosystem-secret-change-in-production";
+
 /**
  * Get the shared HMAC secret from environment.
+ *
+ * Fails closed: if the resolved secret is the known development default and
+ * ECOSYSTEM_ENV is anything other than "dev", an error is thrown rather than
+ * silently trusting a public key.
  * @returns {string}
  */
 function getEcosystemSecret() {
-  return process.env.ECOSYSTEM_HMAC_SECRET || "dev-ecosystem-secret-change-in-production";
+  const secret = process.env.ECOSYSTEM_HMAC_SECRET || DEFAULT_DEV_SECRET;
+  if (secret === DEFAULT_DEV_SECRET && (process.env.ECOSYSTEM_ENV || "dev") !== "dev") {
+    throw new Error(
+      "Refusing to start: ECOSYSTEM_HMAC_SECRET is unset or set to the insecure default."
+    );
+  }
+  return secret;
 }
 
 /**

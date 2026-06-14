@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import os
 from typing import Optional
 
 import httpx
@@ -30,10 +29,10 @@ class EventBus:
         retry_delay: float = 5.0,
         timeout: float = 10.0,
     ):
+        from auth.python.ecosystem_auth.tokens import get_ecosystem_secret
+
         self.registry = registry
-        self.hmac_secret = hmac_secret or os.environ.get(
-            "ECOSYSTEM_HMAC_SECRET", "dev-ecosystem-secret-change-in-production"
-        )
+        self.hmac_secret = get_ecosystem_secret(hmac_secret)
         self.retry_attempts = retry_attempts
         self.retry_delay = retry_delay
         self.timeout = timeout
