@@ -63,4 +63,3 @@ echo ""
 echo "=== systemd Service Installed and Started Successfully ==="
 echo "Check status with: sudo systemctl status ecosystem-registry"
 echo "View service logs with: journalctl -u ecosystem-registry -f"
-EOF
