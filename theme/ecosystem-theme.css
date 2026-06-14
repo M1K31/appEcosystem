@@ -161,3 +161,65 @@ a {
 a:hover {
   filter: brightness(1.2);
 }
+
+/* === ACCESSIBILITY: KEYBOARD FOCUS (WCAG 2.4.7) === */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Interactive elements honour the HIG/WCAG minimum touch target. */
+button,
+[role="button"],
+input,
+select,
+textarea,
+a.button {
+  min-height: var(--touch-target-min);
+}
+
+/* === ACCESSIBILITY: OS COLOR-SCHEME PREFERENCE ===
+ * When the user has not explicitly chosen a theme via [data-theme], follow the
+ * operating system's light/dark preference. Explicit selection always wins. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --theme-name: "light";
+    --bg-main: hsl(var(--color-hue-primary), 20%, 96%);
+    --bg-panel: hsl(var(--color-hue-primary), 0%, 100%);
+    --bg-input: hsl(var(--color-hue-primary), 10%, 92%);
+    --bg-hover: hsl(var(--color-hue-primary), 10%, 88%);
+
+    --text-primary: hsl(var(--color-hue-primary), 20%, 12%);
+    --text-secondary: hsl(var(--color-hue-primary), 15%, 35%);
+    --text-tertiary: hsl(var(--color-hue-primary), 10%, 55%);
+
+    --border-panel: hsla(var(--color-hue-primary), 20%, 12%, 0.08);
+    --border-input: hsla(var(--color-hue-primary), 20%, 12%, 0.12);
+
+    --color-accent: hsl(210, 100%, 50%);
+    --color-success: hsl(120, 60%, 42%);
+    --color-error: hsl(0, 80%, 52%);
+    --color-warning: hsl(35, 100%, 48%);
+
+    --shadow-md: 0 4px 12px hsla(var(--color-hue-primary), 20%, 12%, 0.04);
+    --shadow-lg: 0 16px 32px hsla(var(--color-hue-primary), 20%, 12%, 0.08);
+
+    --glass-bg: hsla(var(--color-hue-primary), 0%, 100%, 0.85);
+    --glass-blur: blur(15px);
+    --glass-border: hsla(var(--color-hue-primary), 20%, 12%, 0.08);
+  }
+}
+
+/* === ACCESSIBILITY: REDUCED MOTION (WCAG 2.3.3 / HIG) ===
+ * Respect users who request minimal motion at the OS level. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.001ms !important;
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}
