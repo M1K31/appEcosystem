@@ -88,6 +88,42 @@ def _is_running(key: str) -> bool:
         return False
 
 
+def _pid_alive(pid: int) -> bool:
+    """Return True if a process with the given PID currently exists."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, OSError):
+        return False
+
+
+def _terminate_pid(pid: int, label: str, grace: float = 5.0) -> str:
+    """Gracefully stop a process, escalating to SIGKILL if it does not exit.
+
+    Sends SIGTERM, polls for up to ``grace`` seconds, then sends SIGKILL.
+    Returns a human-readable outcome string.
+    """
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return f"{label}: already stopped (stale PID)"
+
+    waited = 0.0
+    interval = 0.2
+    while waited < grace:
+        if not _pid_alive(pid):
+            return f"{label}: stopped (PID {pid})"
+        time.sleep(interval)
+        waited += interval
+
+    # Grace period exceeded — force kill to avoid orphaned processes.
+    try:
+        os.kill(pid, signal.SIGKILL)
+        return f"{label}: force-killed after {grace:.0f}s (PID {pid})"
+    except ProcessLookupError:
+        return f"{label}: stopped (PID {pid})"
+
+
 def _registry_host(config: dict) -> str:
     """Resolve the registry bind host.
 
@@ -136,14 +172,15 @@ def cmd_stop() -> int:
         print("Registry is not running (no PID file)")
         return 1
 
-    pid = int(PID_FILE.read_text().strip())
     try:
-        os.kill(pid, signal.SIGTERM)
-        print(f"Stopped registry (PID {pid})")
-        PID_FILE.unlink()
-    except ProcessLookupError:
-        print(f"Process {pid} not found - cleaning up stale PID file")
-        PID_FILE.unlink()
+        pid = int(PID_FILE.read_text().strip())
+    except ValueError:
+        print("Registry PID file is corrupt - cleaning up")
+        PID_FILE.unlink(missing_ok=True)
+        return 1
+
+    print(_terminate_pid(pid, "Registry"))
+    PID_FILE.unlink(missing_ok=True)
     return 0
 
 
@@ -245,17 +282,50 @@ def cmd_stop_all() -> int:
         if not pid_file.exists():
             continue
 
-        pid = int(pid_file.read_text().strip())
         try:
-            os.kill(pid, signal.SIGTERM)
-            print(f"  {name}: stopped (PID {pid})")
-        except ProcessLookupError:
-            print(f"  {name}: already stopped (stale PID)")
+            pid = int(pid_file.read_text().strip())
+        except ValueError:
+            print(f"  {name}: corrupt PID file, cleaning up")
+            pid_file.unlink(missing_ok=True)
+            continue
+
+        print(f"  {_terminate_pid(pid, name)}")
         pid_file.unlink(missing_ok=True)
 
     # Stop registry last
     cmd_stop()
     return 0
+
+
+def cmd_restart() -> int:
+    """Restart the ecosystem registry (stop if running, then start)."""
+    if PID_FILE.exists():
+        cmd_stop()
+        # Brief pause so the port is released before re-binding.
+        time.sleep(1.0)
+    return cmd_start()
+
+
+def cmd_monitor(interval: int = 5, once: bool = False) -> int:
+    """Continuously display ecosystem health status.
+
+    Refreshes every ``interval`` seconds until interrupted. With ``once``,
+    renders a single snapshot and returns (useful for scripting/tests).
+    """
+    try:
+        while True:
+            # Clear screen for a live dashboard feel (skipped in --once mode).
+            if not once:
+                print("\033[2J\033[H", end="")
+                print(f"Ecosystem monitor — refresh every {interval}s (Ctrl+C to exit)")
+                print(f"Last update: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            cmd_status()
+            if once:
+                return 0
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        print("\nMonitor stopped.")
+        return 0
 
 
 def cmd_logs(project: str | None = None, lines: int = 50) -> int:

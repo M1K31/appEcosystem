@@ -64,6 +64,52 @@ class TestHealthCheck:
             assert result is False
 
 
+class TestTerminatePid:
+    def test_graceful_sigterm(self):
+        """A process that exits on SIGTERM is not escalated to SIGKILL."""
+        from cli import commands
+
+        sent = []
+        # Alive until SIGTERM is observed, then dead.
+        state = {"alive": True}
+
+        def fake_kill(pid, sig):
+            sent.append(sig)
+            if sig == commands.signal.SIGTERM:
+                state["alive"] = False
+
+        with patch("cli.commands.os.kill", side_effect=fake_kill), \
+             patch("cli.commands._pid_alive", side_effect=lambda pid: state["alive"]):
+            result = commands._terminate_pid(1234, "Reg", grace=1.0)
+
+        assert commands.signal.SIGTERM in sent
+        assert commands.signal.SIGKILL not in sent
+        assert "stopped" in result
+
+    def test_escalates_to_sigkill(self):
+        """A process that ignores SIGTERM is force-killed."""
+        from cli import commands
+
+        sent = []
+        with patch("cli.commands.os.kill", side_effect=lambda pid, sig: sent.append(sig)), \
+             patch("cli.commands._pid_alive", return_value=True), \
+             patch("cli.commands.time.sleep"):
+            result = commands._terminate_pid(1234, "Reg", grace=0.5)
+
+        assert commands.signal.SIGTERM in sent
+        assert commands.signal.SIGKILL in sent
+        assert "force-killed" in result
+
+    def test_already_dead(self):
+        """A missing process reports a stale PID without error."""
+        from cli import commands
+
+        with patch("cli.commands.os.kill", side_effect=ProcessLookupError):
+            result = commands._terminate_pid(1234, "Reg", grace=0.5)
+
+        assert "stale PID" in result
+
+
 class TestStatusOutput:
     def test_format_status_line(self):
         from cli.commands import _format_status_line
