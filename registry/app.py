@@ -7,7 +7,7 @@ import os
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
-from fastapi import FastAPI, HTTPException, status, Depends
+from fastapi import FastAPI, HTTPException, Request, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from auth.python.ecosystem_auth.middleware import require_ecosystem_auth
 
@@ -20,16 +20,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Module-level singletons initialized in lifespan
-registry: ServiceRegistry = None  # type: ignore
-health_monitor: HealthMonitor = None  # type: ignore
-event_bus: EventBus = None  # type: ignore
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global registry, health_monitor, event_bus
-
     persistence_path = os.environ.get(
         "ECOSYSTEM_REGISTRY_FILE", "data/registry.json"
     )
@@ -55,6 +48,12 @@ async def lifespan(app: FastAPI):
     )
     await health_monitor.start()
 
+    # Stash on app.state so request handlers resolve them via dependencies
+    # rather than module globals (which could be None before startup).
+    app.state.registry = registry
+    app.state.health_monitor = health_monitor
+    app.state.event_bus = event_bus
+
     logger.info("Ecosystem registry started")
     yield
 
@@ -62,6 +61,28 @@ async def lifespan(app: FastAPI):
     if event_bus:
         await event_bus.close()
     logger.info("Ecosystem registry stopped")
+
+
+def get_registry(request: Request) -> ServiceRegistry:
+    """Dependency: resolve the registry, 503 if startup has not completed."""
+    registry = getattr(request.app.state, "registry", None)
+    if registry is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Registry not initialized",
+        )
+    return registry
+
+
+def get_health_monitor(request: Request) -> HealthMonitor:
+    """Dependency: resolve the health monitor, 503 if startup has not completed."""
+    monitor = getattr(request.app.state, "health_monitor", None)
+    if monitor is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Health monitor not initialized",
+        )
+    return monitor
 
 
 app = FastAPI(
@@ -101,6 +122,7 @@ async def health():
 async def register_service(
     registration: ServiceRegistration,
     auth: dict = Depends(require_ecosystem_auth),
+    registry: ServiceRegistry = Depends(get_registry),
 ):
     """Register a new service with the ecosystem."""
     record = registry.register(registration)
@@ -111,6 +133,7 @@ async def register_service(
 async def deregister_service(
     name: str,
     auth: dict = Depends(require_ecosystem_auth),
+    registry: ServiceRegistry = Depends(get_registry),
 ):
     """Remove a service from the registry."""
     if not registry.deregister(name):
@@ -119,19 +142,19 @@ async def deregister_service(
 
 
 @app.get("/services", response_model=list[ServiceRecord])
-async def list_services():
+async def list_services(registry: ServiceRegistry = Depends(get_registry)):
     """List all registered services."""
     return registry.get_all()
 
 
 @app.get("/services/priority", response_model=list[ServiceRecord])
-async def list_services_by_priority():
+async def list_services_by_priority(registry: ServiceRegistry = Depends(get_registry)):
     """List all services sorted by priority (highest first, healthy first)."""
     return registry.get_by_priority()
 
 
 @app.get("/services/{name}", response_model=ServiceRecord)
-async def get_service(name: str):
+async def get_service(name: str, registry: ServiceRegistry = Depends(get_registry)):
     """Get a specific service by name."""
     record = registry.get(name)
     if not record:
@@ -140,7 +163,11 @@ async def get_service(name: str):
 
 
 @app.get("/services/{name}/health", response_model=HealthCheckResult)
-async def check_service_health(name: str):
+async def check_service_health(
+    name: str,
+    registry: ServiceRegistry = Depends(get_registry),
+    health_monitor: HealthMonitor = Depends(get_health_monitor),
+):
     """Run an on-demand health check for a specific service."""
     record = registry.get(name)
     if not record:
