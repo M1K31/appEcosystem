@@ -161,16 +161,25 @@ def _register_static_projects(reg: ServiceRegistry) -> None:
             config = yaml.safe_load(f)
 
         for key, proj in (config.get("projects") or {}).items():
-            reg.register(
-                ServiceRegistration(
-                    name=key,
-                    host=proj.get("host", "localhost"),
-                    port=proj["port"],
-                    health_endpoint=proj.get("health_endpoint", "/health"),
-                    priority=proj.get("priority", 0),
-                    metadata={"stack": proj.get("stack", ""), "description": proj.get("description", "")},
+            # Validate per-project so one malformed entry doesn't abort the
+            # entire static load.
+            if "port" not in proj:
+                logger.warning(f"Skipping static project '{key}': missing 'port'")
+                continue
+            try:
+                reg.register(
+                    ServiceRegistration(
+                        name=key,
+                        host=proj.get("host", "localhost"),
+                        port=proj["port"],
+                        health_endpoint=proj.get("health_endpoint", "/health"),
+                        priority=proj.get("priority", 0),
+                        metadata={"stack": proj.get("stack", ""), "description": proj.get("description", "")},
+                        static=True,
+                    )
                 )
-            )
-            logger.info(f"Pre-registered static project: {key}")
+                logger.info(f"Pre-registered static project: {key}")
+            except Exception as e:
+                logger.warning(f"Skipping invalid static project '{key}': {e}")
     except Exception as e:
         logger.warning(f"Could not load static projects: {e}")

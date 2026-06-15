@@ -68,3 +68,33 @@ class TestHealthMonitor:
         results = await monitor.check_all()
         assert len(results) == 1
         assert results[0].service_name == "test-svc"
+
+
+class TestFailureThresholds:
+    @pytest.mark.asyncio
+    async def test_dynamic_service_deregistered(self):
+        from registry.models import HealthCheckResult
+
+        reg = ServiceRegistry()
+        reg.register(ServiceRegistration(name="dyn", port=9001))
+        mon = HealthMonitor(registry=reg, max_failures=3)
+
+        reg.get("dyn").consecutive_failures = 3
+        result = HealthCheckResult(service_name="dyn", status=HealthStatus.UNHEALTHY)
+        await mon._handle_failure_thresholds([result])
+
+        assert reg.get("dyn") is None  # removed
+
+    @pytest.mark.asyncio
+    async def test_static_service_retained(self):
+        from registry.models import HealthCheckResult
+
+        reg = ServiceRegistry()
+        reg.register(ServiceRegistration(name="stat", port=9002, static=True))
+        mon = HealthMonitor(registry=reg, max_failures=3)
+
+        reg.get("stat").consecutive_failures = 5
+        result = HealthCheckResult(service_name="stat", status=HealthStatus.UNHEALTHY)
+        await mon._handle_failure_thresholds([result])
+
+        assert reg.get("stat") is not None  # retained for recovery

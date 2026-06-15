@@ -123,31 +123,54 @@ class HealthMonitor:
                     names = ", ".join(r.service_name for r in unhealthy)
                     logger.warning(f"Unhealthy services: {names}")
 
-                # Auto-deregister services that exceed max consecutive failures
-                for result in results:
-                    record = self.registry.get(result.service_name)
-                    if record and record.consecutive_failures >= self.max_failures:
-                        logger.warning(
-                            f"Auto-deregistering {result.service_name} "
-                            f"after {record.consecutive_failures} consecutive failures"
-                        )
-                        # Publish unhealthy event before removal
-                        if self._event_bus:
-                            try:
-                                from events.schemas import EventEnvelope
-                                await self._event_bus.publish(EventEnvelope(
-                                    type="ecosystem.service_unhealthy",
-                                    source="registry",
-                                    data={
-                                        "service": result.service_name,
-                                        "last_status": result.status.value,
-                                        "consecutive_failures": record.consecutive_failures,
-                                        "priority": record.priority,
-                                    },
-                                ))
-                            except Exception as e:
-                                logger.debug(f"Failed to publish unhealthy event: {e}")
-                        self.registry.deregister(result.service_name)
+                await self._handle_failure_thresholds(results)
             except Exception as e:
                 logger.error(f"Health poll error: {e}")
             await asyncio.sleep(self.interval)
+
+    async def _handle_failure_thresholds(self, results) -> None:
+        """Act on services that have exceeded the failure threshold.
+
+        Dynamic services are auto-deregistered. Static (config-defined) services
+        are retained so they recover when the backend returns; their unhealthy
+        event is published once, at the threshold crossing.
+        """
+        for result in results:
+            record = self.registry.get(result.service_name)
+            if not (record and record.consecutive_failures >= self.max_failures):
+                continue
+
+            if record.static:
+                if record.consecutive_failures == self.max_failures:
+                    logger.warning(
+                        f"Static service {result.service_name} unhealthy after "
+                        f"{record.consecutive_failures} failures (retained for recovery)"
+                    )
+                    await self._publish_unhealthy(result, record)
+                continue
+
+            logger.warning(
+                f"Auto-deregistering {result.service_name} "
+                f"after {record.consecutive_failures} consecutive failures"
+            )
+            await self._publish_unhealthy(result, record)
+            self.registry.deregister(result.service_name)
+
+    async def _publish_unhealthy(self, result, record) -> None:
+        """Publish an ecosystem.service_unhealthy event (best-effort)."""
+        if not self._event_bus:
+            return
+        try:
+            from events.schemas import EventEnvelope
+            await self._event_bus.publish(EventEnvelope(
+                type="ecosystem.service_unhealthy",
+                source="registry",
+                data={
+                    "service": result.service_name,
+                    "last_status": result.status.value,
+                    "consecutive_failures": record.consecutive_failures,
+                    "priority": record.priority,
+                },
+            ))
+        except Exception as e:
+            logger.debug(f"Failed to publish unhealthy event: {e}")

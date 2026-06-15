@@ -39,6 +39,7 @@ class ServiceRegistry:
             subscriptions=registration.subscriptions,
             metadata=registration.metadata,
             priority=registration.priority,
+            static=registration.static,
             status=HealthStatus.UNKNOWN,
             registered_at=time.time(),
         )

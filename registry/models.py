@@ -31,6 +31,10 @@ class ServiceRegistration(BaseModel):
     )
     metadata: dict = Field(default_factory=dict)
     priority: int = Field(default=0, description="Higher priority = preferred service (0=default)")
+    static: bool = Field(
+        default=False,
+        description="Pre-defined in ecosystem.yaml; never auto-deregistered on failure",
+    )
 
 
 class ServiceRecord(BaseModel):
@@ -45,6 +49,7 @@ class ServiceRecord(BaseModel):
     subscriptions: list[str] = Field(default_factory=list)
     metadata: dict = Field(default_factory=dict)
     priority: int = 0
+    static: bool = False
     status: HealthStatus = HealthStatus.UNKNOWN
     last_health_check: Optional[float] = None
     last_healthy: Optional[float] = None
