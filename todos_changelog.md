@@ -25,12 +25,42 @@ This document tracks completed changes, active items, and planned improvements f
 
 ### Phase 4: DevOps, Lifecycle & Orchestration
 - [x] **Ecosystem Process Daemonization**: Generate robust lifecycle scripts with signal interception (`SIGINT`, `SIGTERM`) for graceful shutdowns. [RESOLVED]
-- [x] **Timeout to SIGKILL Escalation**: Refactor `cmd_stop_all` to poll active processes and force-terminate with `SIGKILL` (signal 9) if they fail to shut down gracefully within 5 seconds. [RESOLVED]
+- [x] **Timeout to SIGKILL Escalation**: Refactor `cmd_stop_all` to poll active processes and force-terminate with `SIGKILL` (signal 9) if they fail to shut down gracefully within 5 seconds. [RESOLVED — escalation now in `cli/commands.py` `_terminate_pid`, used by `cmd_stop`/`cmd_stop_all`, not just `process_manager.py`]
 - [x] **Linux systemd Installer**: Create systemd configuration templates to support Arm Linux (Raspberry Pi) and Intel Linux deployment parity with macOS launchd. [RESOLVED]
+
+### Phase 5: Audit Remediation (2026-06-14)
+- [x] **Critical: systemd installer crash**: Removed orphan `EOF` in `scripts/install_systemd.sh` that aborted the installer (exit 127) under `set -euo pipefail`. [RESOLVED]
+- [x] **Fail-closed HMAC secret**: `get_ecosystem_secret()` now refuses the insecure default when `ECOSYSTEM_ENV != dev` (Python + JS); single source of truth replaces four duplicated lookups. Added `.env.example`. [RESOLVED]
+- [x] **Loopback bind + scoped CORS**: Registry defaults to `127.0.0.1`; CORS origins configurable via `ECOSYSTEM_CORS_ORIGINS`; method/header allowlists replace wildcards. [RESOLVED]
+- [x] **CommandRouter pooling + path-param encoding**: Shared `httpx.AsyncClient` with `aclose()`; LLM-supplied path params URL-encoded to block traversal. [RESOLVED]
+- [x] **CLI lifecycle parity**: Added `restart` and `monitor` commands; `_terminate_pid` SIGKILL escalation; launchd plist now wraps uvicorn in `process_manager.py` for macOS/Linux parity. [RESOLVED]
+- [x] **Static service resilience**: Config-defined services are retained (not auto-deregistered) so they recover; static load validates per-project. [RESOLVED]
+- [x] **App.state dependencies**: Registry/health-monitor resolved via FastAPI dependencies returning 503 before startup, instead of module globals. [RESOLVED]
+- [x] **Machine-agnostic base path**: `ECOSYSTEM_BASE_PATH` override; removed hardcoded developer path from `ecosystem.yaml`. [RESOLVED]
+- [x] **CI + lockfiles**: GitHub Actions (pytest matrix, pip-audit, npm audit, shellcheck); committed `package-lock.json`. [RESOLVED]
+- [ ] **HMAC replay protection (request signature path)**: Add timestamp + nonce to the `X-Ecosystem-Signature` scheme and enforce a freshness window with a nonce store. The Bearer-token path is already replay-resistant; the per-request signature path is the remaining gap. [IN PROGRESS]
 
 ---
 
 ## Changelog
+
+### [v0.3.0] — 2026-06-14
+#### Security
+- Fail-closed HMAC secret resolution (`get_ecosystem_secret`) across Python and JS; refuses the insecure default outside `dev`.
+- Registry binds to `127.0.0.1` by default; CORS origins configurable and method/header allowlists scoped.
+- URL-encode LLM-supplied path params in `CommandRouter` to prevent path traversal.
+#### Added
+- `ecosystem restart` and `ecosystem monitor` CLI commands.
+- `.env.example`, GitHub Actions CI (tests, pip-audit, npm audit, shellcheck), committed `package-lock.json`.
+- `static` service flag; config-defined services are retained on failure for recovery.
+#### Fixed
+- Critical: orphan `EOF` aborting the systemd installer.
+- CLI `stop`/`stop-all` now escalate SIGTERM → SIGKILL.
+- Registry singletons resolved via `app.state` dependencies (503 before startup, not AttributeError).
+- Removed hardcoded developer `base_path` from `ecosystem.yaml` (use `ECOSYSTEM_BASE_PATH`).
+#### Changed
+- `CommandRouter` uses a single pooled `httpx.AsyncClient`.
+- launchd plist wraps uvicorn in `process_manager.py` for macOS/Linux shutdown parity.
 
 ### [v0.2.0] — 2026-03-24
 #### Added
