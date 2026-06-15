@@ -34,8 +34,18 @@ def _load_config() -> dict:
 # ---------------------------------------------------------------------------
 
 def _resolve_projects(config: dict) -> list[dict]:
-    """Resolve project definitions from config into a list of project dicts."""
-    base = Path(config.get("ecosystem", {}).get("base_path", ""))
+    """Resolve project definitions from config into a list of project dicts.
+
+    The base path is taken from ECOSYSTEM_BASE_PATH when set, otherwise from
+    ecosystem.yaml. Keeping it overridable avoids hardcoding developer-specific
+    absolute paths in the committed config.
+    """
+    base_str = (
+        os.environ.get("ECOSYSTEM_BASE_PATH")
+        or config.get("ecosystem", {}).get("base_path", "")
+    )
+    # Default to the repo's parent directory (sibling project layout).
+    base = Path(base_str) if base_str else ECOSYSTEM_DIR.parent
     projects = []
     for key, proj in (config.get("projects") or {}).items():
         projects.append({
@@ -369,6 +379,10 @@ def cmd_install() -> int:
     host = _registry_host(config)
     python = sys.executable
     ecosystem_dir = str(ECOSYSTEM_DIR)
+    supervisor = str(ECOSYSTEM_DIR / "scripts" / "process_manager.py")
+    # Wrap uvicorn in the supervisor so macOS gets the same graceful-shutdown
+    # and SIGKILL escalation behaviour as the Linux systemd unit.
+    uvicorn_cmd = f"{python} -m uvicorn registry.app:app --host {host} --port {port}"
 
     plist_content = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -379,13 +393,13 @@ def cmd_install() -> int:
     <key>ProgramArguments</key>
     <array>
         <string>{python}</string>
-        <string>-m</string>
-        <string>uvicorn</string>
-        <string>registry.app:app</string>
-        <string>--host</string>
-        <string>{host}</string>
-        <string>--port</string>
-        <string>{port}</string>
+        <string>{supervisor}</string>
+        <string>--cmd</string>
+        <string>{uvicorn_cmd}</string>
+        <string>--cwd</string>
+        <string>{ecosystem_dir}</string>
+        <string>--log</string>
+        <string>{ecosystem_dir}/data/registry.log</string>
     </array>
     <key>WorkingDirectory</key>
     <string>{ecosystem_dir}</string>

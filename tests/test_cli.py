@@ -39,6 +39,24 @@ class TestProjectResolver:
         config = {"ecosystem": {"base_path": "/tmp"}, "projects": {}}
         assert _resolve_projects(config) == []
 
+    def test_base_path_env_override(self, monkeypatch):
+        from cli.commands import _resolve_projects
+
+        monkeypatch.setenv("ECOSYSTEM_BASE_PATH", "/opt/eco")
+        config = {
+            "ecosystem": {"base_path": "/ignored"},
+            "projects": {"a": {"path": "a/b", "port": 1}},
+        }
+        assert _resolve_projects(config)[0]["abs_path"] == Path("/opt/eco/a/b")
+
+    def test_base_path_defaults_to_repo_parent(self, monkeypatch):
+        from cli import commands
+
+        monkeypatch.delenv("ECOSYSTEM_BASE_PATH", raising=False)
+        config = {"ecosystem": {"base_path": ""}, "projects": {"a": {"path": "x", "port": 1}}}
+        expected = commands.ECOSYSTEM_DIR.parent / "x"
+        assert commands._resolve_projects(config)[0]["abs_path"] == expected
+
 
 class TestHealthCheck:
     @pytest.mark.asyncio
