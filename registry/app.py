@@ -71,11 +71,23 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+def _cors_origins() -> list[str]:
+    """Resolve allowed CORS origins from the environment.
+
+    Defaults to "*" for local development but should be set to an explicit,
+    comma-separated origin list in production.
+    """
+    raw = os.environ.get("ECOSYSTEM_CORS_ORIGINS", "*").strip()
+    if raw == "*" or not raw:
+        return ["*"]
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_cors_origins(),
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Ecosystem-Signature"],
 )
 
 

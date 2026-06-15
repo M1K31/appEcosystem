@@ -88,12 +88,26 @@ def _is_running(key: str) -> bool:
         return False
 
 
+def _registry_host(config: dict) -> str:
+    """Resolve the registry bind host.
+
+    Defaults to loopback so the control plane is not exposed on all interfaces.
+    Set ECOSYSTEM_REGISTRY_HOST=0.0.0.0 only when the registry is firewalled
+    to a trusted network.
+    """
+    return os.environ.get(
+        "ECOSYSTEM_REGISTRY_HOST",
+        config.get("registry", {}).get("host", "127.0.0.1"),
+    )
+
+
 def cmd_start() -> int:
     """Start the ecosystem registry."""
     config = _load_config()
     port = config.get("registry", {}).get("port", 8500)
+    host = _registry_host(config)
 
-    print(f"Starting ecosystem registry on port {port}...")
+    print(f"Starting ecosystem registry on {host}:{port}...")
 
     # Ensure data dir exists
     (ECOSYSTEM_DIR / "data").mkdir(exist_ok=True)
@@ -102,7 +116,7 @@ def cmd_start() -> int:
         [
             sys.executable, "-m", "uvicorn",
             "registry.app:app",
-            "--host", "0.0.0.0",
+            "--host", host,
             "--port", str(port),
         ],
         cwd=str(ECOSYSTEM_DIR),
@@ -282,6 +296,7 @@ def cmd_install() -> int:
     """Install ecosystem registry as a macOS launchd service."""
     config = _load_config()
     port = config.get("registry", {}).get("port", 8500)
+    host = _registry_host(config)
     python = sys.executable
     ecosystem_dir = str(ECOSYSTEM_DIR)
 
@@ -298,7 +313,7 @@ def cmd_install() -> int:
         <string>uvicorn</string>
         <string>registry.app:app</string>
         <string>--host</string>
-        <string>0.0.0.0</string>
+        <string>{host}</string>
         <string>--port</string>
         <string>{port}</string>
     </array>

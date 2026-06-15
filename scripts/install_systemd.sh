@@ -39,7 +39,10 @@ Type=simple
 User=$USER_NAME
 WorkingDirectory=$ROOT_DIR
 Environment=ECOSYSTEM_REGISTRY_FILE=data/registry.json
-ExecStart=$PYTHON_BIN scripts/process_manager.py --cmd "$PYTHON_BIN -m uvicorn registry.app:app --host 0.0.0.0 --port 8500" --log data/registry.log
+# Bind to loopback by default. Change to 0.0.0.0 only when the registry is
+# firewalled to a trusted network.
+Environment=ECOSYSTEM_REGISTRY_HOST=127.0.0.1
+ExecStart=$PYTHON_BIN scripts/process_manager.py --cmd "$PYTHON_BIN -m uvicorn registry.app:app --host \${ECOSYSTEM_REGISTRY_HOST} --port 8500" --log data/registry.log
 Restart=always
 RestartSec=5
 StandardOutput=journal

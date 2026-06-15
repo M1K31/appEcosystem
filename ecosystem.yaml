@@ -14,8 +14,11 @@ auth:
   token_rotation_hours: 12
 
 # Service registry
+# host defaults to loopback so the control plane is not exposed on all
+# interfaces. Override with ECOSYSTEM_REGISTRY_HOST=0.0.0.0 only when the
+# registry is firewalled to a trusted network.
 registry:
-  host: "0.0.0.0"
+  host: "127.0.0.1"
   port: 8500
   health_check_interval_seconds: 30
   persistence_file: "data/registry.json"
