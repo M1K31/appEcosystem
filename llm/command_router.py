@@ -30,17 +30,28 @@ class CommandRouter:
         "threat_analysis", "log_analysis", "security_scan",
         "incident_triage", "block_ip", "security_status",
     })
-    _HARNESS_BASE_URL = f"http://localhost:{os.environ.get('ASUSGUARD_PORT', '8088')}"
+
+    @staticmethod
+    def _default_harness_url() -> str:
+        """Resolve the harness daemon URL from the environment (evaluated per
+        instance, not at import time). ECOSYSTEM_HARNESS_URL wins; otherwise it
+        is built from ASUSGUARD_PORT."""
+        explicit = os.environ.get("ECOSYSTEM_HARNESS_URL")
+        if explicit:
+            return explicit.rstrip("/")
+        return f"http://localhost:{os.environ.get('ASUSGUARD_PORT', '8088')}"
 
     def __init__(
         self,
         discovery: Optional[DiscoveryAgent] = None,
         hmac_secret: Optional[str] = None,
+        harness_url: Optional[str] = None,
     ):
         from auth.python.ecosystem_auth.tokens import get_ecosystem_secret
 
         self.discovery = discovery or DiscoveryAgent()
         self.hmac_secret = get_ecosystem_secret(hmac_secret)
+        self._harness_base_url = harness_url or self._default_harness_url()
         self._manifests: dict[str, ProjectManifest] = {}
         self._harness_ok: bool | None = None
         self._harness_checked_at: float = 0
@@ -152,7 +163,7 @@ class CommandRouter:
             return self._harness_ok
         try:
             resp = await self._client.get(
-                f"{self._HARNESS_BASE_URL}/api/status", timeout=2.0
+                f"{self._harness_base_url}/api/status", timeout=2.0
             )
             self._harness_ok = resp.status_code == 200
         except Exception:
@@ -166,7 +177,7 @@ class CommandRouter:
         """Route a security capability through the harness daemon."""
         try:
             resp = await self._client.post(
-                f"{self._HARNESS_BASE_URL}/api/analyze",
+                f"{self._harness_base_url}/api/analyze",
                 json={"project": project, "capability": capability, **body},
                 timeout=30.0,
             )

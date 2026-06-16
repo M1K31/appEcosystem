@@ -170,3 +170,20 @@ class TestExecutePathParams:
         router._client.aclose = AsyncMock()
         await router.aclose()
         router._client.aclose.assert_awaited_once()
+
+
+class TestHarnessUrlResolution:
+    def test_default_from_port(self, monkeypatch):
+        monkeypatch.delenv("ECOSYSTEM_HARNESS_URL", raising=False)
+        monkeypatch.setenv("ASUSGUARD_PORT", "9000")
+        assert CommandRouter._default_harness_url() == "http://localhost:9000"
+
+    def test_explicit_url_wins(self, monkeypatch):
+        monkeypatch.setenv("ECOSYSTEM_HARNESS_URL", "http://harness.local:1234/")
+        assert CommandRouter._default_harness_url() == "http://harness.local:1234"
+
+    def test_constructor_override(self):
+        discovery = MagicMock()
+        discovery.discover_all = AsyncMock(return_value=[])
+        r = CommandRouter(discovery=discovery, harness_url="http://h:5/")
+        assert r._harness_base_url == "http://h:5/"
