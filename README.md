@@ -20,7 +20,7 @@ The architecture is **standalone-first**: if the coordination layer goes offline
 | **OpenEye** | `192.168.50.73:8200` | Python, OpenCV, React | Video surveillance, physical intrusion detection, computer vision alerts, and smart home automation. |
 | **MagicMirror** | `192.168.50.73:8080` | Node.js, Electron, Express | Verbal communication hub, ambient smart-HUD, and real-time event visualization interface. |
 | **AsusGuard** | `192.168.50.73:8088` | Python, Flask, Daemon | Network traffic analysis, router syslog parsing, device control, and network threat blocking. |
-| **appEcosystem (Registry)** | `0.0.0.0:8500` | Python, FastAPI, Zeroconf | Central service registry, async webhook event bus, and discovery broker. |
+| **appEcosystem (Registry)** | `127.0.0.1:8500` | Python, FastAPI, Zeroconf | Central service registry, async webhook event bus, and discovery broker. |
 
 ---
 
@@ -93,15 +93,25 @@ cd appEcosystem
 ```
 
 ### 3.3 Configuration
-Configure the shared credentials and paths in `ecosystem.yaml`:
-```yaml
-ecosystem:
-  name: "appEcosystem"
-  base_path: "/Volumes/Locker2/GitHub"
+Copy `.env.example` to `.env` and set the environment variables (see that file
+for the full list). Project paths and ports live in `ecosystem.yaml`; secrets
+and machine-specific values come from the environment.
 
-# IMPORTANT: Export ECOSYSTEM_HMAC_SECRET to your shell or system environment variables
-auth:
-  hmac_secret: "${ECOSYSTEM_HMAC_SECRET:-dev-ecosystem-secret-change-in-production}"
+Key variables:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `ECOSYSTEM_HMAC_SECRET` | _(dev default)_ | Shared inter-service HMAC secret. **Required in production** — services refuse to start with the default unless `ECOSYSTEM_ENV=dev`. |
+| `ECOSYSTEM_ENV` | `dev` | `dev` / `staging` / `production`. Non-`dev` enables fail-closed checks. |
+| `ECOSYSTEM_REGISTRY_HOST` | `127.0.0.1` | Registry bind host. Use `0.0.0.0` only behind a trusted-network firewall. |
+| `ECOSYSTEM_CORS_ORIGINS` | `*` | Comma-separated allowed origins (dev default `*`). |
+| `ECOSYSTEM_BASE_PATH` | repo parent dir | Root containing the sibling project repos. |
+| `ECOSYSTEM_HARNESS_URL` / `ASUSGUARD_PORT` | `http://localhost:8088` | Cyber-claude-harness daemon location. |
+
+```bash
+# Generate a strong shared secret:
+python -c "import secrets; print(secrets.token_hex(32))"
+export ECOSYSTEM_HMAC_SECRET="<generated-value>"
 ```
 
 ### 3.4 Service Commands
@@ -109,16 +119,20 @@ auth:
 # Activate virtual environment
 source .venv/bin/activate
 
-# 1. Start the service registry and all connected apps in the background
+# Start the registry only / registry + all connected apps
+python -m cli start
 python -m cli start-all
 
-# 2. Monitor status and service health
-python -m cli status
+# Restart the registry, or watch a live health dashboard
+python -m cli restart
+python -m cli monitor            # add --once for a single snapshot, -i N for interval
 
-# 3. Stream real-time logs for a specific application
+# Status, logs
+python -m cli status
 python -m cli logs openeye
 
-# 4. Stop all processes safely
+# Stop the registry / everything (SIGTERM, escalating to SIGKILL after 5s)
+python -m cli stop
 python -m cli stop-all
 ```
 
@@ -128,9 +142,10 @@ python -m cli stop-all
 
 To protect Smart Industries' infrastructure from compromise, a **Zero-Trust Inter-Service Auth** model is applied:
 
-1. **HMAC-SHA256 Webhook Verification**: Every event published through the event bus contains an `X-Ecosystem-Signature` header. The receiver computes the HMAC over the compact JSON request body using the shared secret and rejects unsigned or mismatching payloads.
-2. **Short-Lived Bearer Tokens**: Microservice-to-microservice REST queries use a Bearer token in the `Authorization` header. Tokens contain a 24-hour expiration timestamp and undergo a 12-hour proactive rotation cycle.
-3. **Cyber Claude Harness Guard**: Security-critical commands (such as IP blocking, log analysis, router reconfigurations) are routed through a localized security harness (`localhost:8088`) running isolated sandboxed agents.
+1. **Replay-resistant HMAC-SHA256 signatures**: Authenticated requests carry `X-Ecosystem-Signature`, `X-Ecosystem-Timestamp`, and `X-Ecosystem-Nonce` headers. The signature binds the method, a host-independent canonical path, the timestamp, the nonce, and a digest of the body. Receivers reject signatures outside a ±300s window and replayed nonces.
+2. **Short-Lived Bearer Tokens**: Microservice-to-microservice REST queries may use a Bearer token in the `Authorization` header. Tokens bind a random value and a 24-hour expiration into the signature and undergo a 12-hour proactive rotation cycle.
+3. **Fail-closed secret handling**: Services refuse to start with the built-in development secret when `ECOSYSTEM_ENV` is not `dev`; the registry binds to loopback by default.
+4. **Cyber Claude Harness Guard**: Security-critical commands (such as IP blocking, log analysis, router reconfigurations) are routed through a localized security harness running isolated sandboxed agents.
 
 ---
 

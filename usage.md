@@ -98,6 +98,43 @@ async def handle_alert(auth: dict = Depends(require_ecosystem_auth)):
     return {"status": "processed"}
 ```
 
+### 1.3 Replay-Resistant REST Requests
+
+Authenticated REST calls (e.g. `/register`, `/deregister/{name}`) must use
+`sign_request`, which adds timestamp + nonce + body-digest headers. The server
+rejects signatures outside a ±300s window and any replayed nonce.
+
+#### Python
+```python
+import httpx
+from ecosystem_auth.tokens import sign_request
+
+secret = "your-shared-hmac-secret"
+body = {"name": "openeye", "host": "127.0.0.1", "port": 8200}
+url = "http://localhost:8500/register"
+
+headers = sign_request("POST", url, secret, body)
+# headers = {X-Ecosystem-Signature, X-Ecosystem-Timestamp, X-Ecosystem-Nonce}
+
+with httpx.Client() as client:
+    resp = client.post(url, json=body, headers=headers)
+    print(resp.status_code)  # 201
+```
+
+#### Node.js
+```javascript
+const { signRequest } = require("./ecosystem-auth/tokens");
+
+const url = "http://localhost:8500/register";
+const body = { name: "magicmirror", host: "127.0.0.1", port: 8080 };
+const headers = signRequest("POST", url, process.env.ECOSYSTEM_HMAC_SECRET, body);
+
+await fetch(url, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+```
+
+> The `ecosystem_client` / `ecosystem_client_js` `register_self()` / `deregister_self()`
+> helpers already apply this scheme for you.
+
 ---
 
 ## 2. Discovery Cascade
@@ -260,10 +297,19 @@ python -m cli stop
 python -m cli start-all
 
 # Stop all running ecosystem services and the registry
+# (SIGTERM, escalating to SIGKILL after a 5s grace period)
 python -m cli stop-all
+
+# Restart the registry
+python -m cli restart
 
 # Check health and status of all services
 python -m cli status
+
+# Live health dashboard (refreshes every 5s; --once for a single snapshot)
+python -m cli monitor
+python -m cli monitor -i 10
+python -m cli monitor --once
 ```
 
 ### 5.2 Log Monitoring
