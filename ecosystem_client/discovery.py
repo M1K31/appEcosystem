@@ -144,13 +144,12 @@ class DiscoveryManager:
                 "subscriptions": subscriptions or [],
                 "priority": priority,
             }
-            from ecosystem_auth.tokens import sign_payload
-            headers = {
-                "X-Ecosystem-Signature": sign_payload(payload, self.config.hmac_secret)
-            }
+            from ecosystem_auth.tokens import sign_request
+            register_url = f"{self.config.registry_url}/register"
+            headers = sign_request("POST", register_url, self.config.hmac_secret, payload)
             async with httpx.AsyncClient(timeout=self.config.request_timeout) as client:
                 resp = await client.post(
-                    f"{self.config.registry_url}/register",
+                    register_url,
                     json=payload,
                     headers=headers,
                 )
@@ -167,11 +166,8 @@ class DiscoveryManager:
             return False
         try:
             url = f"{self.config.registry_url}/deregister/{name}"
-            from ecosystem_auth.tokens import sign_payload
-            payload_to_sign = {"url": url, "method": "DELETE"}
-            headers = {
-                "X-Ecosystem-Signature": sign_payload(payload_to_sign, self.config.hmac_secret)
-            }
+            from ecosystem_auth.tokens import sign_request
+            headers = sign_request("DELETE", url, self.config.hmac_secret)
             async with httpx.AsyncClient(timeout=self.config.request_timeout) as client:
                 resp = await client.delete(url, headers=headers)
                 return resp.status_code < 400

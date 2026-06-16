@@ -122,13 +122,12 @@ class CommandRouter:
 
         headers = {}
         if endpoint.auth_required:
-            from auth.python.ecosystem_auth.tokens import sign_payload
+            from auth.python.ecosystem_auth.tokens import sign_request
 
-            if endpoint.method.upper() in ("GET", "DELETE"):
-                payload_to_sign = {"url": url, "method": endpoint.method.upper()}
-            else:
-                payload_to_sign = body if body is not None else {}
-            headers["X-Ecosystem-Signature"] = sign_payload(payload_to_sign, self.hmac_secret)
+            sign_body = None if endpoint.method.upper() in ("GET", "DELETE") else body
+            headers.update(
+                sign_request(endpoint.method, url, self.hmac_secret, sign_body)
+            )
 
         try:
             if endpoint.method.upper() in ("POST", "PUT", "PATCH"):

@@ -1,13 +1,24 @@
 """FastAPI middleware/dependency for ecosystem authentication."""
 
+import json
 from typing import Optional
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from .tokens import get_ecosystem_secret, verify_signature
+from .tokens import (
+    NONCE_HEADER,
+    NonceStore,
+    SIGNATURE_HEADER,
+    TIMESTAMP_HEADER,
+    get_ecosystem_secret,
+    verify_request,
+)
 
 security_scheme = HTTPBearer(auto_error=False)
+
+# Process-wide nonce cache for replay detection on the signature path.
+_nonce_store = NonceStore()
 
 
 async def require_ecosystem_auth(
@@ -22,31 +33,43 @@ async def require_ecosystem_auth(
     """
     secret = get_ecosystem_secret()
 
-    # Check HMAC signature header (for webhook/event payloads or GET commands)
-    signature = request.headers.get("X-Ecosystem-Signature")
+    # Check HMAC signature header (replay-resistant request scheme).
+    signature = request.headers.get(SIGNATURE_HEADER)
     if signature:
-        if request.method in ("GET", "DELETE"):
-            # GET/DELETE requests sign the URL and method instead of the body
-            payload_to_verify = {"url": str(request.url), "method": request.method}
+        timestamp = request.headers.get(TIMESTAMP_HEADER)
+        nonce = request.headers.get(NONCE_HEADER)
+
+        raw = await request.body()
+        if request.method in ("GET", "DELETE") or not raw:
+            body_obj: dict = {}
         else:
             try:
-                payload_to_verify = await request.json()
+                body_obj = json.loads(raw)
             except Exception:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Invalid JSON body",
                 )
-        if not verify_signature(payload_to_verify, signature, secret):
+
+        if not verify_request(
+            request.method,
+            str(request.url),
+            secret,
+            signature,
+            timestamp,
+            nonce,
+            body_obj,
+            nonce_store=_nonce_store,
+        ):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid ecosystem signature",
+                detail="Invalid, stale, or replayed ecosystem signature",
             )
-        return {"auth_method": "hmac", "payload": payload_to_verify}
+        return {"auth_method": "hmac", "payload": body_obj}
 
     # Check Bearer token (for service-to-service calls)
     if credentials:
         from .tokens import verify_ecosystem_token
-        import json
 
         try:
             token_data = json.loads(credentials.credentials)

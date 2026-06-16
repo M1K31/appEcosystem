@@ -38,7 +38,7 @@ This document tracks completed changes, active items, and planned improvements f
 - [x] **App.state dependencies**: Registry/health-monitor resolved via FastAPI dependencies returning 503 before startup, instead of module globals. [RESOLVED]
 - [x] **Machine-agnostic base path**: `ECOSYSTEM_BASE_PATH` override; removed hardcoded developer path from `ecosystem.yaml`. [RESOLVED]
 - [x] **CI + lockfiles**: GitHub Actions (pytest matrix, pip-audit, npm audit, shellcheck); committed `package-lock.json`. [RESOLVED]
-- [ ] **HMAC replay protection (request signature path)**: Add timestamp + nonce to the `X-Ecosystem-Signature` scheme and enforce a freshness window with a nonce store. The Bearer-token path is already replay-resistant; the per-request signature path is the remaining gap. [IN PROGRESS]
+- [x] **HMAC replay protection (request signature path)**: The `X-Ecosystem-Signature` scheme now binds a timestamp, a unique nonce, and a body digest over a host-independent canonical path. Verifiers enforce a ±300s freshness window and a `NonceStore` rejects replays. Implemented and tested in Python and JS (cross-language signature parity verified); all signers (`CommandRouter`, Python/JS discovery clients) and both middlewares updated. [RESOLVED]
 
 ---
 
@@ -46,9 +46,11 @@ This document tracks completed changes, active items, and planned improvements f
 
 ### [v0.3.0] — 2026-06-14
 #### Security
+- Replay-resistant request signatures: `X-Ecosystem-Signature` now binds a timestamp, nonce, and body digest over a canonical (host-independent) path; verifiers enforce a freshness window and a nonce store (Python + JS, cross-language parity tested).
 - Fail-closed HMAC secret resolution (`get_ecosystem_secret`) across Python and JS; refuses the insecure default outside `dev`.
 - Registry binds to `127.0.0.1` by default; CORS origins configurable and method/header allowlists scoped.
 - URL-encode LLM-supplied path params in `CommandRouter` to prevent path traversal.
+- Fixed a shadowed `import json` in the auth middleware that broke signature-body parsing.
 #### Added
 - `ecosystem restart` and `ecosystem monitor` CLI commands.
 - `.env.example`, GitHub Actions CI (tests, pip-audit, npm audit, shellcheck), committed `package-lock.json`.

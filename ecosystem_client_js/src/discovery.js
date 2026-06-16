@@ -66,11 +66,10 @@ class DiscoveryManager {
                 subscriptions: subscriptions || [],
             };
             const payload = JSON.stringify(dataObj);
-            const { signPayload } = require("../../auth/js/src/tokens");
-            const signature = signPayload(dataObj, this.config.hmacSecret);
-            await this._post(`${this.config.registryUrl}/register`, payload, {
-                "X-Ecosystem-Signature": signature
-            });
+            const { signRequest } = require("../../auth/js/src/tokens");
+            const registerUrl = `${this.config.registryUrl}/register`;
+            const headers = signRequest("POST", registerUrl, this.config.hmacSecret, dataObj);
+            await this._post(registerUrl, payload, headers);
             return true;
         } catch {
             return false;
@@ -81,11 +80,9 @@ class DiscoveryManager {
         if (this.mode !== DiscoveryMode.REGISTRY) return false;
         try {
             const url = `${this.config.registryUrl}/deregister/${name}`;
-            const { signPayload } = require("../../auth/js/src/tokens");
-            const signature = signPayload({ url, method: "DELETE" }, this.config.hmacSecret);
-            await this._delete(url, {
-                "X-Ecosystem-Signature": signature
-            });
+            const { signRequest } = require("../../auth/js/src/tokens");
+            const headers = signRequest("DELETE", url, this.config.hmacSecret);
+            await this._delete(url, headers);
             return true;
         } catch {
             return false;

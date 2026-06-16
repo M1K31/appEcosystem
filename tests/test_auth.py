@@ -12,10 +12,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "auth" / "python"))
 
 from ecosystem_auth.tokens import (
     DEFAULT_DEV_SECRET,
+    NONCE_HEADER,
+    NonceStore,
+    SIGNATURE_HEADER,
+    TIMESTAMP_HEADER,
     generate_secure_token,
     get_ecosystem_secret,
     hash_token,
     sign_payload,
+    sign_request,
+    verify_request,
     verify_signature,
     verify_token_hash,
     create_ecosystem_token,
@@ -46,6 +52,80 @@ class TestSecretResolution:
         monkeypatch.setenv("ECOSYSTEM_ENV", "production")
         monkeypatch.setenv("ECOSYSTEM_HMAC_SECRET", "a-real-secret")
         assert get_ecosystem_secret() == "a-real-secret"
+
+
+class TestNonceStore:
+    def test_first_use_accepted(self):
+        store = NonceStore()
+        assert store.add_if_new("abc") is True
+
+    def test_replay_rejected(self):
+        store = NonceStore()
+        store.add_if_new("abc")
+        assert store.add_if_new("abc") is False
+
+    def test_expired_nonce_reusable(self):
+        # Negative TTL forces every prior entry to be purged on the next call.
+        store = NonceStore(ttl_seconds=-1)
+        store.add_if_new("abc")
+        assert store.add_if_new("abc") is True
+
+
+class TestRequestSigning:
+    SECRET = "request-test-secret"
+
+    def test_sign_request_headers_present(self):
+        headers = sign_request("POST", "http://h/register", self.SECRET, {"a": 1})
+        assert SIGNATURE_HEADER in headers
+        assert TIMESTAMP_HEADER in headers
+        assert NONCE_HEADER in headers
+
+    def test_roundtrip_valid(self):
+        body = {"name": "svc", "port": 8000}
+        headers = sign_request("POST", "http://h/register", self.SECRET, body)
+        assert verify_request(
+            "POST", "http://h/register", self.SECRET,
+            headers[SIGNATURE_HEADER], headers[TIMESTAMP_HEADER], headers[NONCE_HEADER],
+            body,
+        )
+
+    def test_path_is_host_independent(self):
+        body = {"x": 1}
+        headers = sign_request("POST", "http://host-a:8500/register", self.SECRET, body)
+        # Same path on a different host/interface must still verify.
+        assert verify_request(
+            "POST", "http://host-b:9000/register", self.SECRET,
+            headers[SIGNATURE_HEADER], headers[TIMESTAMP_HEADER], headers[NONCE_HEADER],
+            body,
+        )
+
+    def test_tampered_body_fails(self):
+        headers = sign_request("POST", "http://h/register", self.SECRET, {"a": 1})
+        assert not verify_request(
+            "POST", "http://h/register", self.SECRET,
+            headers[SIGNATURE_HEADER], headers[TIMESTAMP_HEADER], headers[NONCE_HEADER],
+            {"a": 2},
+        )
+
+    def test_stale_timestamp_fails(self):
+        headers = sign_request("POST", "http://h/register", self.SECRET, {"a": 1}, ts=1)
+        assert not verify_request(
+            "POST", "http://h/register", self.SECRET,
+            headers[SIGNATURE_HEADER], headers[TIMESTAMP_HEADER], headers[NONCE_HEADER],
+            {"a": 1},
+        )
+
+    def test_replay_fails_with_nonce_store(self):
+        store = NonceStore()
+        body = {"a": 1}
+        headers = sign_request("POST", "http://h/register", self.SECRET, body)
+        args = (
+            "POST", "http://h/register", self.SECRET,
+            headers[SIGNATURE_HEADER], headers[TIMESTAMP_HEADER], headers[NONCE_HEADER],
+            body,
+        )
+        assert verify_request(*args, nonce_store=store)
+        assert not verify_request(*args, nonce_store=store)
 
 
 class TestTokenGeneration:
@@ -178,3 +258,26 @@ class TestCrossLanguageCompatibility:
         js_hash = result.stdout.strip()
 
         assert py_hash == js_hash
+
+    def test_sign_request_matches_js(self, node_available):
+        """Python sign_request and JS signRequest must agree for the same ts/nonce."""
+        method = "POST"
+        url = "http://registry:8500/register?b=2&a=1"
+        secret = "cross-language-request-secret"
+        body = {"name": "svc", "port": 8000, "nested": {"k": "v"}}
+        ts = 1781000000
+        nonce = "fixednonce123456"
+
+        py_headers = sign_request(method, url, secret, body, ts=ts, nonce=nonce)
+        py_sig = py_headers[SIGNATURE_HEADER]
+
+        js_code = f"""
+        const {{ signRequest, SIGNATURE_HEADER }} = require('{self.JS_TOKEN_PATH}');
+        const body = {json.dumps(body)};
+        const h = signRequest('{method}', '{url}', '{secret}', body, {ts}, '{nonce}');
+        console.log(h[SIGNATURE_HEADER]);
+        """
+        result = subprocess.run(["node", "-e", js_code], capture_output=True, text=True)
+        js_sig = result.stdout.strip()
+
+        assert py_sig == js_sig, f"Python: {py_sig}, JS: {js_sig}\nstderr: {result.stderr}"
