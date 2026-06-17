@@ -101,6 +101,19 @@ class TestReplayProtection:
         assert resp.status_code == 401
 
 
+class TestReadAuth:
+    def test_read_open_by_default(self, client):
+        assert client.get("/services").status_code == 200
+
+    def test_read_requires_auth_when_enabled(self, client, monkeypatch):
+        monkeypatch.setenv("ECOSYSTEM_REQUIRE_READ_AUTH", "true")
+        # Unsigned read is rejected.
+        assert client.get("/services").status_code == 401
+        # Signed read succeeds.
+        headers = sign_request("GET", "http://testserver/services", TEST_SECRET)
+        assert client.get("/services", headers=headers).status_code == 200
+
+
 class TestDependencyGuards:
     def test_get_registry_503_when_uninitialized(self):
         class _State:

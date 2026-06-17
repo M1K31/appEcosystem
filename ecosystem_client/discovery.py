@@ -116,8 +116,11 @@ class DiscoveryManager:
     async def _fetch_registry_services(self) -> list[dict]:
         """Fetch all services from the registry, sorted by priority (highest first)."""
         try:
+            from ecosystem_auth.tokens import sign_request
+            url = f"{self.config.registry_url}/services"
+            headers = sign_request("GET", url, self.config.hmac_secret)
             async with httpx.AsyncClient(timeout=self.config.request_timeout) as client:
-                resp = await client.get(f"{self.config.registry_url}/services")
+                resp = await client.get(url, headers=headers)
                 resp.raise_for_status()
                 services = resp.json()
                 # Sort by priority descending so highest-priority peers are first

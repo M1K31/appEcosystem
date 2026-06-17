@@ -19,8 +19,16 @@ class DiscoveryAgent:
     other projects can do and how to interact with them.
     """
 
-    def __init__(self, registry_url: str = "http://localhost:8500"):
+    def __init__(self, registry_url: str = "http://localhost:8500",
+                 hmac_secret: Optional[str] = None):
         self.registry_url = registry_url
+        from auth.python.ecosystem_auth.tokens import get_ecosystem_secret
+        self.hmac_secret = get_ecosystem_secret(hmac_secret)
+
+    def _signed_headers(self, url: str) -> dict:
+        """Sign a GET so discovery works when read endpoints require auth."""
+        from auth.python.ecosystem_auth.tokens import sign_request
+        return sign_request("GET", url, self.hmac_secret)
 
     async def discover_all(self) -> list[ProjectManifest]:
         """
@@ -30,8 +38,9 @@ class DiscoveryAgent:
         """
         manifests = []
         try:
+            url = f"{self.registry_url}/services"
             async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(f"{self.registry_url}/services")
+                resp = await client.get(url, headers=self._signed_headers(url))
                 resp.raise_for_status()
                 services = resp.json()
         except Exception as e:
@@ -49,8 +58,9 @@ class DiscoveryAgent:
     async def discover_one(self, service_name: str) -> Optional[ProjectManifest]:
         """Get a single service's capability manifest."""
         try:
+            url = f"{self.registry_url}/services/{service_name}"
             async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(f"{self.registry_url}/services/{service_name}")
+                resp = await client.get(url, headers=self._signed_headers(url))
                 resp.raise_for_status()
                 service = resp.json()
         except Exception as e:

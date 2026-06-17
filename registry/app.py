@@ -7,9 +7,12 @@ import os
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
+from typing import Optional
+
 from fastapi import FastAPI, HTTPException, Request, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from auth.python.ecosystem_auth.middleware import require_ecosystem_auth
+from fastapi.security import HTTPAuthorizationCredentials
+from auth.python.ecosystem_auth.middleware import require_ecosystem_auth, security_scheme
 
 from .health_monitor import HealthMonitor
 from .models import HealthCheckResult, ServiceRecord, ServiceRegistration
@@ -88,6 +91,27 @@ def get_health_monitor(request: Request) -> HealthMonitor:
     return monitor
 
 
+def _read_auth_required() -> bool:
+    """Whether read endpoints (service listings) require authentication.
+
+    Off by default so discovery stays frictionless on a trusted/loopback
+    network; enable with ECOSYSTEM_REQUIRE_READ_AUTH to avoid leaking topology.
+    """
+    return os.environ.get("ECOSYSTEM_REQUIRE_READ_AUTH", "false").lower() in (
+        "1", "true", "yes",
+    )
+
+
+async def require_read_auth(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme),
+):
+    """Conditionally enforce ecosystem auth on read endpoints."""
+    if not _read_auth_required():
+        return None
+    return await require_ecosystem_auth(request, credentials)
+
+
 app = FastAPI(
     title="Ecosystem Registry",
     version="0.1.0",
@@ -155,19 +179,29 @@ async def deregister_service(
 
 
 @app.get("/services", response_model=list[ServiceRecord])
-async def list_services(registry: ServiceRegistry = Depends(get_registry)):
+async def list_services(
+    registry: ServiceRegistry = Depends(get_registry),
+    _auth=Depends(require_read_auth),
+):
     """List all registered services."""
     return registry.get_all()
 
 
 @app.get("/services/priority", response_model=list[ServiceRecord])
-async def list_services_by_priority(registry: ServiceRegistry = Depends(get_registry)):
+async def list_services_by_priority(
+    registry: ServiceRegistry = Depends(get_registry),
+    _auth=Depends(require_read_auth),
+):
     """List all services sorted by priority (highest first, healthy first)."""
     return registry.get_by_priority()
 
 
 @app.get("/services/{name}", response_model=ServiceRecord)
-async def get_service(name: str, registry: ServiceRegistry = Depends(get_registry)):
+async def get_service(
+    name: str,
+    registry: ServiceRegistry = Depends(get_registry),
+    _auth=Depends(require_read_auth),
+):
     """Get a specific service by name."""
     record = registry.get(name)
     if not record:
@@ -180,6 +214,7 @@ async def check_service_health(
     name: str,
     registry: ServiceRegistry = Depends(get_registry),
     health_monitor: HealthMonitor = Depends(get_health_monitor),
+    _auth=Depends(require_read_auth),
 ):
     """Run an on-demand health check for a specific service."""
     record = registry.get(name)

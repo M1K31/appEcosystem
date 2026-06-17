@@ -28,6 +28,11 @@ This document tracks completed changes, active items, and planned improvements f
 - [x] **Timeout to SIGKILL Escalation**: Refactor `cmd_stop_all` to poll active processes and force-terminate with `SIGKILL` (signal 9) if they fail to shut down gracefully within 5 seconds. [RESOLVED — escalation now in `cli/commands.py` `_terminate_pid`, used by `cmd_stop`/`cmd_stop_all`, not just `process_manager.py`]
 - [x] **Linux systemd Installer**: Create systemd configuration templates to support Arm Linux (Raspberry Pi) and Intel Linux deployment parity with macOS launchd. [RESOLVED]
 
+### Phase 6: Hardening & Observability (2026-06-16)
+- [x] **Token lifetime cap**: `verify_ecosystem_token` rejects implausibly long-lived tokens (>48h) and future `issued_at`, bounding a leaked-secret blast radius (Python + JS). [RESOLVED]
+- [x] **Observability**: Prometheus `GET /metrics` (counters + live service gauges), structured JSON logging via `ECOSYSTEM_LOG_FORMAT`, and a non-root `Dockerfile` with `HEALTHCHECK`; CI builds the image. [RESOLVED]
+- [x] **Optional read-endpoint auth**: `ECOSYSTEM_REQUIRE_READ_AUTH` gates auth on `/services*`; in-repo discovery clients and CLI sign their GETs so enabling it is non-breaking. [RESOLVED]
+
 ### Phase 5: Audit Remediation (2026-06-14)
 - [x] **Critical: systemd installer crash**: Removed orphan `EOF` in `scripts/install_systemd.sh` that aborted the installer (exit 127) under `set -euo pipefail`. [RESOLVED]
 - [x] **Fail-closed HMAC secret**: `get_ecosystem_secret()` now refuses the insecure default when `ECOSYSTEM_ENV != dev` (Python + JS); single source of truth replaces four duplicated lookups. Added `.env.example`. [RESOLVED]

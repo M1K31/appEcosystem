@@ -213,9 +213,12 @@ def cmd_status() -> int:
             print(f"  {proj['name']:<20} port {proj['port']:<6} (not checked)")
         return 1
 
-    # Check registered services
+    # Check registered services (signed so it works if read-auth is enabled)
     try:
-        resp = httpx.get(f"{registry_url}/services", timeout=3.0)
+        from auth.python.ecosystem_auth.tokens import get_ecosystem_secret, sign_request
+        services_url = f"{registry_url}/services"
+        headers = sign_request("GET", services_url, get_ecosystem_secret())
+        resp = httpx.get(services_url, timeout=3.0, headers=headers)
         services = resp.json()
     except Exception:
         print("Could not fetch services from registry")
