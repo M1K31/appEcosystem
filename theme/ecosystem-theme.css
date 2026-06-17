@@ -4,7 +4,27 @@
  * Extensible for Light, Dark, and Cyberpunk themes with smooth CSS transitions.
  */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap');
+/*
+ * Self-hosted fonts (no external requests; works offline, e.g. MagicMirror HUD).
+ * Run `python scripts/fetch_fonts.py` to (re)download the WOFF2 files into
+ * theme/fonts/. Inter and Outfit are variable fonts, so one file covers the
+ * full weight range. The font-family stacks below fall back to system fonts
+ * when these files are absent.
+ */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+  src: url('./fonts/inter-var.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Outfit';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('./fonts/outfit-var.woff2') format('woff2');
+}
 
 :root {
   /* Relative Spacing (8pt Grid System) - Supports Accessibility Text Zoom */

@@ -32,6 +32,7 @@ This document tracks completed changes, active items, and planned improvements f
 - [x] **Token lifetime cap**: `verify_ecosystem_token` rejects implausibly long-lived tokens (>48h) and future `issued_at`, bounding a leaked-secret blast radius (Python + JS). [RESOLVED]
 - [x] **Observability**: Prometheus `GET /metrics` (counters + live service gauges), structured JSON logging via `ECOSYSTEM_LOG_FORMAT`, and a non-root `Dockerfile` with `HEALTHCHECK`; CI builds the image. [RESOLVED]
 - [x] **Optional read-endpoint auth**: `ECOSYSTEM_REQUIRE_READ_AUTH` gates auth on `/services*`; in-repo discovery clients and CLI sign their GETs so enabling it is non-breaking. [RESOLVED]
+- [x] **Self-hosted fonts**: Replaced the render-blocking `fonts.googleapis.com` `@import` with local `@font-face` declarations pointing to vendored variable WOFF2 files (`theme/fonts/`). `scripts/fetch_fonts.py` re-downloads them; system-font fallbacks keep the UI working offline (privacy + MagicMirror HUD). [RESOLVED]
 
 ### Phase 5: Audit Remediation (2026-06-14)
 - [x] **Critical: systemd installer crash**: Removed orphan `EOF` in `scripts/install_systemd.sh` that aborted the installer (exit 127) under `set -euo pipefail`. [RESOLVED]
