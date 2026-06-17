@@ -149,6 +149,31 @@ To protect Smart Industries' infrastructure from compromise, a **Zero-Trust Inte
 
 ---
 
+## 4a. Deployment & Observability
+
+**Docker**
+```bash
+docker build -t appecosystem-registry .
+# Bind to a trusted network; provide the shared secret at runtime.
+docker run -d --name ecosystem-registry \
+  -p 127.0.0.1:8500:8500 \
+  -e ECOSYSTEM_HMAC_SECRET="$ECOSYSTEM_HMAC_SECRET" \
+  appecosystem-registry
+```
+The image runs as a non-root user, emits JSON logs (`ECOSYSTEM_LOG_FORMAT=json`),
+and ships a container `HEALTHCHECK` against `/health`.
+
+**Metrics** — the registry exposes Prometheus text metrics at `GET /metrics`:
+`ecosystem_registry_up`, `ecosystem_services{status=...}`,
+`ecosystem_health_checks_total`, `ecosystem_health_check_failures_total`,
+`ecosystem_events_{published,delivered,failed}_total`,
+`ecosystem_auto_deregistrations_total`.
+
+**Logging** — set `ECOSYSTEM_LOG_LEVEL` (default `INFO`) and
+`ECOSYSTEM_LOG_FORMAT=json` for structured logs suitable for Loki/ELK/CloudWatch.
+
+---
+
 ## 5. Development & Contribution
 * Detailed developer usage and code snippets for API integration can be found in [usage.md](file:///Volumes/Locker2/GitHub/appEcosystem/usage.md).
 * A complete task-tracker and pending audit goals is located in [todos_changelog.md](file:///Volumes/Locker2/GitHub/appEcosystem/todos_changelog.md).

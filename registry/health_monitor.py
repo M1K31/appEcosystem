@@ -7,6 +7,7 @@ from typing import Optional
 
 import httpx
 
+from . import metrics
 from .models import HealthCheckResult, HealthStatus
 from .registry import ServiceRegistry
 
@@ -98,6 +99,10 @@ class HealthMonitor:
 
         self.registry.update_health(service_name, status)
 
+        metrics.inc(metrics.HEALTH_CHECKS)
+        if status != HealthStatus.HEALTHY:
+            metrics.inc(metrics.HEALTH_CHECK_FAILURES)
+
         return HealthCheckResult(
             service_name=service_name,
             status=status,
@@ -155,6 +160,7 @@ class HealthMonitor:
             )
             await self._publish_unhealthy(result, record)
             self.registry.deregister(result.service_name)
+            metrics.inc(metrics.AUTO_DEREGISTRATIONS)
 
     async def _publish_unhealthy(self, result, record) -> None:
         """Publish an ecosystem.service_unhealthy event (best-effort)."""

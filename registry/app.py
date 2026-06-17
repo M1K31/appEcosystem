@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from .logging_config import configure_logging
+    configure_logging()
+
     persistence_path = os.environ.get(
         "ECOSYSTEM_REGISTRY_FILE", "data/registry.json"
     )
@@ -116,6 +119,16 @@ app.add_middleware(
 async def health():
     """Registry's own health endpoint."""
     return {"status": "healthy", "service": "ecosystem-registry"}
+
+
+@app.get("/metrics")
+async def metrics_endpoint(request: Request):
+    """Prometheus-format metrics (counters + live service gauges)."""
+    from . import metrics
+    from fastapi.responses import PlainTextResponse
+
+    reg = getattr(request.app.state, "registry", None)
+    return PlainTextResponse(metrics.render_prometheus(reg))
 
 
 @app.post("/register", response_model=ServiceRecord, status_code=status.HTTP_201_CREATED)

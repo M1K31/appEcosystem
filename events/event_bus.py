@@ -75,6 +75,8 @@ class EventBus:
         delivered = sum(1 for r in results if r is True)
         failed = len(results) - delivered
 
+        self._record_metrics(delivered, failed)
+
         if failed:
             logger.warning(
                 f"Event {event.type} delivery: {delivered} ok, {failed} failed"
@@ -85,6 +87,18 @@ class EventBus:
             "failed": failed,
             "subscribers": [s.name for s in subscribers],
         }
+
+    @staticmethod
+    def _record_metrics(delivered: int, failed: int) -> None:
+        """Record delivery metrics. Soft dependency: no-op if registry.metrics
+        is unavailable so the event bus stays usable standalone."""
+        try:
+            from registry import metrics
+        except Exception:
+            return
+        metrics.inc(metrics.EVENTS_PUBLISHED)
+        metrics.inc(metrics.EVENTS_DELIVERED, delivered)
+        metrics.inc(metrics.EVENTS_FAILED, failed)
 
     async def _deliver(
         self, event: EventEnvelope, webhook_url: str, service_name: str

@@ -49,6 +49,14 @@ class TestRegistryEndpoints:
         resp = client.get("/services/nope")
         assert resp.status_code == 404
 
+    def test_metrics_endpoint(self, client):
+        resp = client.get("/metrics")
+        assert resp.status_code == 200
+        body = resp.text
+        assert "ecosystem_registry_up 1" in body
+        assert "ecosystem_health_checks_total" in body
+        assert 'ecosystem_services{status="' in body
+
 
 class TestReplayProtection:
     REG_URL = "http://testserver/register"
