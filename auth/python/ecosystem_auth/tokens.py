@@ -216,18 +216,36 @@ def create_ecosystem_token(secret: str, service_name: str, ttl_seconds: int = 86
     return token_data
 
 
+# Maximum acceptable token lifetime (issued_at -> expires_at). Even a correctly
+# signed token is rejected if it claims a longer life, capping the blast radius
+# of a leaked secret. Default is double the standard 24h validity.
+MAX_TOKEN_LIFETIME_SECONDS = 172800  # 48h
+# Tolerance for clock skew when checking issued_at is not in the future.
+_CLOCK_SKEW_SECONDS = 60
+
+
 def verify_ecosystem_token(token_data: dict, secret: str) -> bool:
     """
-    Verify a signed ecosystem token is valid and not expired.
+    Verify a signed ecosystem token is valid, unexpired, and sanely scoped.
     """
     now = int(time.time())
-    if now > token_data.get("expires_at", 0):
+
+    issued_at = token_data.get("issued_at", 0)
+    expires_at = token_data.get("expires_at", 0)
+
+    # Expired, or issued in the future (beyond clock skew).
+    if now > expires_at:
+        return False
+    if issued_at > now + _CLOCK_SKEW_SECONDS:
+        return False
+    # Reject implausibly long-lived tokens regardless of a valid signature.
+    if expires_at - issued_at > MAX_TOKEN_LIFETIME_SECONDS:
         return False
 
     expected_payload = {
         "token": token_data.get("token", ""),
         "service": token_data.get("service", ""),
-        "issued_at": token_data.get("issued_at", 0),
-        "expires_at": token_data.get("expires_at", 0),
+        "issued_at": issued_at,
+        "expires_at": expires_at,
     }
     return verify_signature(expected_payload, token_data.get("signature", ""), secret)

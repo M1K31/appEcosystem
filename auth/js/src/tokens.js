@@ -204,16 +204,24 @@ function createEcosystemToken(secret, serviceName, ttlSeconds = 86400) {
  * @param {string} secret
  * @returns {boolean}
  */
+// Maximum acceptable token lifetime (issued_at -> expires_at), mirroring Python.
+const MAX_TOKEN_LIFETIME_SECONDS = 172800; // 48h
+const CLOCK_SKEW_SECONDS = 60;
+
 function verifyEcosystemToken(tokenData, secret) {
   const now = Math.floor(Date.now() / 1000);
-  if (now > (tokenData.expires_at || 0)) {
-    return false;
-  }
+  const issuedAt = tokenData.issued_at || 0;
+  const expiresAt = tokenData.expires_at || 0;
+
+  if (now > expiresAt) return false;
+  if (issuedAt > now + CLOCK_SKEW_SECONDS) return false;
+  if (expiresAt - issuedAt > MAX_TOKEN_LIFETIME_SECONDS) return false;
+
   const expectedPayload = {
     token: tokenData.token || "",
     service: tokenData.service || "",
-    issued_at: tokenData.issued_at || 0,
-    expires_at: tokenData.expires_at || 0,
+    issued_at: issuedAt,
+    expires_at: expiresAt,
   };
   return verifySignature(expectedPayload, tokenData.signature || "", secret);
 }

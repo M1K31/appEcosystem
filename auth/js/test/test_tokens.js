@@ -6,6 +6,8 @@ const {
   verifyRequest,
   NonceStore,
   canonicalPath,
+  createEcosystemToken,
+  verifyEcosystemToken,
   SIGNATURE_HEADER,
   TIMESTAMP_HEADER,
   NONCE_HEADER,
@@ -66,4 +68,11 @@ test("verifyRequest rejects a replayed nonce", () => {
 
 test("canonicalPath sorts query params and drops host", () => {
   assert.strictEqual(canonicalPath("http://h:8500/register?b=2&a=1"), "/register?a=1&b=2");
+});
+
+test("verifyEcosystemToken accepts a normal token and rejects overlong lifetime", () => {
+  const ok = createEcosystemToken(SECRET, "svc");
+  assert.ok(verifyEcosystemToken(ok, SECRET));
+  const overlong = createEcosystemToken(SECRET, "svc", 10 * 365 * 86400);
+  assert.ok(!verifyEcosystemToken(overlong, SECRET));
 });

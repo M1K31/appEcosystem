@@ -211,6 +211,25 @@ class TestEcosystemTokens:
         token_data["token"] = "tampered-token-value"
         assert not verify_ecosystem_token(token_data, secret)
 
+    def test_overlong_lifetime_rejected(self):
+        """A correctly signed but implausibly long-lived token is rejected."""
+        secret = "test-secret"
+        token_data = create_ecosystem_token(secret, "openeye", ttl_seconds=10 * 365 * 86400)
+        assert not verify_ecosystem_token(token_data, secret)
+
+    def test_future_issued_at_rejected(self):
+        secret = "test-secret"
+        token_data = create_ecosystem_token(secret, "openeye")
+        future = token_data["issued_at"] + 10_000
+        token_data["issued_at"] = future
+        token_data["expires_at"] = future + 3600
+        # Re-sign so the signature itself is valid; the time check must still fail.
+        token_data["signature"] = sign_payload(
+            {k: token_data[k] for k in ("token", "service", "issued_at", "expires_at")},
+            secret,
+        )
+        assert not verify_ecosystem_token(token_data, secret)
+
 
 class TestCrossLanguageCompatibility:
     """Verify Python and JS produce identical HMAC signatures."""
