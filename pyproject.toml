@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "app-ecosystem"
-version = "0.1.0"
+version = "0.3.0"
 description = "Lightweight coordination layer for the app ecosystem"
 requires-python = ">=3.10"
 dependencies = [

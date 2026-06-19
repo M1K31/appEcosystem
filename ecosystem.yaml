@@ -3,7 +3,7 @@
 
 ecosystem:
   name: "appEcosystem"
-  version: "0.2.0"
+  version: "0.3.0"
   # Root directory containing the sibling project repos. Leave blank to default
   # to this repo's parent directory; override with ECOSYSTEM_BASE_PATH. Avoids
   # hardcoding a developer-specific absolute path in the committed config.

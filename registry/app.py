@@ -114,7 +114,7 @@ async def require_read_auth(
 
 app = FastAPI(
     title="Ecosystem Registry",
-    version="0.1.0",
+    version="0.3.0",
     description="Service discovery and health monitoring for the app ecosystem",
     lifespan=lifespan,
 )
