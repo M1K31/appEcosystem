@@ -34,6 +34,10 @@ This document tracks completed changes, active items, and planned improvements f
 - [x] **Optional read-endpoint auth**: `ECOSYSTEM_REQUIRE_READ_AUTH` gates auth on `/services*`; in-repo discovery clients and CLI sign their GETs so enabling it is non-breaking. [RESOLVED]
 - [x] **Self-hosted fonts**: Replaced the render-blocking `fonts.googleapis.com` `@import` with local `@font-face` declarations pointing to vendored variable WOFF2 files (`theme/fonts/`). `scripts/fetch_fonts.py` re-downloads them; system-font fallbacks keep the UI working offline (privacy + MagicMirror HUD). [RESOLVED]
 
+### Backlog (future)
+- [ ] **Branch protection / required checks**: Enable branch protection on `main` requiring the CI workflow (tests, audits, shellcheck, docker build) to pass before merge.
+- [ ] **Publish Docker image to GHCR on tag**: Add a release workflow that builds and pushes `ghcr.io/<owner>/appecosystem-registry` on `v*` tags.
+
 ### Phase 5: Audit Remediation (2026-06-14)
 - [x] **Critical: systemd installer crash**: Removed orphan `EOF` in `scripts/install_systemd.sh` that aborted the installer (exit 127) under `set -euo pipefail`. [RESOLVED]
 - [x] **Fail-closed HMAC secret**: `get_ecosystem_secret()` now refuses the insecure default when `ECOSYSTEM_ENV != dev` (Python + JS); single source of truth replaces four duplicated lookups. Added `.env.example`. [RESOLVED]
