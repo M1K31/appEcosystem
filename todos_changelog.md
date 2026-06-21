@@ -47,7 +47,7 @@ This document tracks completed changes, active items, and planned improvements f
   - [ ] MagicMirror: standardize on ECOSYSTEM_SERVICE_PORT→MM_PORT→8080. **Deferred** — repo has active WIP (ecosystem-auth edits + new MMM-AsusGuard-SIEM / MMM-CyberHarness modules); already consistent at 8080.
   - [ ] `port-doctor` preflight (registered＝listening, port-free) in appEcosystem CLI + per-app startup.
   - Note: OpenEye and MagicMirror have **uncommitted WIP touching `ecosystem_auth`/`ecosystem-auth`** (looks like a started Phase E auth sync) — left untouched.
-- [ ] **Phase B0 — `ecosystem_ai` foundation**: shared provider interface + `OllamaProvider` (default) + `ProviderRouter` + `HardwareProbe`/tiers + `CapabilityManager`.
+- [x] **Phase B0 — `ecosystem_ai` foundation**: new installable package `packages/ecosystem-ai/`. Provider interface + `OllamaProvider` (default, local-first), `ProviderRouter` (local-first + cloud fallback), `HardwareProbe`/`CapabilityTier` (T0–T3) + tier→model, `CapabilityManager` (feature gating w/ cloud-lift), and the syncable `AIProfile` schema (version/with_change/merge — the shared source of truth that makes a selection in one app appear in all). 25 tests passing.
 - [ ] **Phase B1 — Provider plug-ins**: Anthropic, OpenAI, Copilot, Gemini behind one interface (opt-in via keys, fallback routing).
 - [ ] **Phase B2 — Ecosystem AI profile**: `ai:` in `ecosystem.yaml`, `GET /ai-profile`, `EcosystemConfig` precedence.
 - [ ] **Phase B3 — Adopt in each app**: migrate AFS/LogAnalysis/OpenEye/MagicMirror to `ecosystem_ai`; add Ollama path to OpenEye; Ollama default everywhere.

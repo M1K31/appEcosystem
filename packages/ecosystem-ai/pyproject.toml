@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ecosystem-ai"
+version = "0.1.0"
+description = "Shared, hardware-adaptive, provider-pluggable AI layer for the app ecosystem"
+requires-python = ">=3.9"
+dependencies = [
+    "httpx>=0.24.0",
+]
+
+[project.optional-dependencies]
+# Optional cloud providers — installed only when used.
+anthropic = ["anthropic>=0.39.0"]
+openai = ["openai>=1.0.0"]
+gemini = ["google-generativeai>=0.8.0"]
+dev = ["pytest>=7.0", "pytest-asyncio>=0.21"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ecosystem_ai*"]
