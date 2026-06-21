@@ -17,13 +17,17 @@ from .hardware import (
 )
 from .features import CapabilityManager, FeatureRequirement, FeatureStatus
 from .router import ProviderRouter
+from .factory import build_providers, build_router
 from .providers import (
     AIProvider,
+    AnthropicProvider,
     Capability,
     ChatMessage,
     ChatResult,
+    GeminiProvider,
     ModelInfo,
     OllamaProvider,
+    OpenAIProvider,
     ProviderError,
 )
 
@@ -43,12 +47,17 @@ __all__ = [
     "FeatureRequirement",
     "FeatureStatus",
     "ProviderRouter",
+    "build_providers",
+    "build_router",
     "AIProvider",
+    "AnthropicProvider",
     "Capability",
     "ChatMessage",
     "ChatResult",
+    "GeminiProvider",
     "ModelInfo",
     "OllamaProvider",
+    "OpenAIProvider",
     "ProviderError",
     "__version__",
 ]

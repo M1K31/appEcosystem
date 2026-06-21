@@ -9,6 +9,9 @@ from .base import (
     ProviderError,
 )
 from .ollama import OllamaProvider
+from .anthropic import AnthropicProvider
+from .openai import OpenAIProvider
+from .gemini import GeminiProvider
 
 __all__ = [
     "AIProvider",
@@ -18,4 +21,7 @@ __all__ = [
     "ModelInfo",
     "ProviderError",
     "OllamaProvider",
+    "AnthropicProvider",
+    "OpenAIProvider",
+    "GeminiProvider",
 ]
