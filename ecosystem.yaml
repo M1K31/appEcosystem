@@ -86,7 +86,8 @@ projects:
     name: "AsusGuard"
     path: "LogAnalysis"
     host: "192.168.50.73"
-    port: 8088
+    # Dashboard runs on 8089. 8088 is the cyber-harness daemon (asusguard_daemon).
+    port: 8089
     health_endpoint: "/api/status"
     priority: 10
     stack: "python-flask"
