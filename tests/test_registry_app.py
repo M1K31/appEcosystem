@@ -22,6 +22,7 @@ def client(tmp_path, monkeypatch):
     # Isolate persistence and skip loading the real ecosystem.yaml.
     monkeypatch.setenv("ECOSYSTEM_REGISTRY_FILE", str(tmp_path / "registry.json"))
     monkeypatch.setenv("ECOSYSTEM_CONFIG", str(tmp_path / "missing.yaml"))
+    monkeypatch.setenv("ECOSYSTEM_AI_PROFILE_FILE", str(tmp_path / "ai_profile.json"))
     monkeypatch.setenv("ECOSYSTEM_HMAC_SECRET", TEST_SECRET)
     # Reset the process-wide nonce store between tests.
     from auth.python.ecosystem_auth import middleware
@@ -99,6 +100,41 @@ class TestReplayProtection:
         headers = sign_request("POST", self.REG_URL, "wrong-secret", body)
         resp = client.post("/register", json=body, headers=headers)
         assert resp.status_code == 401
+
+
+class TestAIProfileSync:
+    PROFILE_URL = "http://testserver/ai-profile"
+
+    def test_get_default_is_ollama(self, client):
+        resp = client.get("/ai-profile")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["default_provider"] == "ollama"
+        assert body["selected_model"] == "auto"
+        assert body["version"] >= 1
+
+    def test_put_requires_auth(self, client):
+        resp = client.put("/ai-profile", json={"selected_model": "llama3.1:8b"})
+        assert resp.status_code == 401
+
+    def test_put_updates_and_bumps_version(self, client):
+        before = client.get("/ai-profile").json()["version"]
+        changes = {"selected_model": "llama3.1:8b"}
+        headers = sign_request("PUT", self.PROFILE_URL, TEST_SECRET, changes)
+        resp = client.put("/ai-profile", json=changes, headers=headers)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["selected_model"] == "llama3.1:8b"
+        assert body["version"] == before + 1
+        # The change is now visible to every other reader (the sync behavior).
+        assert client.get("/ai-profile").json()["selected_model"] == "llama3.1:8b"
+
+    def test_put_ignores_non_writable_fields(self, client):
+        changes = {"version": 999, "selected_model": "mistral:7b"}
+        headers = sign_request("PUT", self.PROFILE_URL, TEST_SECRET, changes)
+        body = client.put("/ai-profile", json=changes, headers=headers).json()
+        assert body["selected_model"] == "mistral:7b"
+        assert body["version"] != 999  # version is server-managed
 
 
 class TestReadAuth:

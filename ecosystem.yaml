@@ -38,6 +38,28 @@ events:
   retry_delay_seconds: 5
   hmac_signing: true
 
+# Shared AI/LLM profile (single source of truth across all apps).
+# The registry serves this at GET /ai-profile and accepts writes at
+# PUT /ai-profile; a change in one app propagates to all via the
+# ecosystem.ai_profile_changed event. Ollama is the default; cloud providers
+# are opt-in (keys come from env/secrets, never this file). "auto" model
+# resolves to the local hardware tier's recommended model.
+ai:
+  default_provider: ollama
+  selected_model: auto
+  ollama_base_url: "http://localhost:11434"
+  models_dir: ""            # one shared model store; blank = Ollama default
+  task_models:
+    chat: auto
+    embed: nomic-embed-text
+    vision: auto
+  cloud:
+    anthropic: { enabled: false, model: "" }
+    openai: { enabled: false, model: "" }
+    gemini: { enabled: false, model: "" }
+  prefer: local             # local | cloud | quality
+  allow_cloud_fallback: true
+
 # Cyber Claude Harness integration
 cyber_harness:
   enabled: true

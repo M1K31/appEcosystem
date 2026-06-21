@@ -172,6 +172,18 @@ and ships a container `HEALTHCHECK` against `/health`.
 **Logging** — set `ECOSYSTEM_LOG_LEVEL` (default `INFO`) and
 `ECOSYSTEM_LOG_FORMAT=json` for structured logs suitable for Loki/ELK/CloudWatch.
 
+**Shared AI profile** — the registry holds one ecosystem-wide LLM profile
+(Ollama-default, cloud opt-in) so a selection made in any app appears in all the
+others:
+- `GET /ai-profile` — read the current profile (provider, selected model, cloud
+  toggles, routing).
+- `PUT /ai-profile` — apply changes (signed request); the version is bumped and
+  an `ecosystem.ai_profile_changed` event is broadcast so other apps update live.
+
+Apps fall back to their local profile when the registry is absent (standalone).
+The `ecosystem_ai` package (`packages/ecosystem-ai`) provides the provider
+interface, Ollama default, hardware-tier model selection, and feature gating.
+
 ---
 
 ## 5. Development & Contribution

@@ -167,13 +167,29 @@ defaults.
 
 ---
 
-## 4. Open decisions for sign-off
-1. **Shared library delivery**: publish `ecosystem_ai` (and `ecosystem_client`)
-   as installable packages vs. keep vendored copies synced by CI. *(Recommend:
-   one package — kills drift and security-fix lag.)*
-2. **Tier thresholds**: confirm the RAM/VRAM cutoffs and the default model per
-   tier (above are proposed starting points).
-3. **Copilot integration**: confirm target (GitHub Copilot API / Copilot-style
-   endpoint) — access model differs from OpenAI/Anthropic.
+## 4. Decisions (signed off 2026-06-20)
+1. **Shared library delivery**: **one installable package** — publish
+   `ecosystem_ai` (and `ecosystem_client`) as versioned packages; retire the
+   vendored copies. Eliminates drift and security-fix lag.
+2. **Start order**: **Phase A (ports) first**, then B0.
+3. **Copilot**: **deferred** — ship Ollama (default) + Anthropic + OpenAI +
+   Gemini in B1; add Copilot later under its own auth design.
+4. **Tier thresholds**: proceed with the proposed T0–T3 cutoffs/default models
+   in §1.2 as starting points (tunable later).
+
+## 5. Canonical port map (Phase A target)
+
+| Service | Port | Bind＝Register var (precedence) | Health |
+|---------|------|--------------------------------|--------|
+| AFS | 8000 | `ECOSYSTEM_SERVICE_PORT` → `PORT` → 8000 | `/health` |
+| OpenEye | 8200 | `ECOSYSTEM_SERVICE_PORT` → `OPENEYE_PORT` → 8200 | `/api/health` |
+| LogAnalysis (AsusGuard dashboard) | 8089 | `ECOSYSTEM_SERVICE_PORT` → config → 8089 | `/api/status` |
+| AsusGuard daemon (cyber-harness) | 8088 | `ASUSGUARD_PORT` → 8088 | `/api/status` |
+| MagicMirror | 8080 | `ECOSYSTEM_SERVICE_PORT` → `MM_PORT` → 8080 | `/api/v1/health` |
+| appEcosystem registry | 8500 | `ECOSYSTEM_REGISTRY_PORT` → 8500 | `/health` |
+
+Rule: the **single resolved port is used for both the server bind and the
+registry registration** (and self/webhook URLs). `ECOSYSTEM_SERVICE_PORT` always
+wins so the facilitator/user can relocate a service without breaking comms.
 
 *Plan by Smart Industries LLC.*

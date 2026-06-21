@@ -54,11 +54,17 @@ async def lifespan(app: FastAPI):
     )
     await health_monitor.start()
 
+    # Shared AI profile (single source of truth for ecosystem LLM settings).
+    from .profile_store import AIProfileStore
+    ai_profile_path = os.environ.get("ECOSYSTEM_AI_PROFILE_FILE", "data/ai_profile.json")
+    ai_profile_store = AIProfileStore(persistence_path=ai_profile_path)
+
     # Stash on app.state so request handlers resolve them via dependencies
     # rather than module globals (which could be None before startup).
     app.state.registry = registry
     app.state.health_monitor = health_monitor
     app.state.event_bus = event_bus
+    app.state.ai_profile_store = ai_profile_store
 
     logger.info("Ecosystem registry started")
     yield
@@ -89,6 +95,17 @@ def get_health_monitor(request: Request) -> HealthMonitor:
             detail="Health monitor not initialized",
         )
     return monitor
+
+
+def get_profile_store(request: Request):
+    """Dependency: resolve the AI profile store, 503 before startup completes."""
+    store = getattr(request.app.state, "ai_profile_store", None)
+    if store is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI profile store not initialized",
+        )
+    return store
 
 
 def _read_auth_required() -> bool:
@@ -134,7 +151,7 @@ def _cors_origins() -> list[str]:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins(),
-    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Ecosystem-Signature"],
 )
 
@@ -153,6 +170,47 @@ async def metrics_endpoint(request: Request):
 
     reg = getattr(request.app.state, "registry", None)
     return PlainTextResponse(metrics.render_prometheus(reg))
+
+
+@app.get("/ai-profile")
+async def get_ai_profile(
+    store=Depends(get_profile_store),
+    _auth=Depends(require_read_auth),
+):
+    """Return the shared ecosystem AI/LLM profile (the synced source of truth)."""
+    return store.get()
+
+
+@app.put("/ai-profile")
+async def update_ai_profile(
+    changes: dict,
+    request: Request,
+    auth: dict = Depends(require_ecosystem_auth),
+    store=Depends(get_profile_store),
+):
+    """Apply changes to the shared AI profile, bump its version, and broadcast an
+    `ecosystem.ai_profile_changed` event so other apps update live."""
+    updated_by = (auth or {}).get("service") or "unknown"
+    profile = store.update(changes, updated_by=updated_by)
+
+    event_bus = getattr(request.app.state, "event_bus", None)
+    if event_bus:
+        try:
+            from events.schemas import EventEnvelope
+            await event_bus.publish(EventEnvelope(
+                type="ecosystem.ai_profile_changed",
+                source="registry",
+                data={
+                    "version": profile.get("version"),
+                    "updated_by": updated_by,
+                    "changed": [k for k in changes if k in profile],
+                    "profile": profile,
+                },
+            ))
+        except Exception as e:
+            logger.debug("Failed to publish ai_profile_changed event: %s", e)
+
+    return profile
 
 
 @app.post("/register", response_model=ServiceRecord, status_code=status.HTTP_201_CREATED)
