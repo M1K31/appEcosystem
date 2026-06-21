@@ -38,6 +38,17 @@ This document tracks completed changes, active items, and planned improvements f
 - [ ] **Branch protection / required checks**: Enable branch protection on `main` requiring the CI workflow (tests, audits, shellcheck, docker build) to pass before merge.
 - [ ] **Publish Docker image to GHCR on tag**: Add a release workflow that builds and pushes `ghcr.io/<owner>/appecosystem-registry` on `v*` tags.
 
+### Ecosystem-wide initiative (see [ECOSYSTEM_AUDIT.md](ECOSYSTEM_AUDIT.md) + [ECOSYSTEM_AI_PLAN.md](ECOSYSTEM_AI_PLAN.md))
+- [ ] **Phase A — Port reconciliation**: one resolved port var (bind＝register), fix OpenEye bind≠register, correct `ecosystem.yaml` (OpenEye/AsusGuard), collision-free defaults, preflight + `test_port_config` per repo.
+- [ ] **Phase B0 — `ecosystem_ai` foundation**: shared provider interface + `OllamaProvider` (default) + `ProviderRouter` + `HardwareProbe`/tiers + `CapabilityManager`.
+- [ ] **Phase B1 — Provider plug-ins**: Anthropic, OpenAI, Copilot, Gemini behind one interface (opt-in via keys, fallback routing).
+- [ ] **Phase B2 — Ecosystem AI profile**: `ai:` in `ecosystem.yaml`, `GET /ai-profile`, `EcosystemConfig` precedence.
+- [ ] **Phase B3 — Adopt in each app**: migrate AFS/LogAnalysis/OpenEye/MagicMirror to `ecosystem_ai`; add Ollama path to OpenEye; Ollama default everywhere.
+- [ ] **Phase C — Hardware-adaptive feature gating**: per-app feature requirements → tier-based enable/disable + graceful degradation matrix.
+- [ ] **Phase D — AFS↔LogAnalysis synergy**: first-class log/network agent tools + event-bus correlation.
+- [ ] **Phase E — Hardening parity**: re-sync v0.3.0 auth into every embedded `ecosystem_client`.
+- [ ] **Phase F — Facilitator placement**: resource-budget signals → place LLM load on the most capable host.
+
 ### Phase 5: Audit Remediation (2026-06-14)
 - [x] **Critical: systemd installer crash**: Removed orphan `EOF` in `scripts/install_systemd.sh` that aborted the installer (exit 127) under `set -euo pipefail`. [RESOLVED]
 - [x] **Fail-closed HMAC secret**: `get_ecosystem_secret()` now refuses the insecure default when `ECOSYSTEM_ENV != dev` (Python + JS); single source of truth replaces four duplicated lookups. Added `.env.example`. [RESOLVED]
