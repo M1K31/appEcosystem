@@ -39,7 +39,14 @@ This document tracks completed changes, active items, and planned improvements f
 - [ ] **Publish Docker image to GHCR on tag**: Add a release workflow that builds and pushes `ghcr.io/<owner>/appecosystem-registry` on `v*` tags.
 
 ### Ecosystem-wide initiative (see [ECOSYSTEM_AUDIT.md](ECOSYSTEM_AUDIT.md) + [ECOSYSTEM_AI_PLAN.md](ECOSYSTEM_AI_PLAN.md))
-- [ ] **Phase A — Port reconciliation**: one resolved port var (bind＝register), fix OpenEye bind≠register, correct `ecosystem.yaml` (OpenEye/AsusGuard), collision-free defaults, preflight + `test_port_config` per repo.
+- [~] **Phase A — Port reconciliation** (in progress):
+  - [x] `ecosystem.yaml` AsusGuard 8088→8089 (harness keeps 8088).
+  - [x] OpenEye: `resolve_service_port()` (ECOSYSTEM_SERVICE_PORT→OPENEYE_PORT→PORT→8200); bind＝register; fixed bind≠register bug; tests.
+  - [x] LogAnalysis: `resolve_service_port()` honors ECOSYSTEM_SERVICE_PORT for bind＝register (default 8089); tests.
+  - [x] AFS: `resolve_service_port()` (ECOSYSTEM_SERVICE_PORT→PORT→config→8000); bind＝register; tests.
+  - [ ] MagicMirror: standardize on ECOSYSTEM_SERVICE_PORT→MM_PORT→8080. **Deferred** — repo has active WIP (ecosystem-auth edits + new MMM-AsusGuard-SIEM / MMM-CyberHarness modules); already consistent at 8080.
+  - [ ] `port-doctor` preflight (registered＝listening, port-free) in appEcosystem CLI + per-app startup.
+  - Note: OpenEye and MagicMirror have **uncommitted WIP touching `ecosystem_auth`/`ecosystem-auth`** (looks like a started Phase E auth sync) — left untouched.
 - [ ] **Phase B0 — `ecosystem_ai` foundation**: shared provider interface + `OllamaProvider` (default) + `ProviderRouter` + `HardwareProbe`/tiers + `CapabilityManager`.
 - [ ] **Phase B1 — Provider plug-ins**: Anthropic, OpenAI, Copilot, Gemini behind one interface (opt-in via keys, fallback routing).
 - [ ] **Phase B2 — Ecosystem AI profile**: `ai:` in `ecosystem.yaml`, `GET /ai-profile`, `EcosystemConfig` precedence.
