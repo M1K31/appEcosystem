@@ -18,6 +18,7 @@ from .hardware import (
 from .features import CapabilityManager, FeatureRequirement, FeatureStatus
 from .router import ProviderRouter
 from .factory import build_providers, build_router
+from .sync import AIProfileClient
 from .providers import (
     AIProvider,
     AnthropicProvider,
@@ -49,6 +50,7 @@ __all__ = [
     "ProviderRouter",
     "build_providers",
     "build_router",
+    "AIProfileClient",
     "AIProvider",
     "AnthropicProvider",
     "Capability",
