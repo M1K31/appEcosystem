@@ -59,7 +59,13 @@ This document tracks completed changes, active items, and planned improvements f
   - Note: activating sync at runtime needs `ecosystem-ai` installed in each app's env (path install until the package is published) — guarded imports keep apps working without it.
 - [ ] **Phase C — Hardware-adaptive feature gating**: per-app feature requirements → tier-based enable/disable + graceful degradation matrix.
 - [ ] **Phase D — AFS↔LogAnalysis synergy**: first-class log/network agent tools + event-bus correlation.
-- [ ] **Phase E — Hardening parity / client re-sync** — ⚠️ **BLOCKER, now critical**: the member apps' vendored `ecosystem_auth` is the OLD scheme (`sign_payload` only; no `sign_request`/`verify_request`/replay protection). Since the registry was upgraded to the v0.3.0 replay-resistant scheme, **the apps can no longer authenticate to it** (register/deregister/AI-profile writes 401). Must re-sync v0.3.0 auth+client into every app (recommended: turn `ecosystem-auth` + `ecosystem-client` into path-installed shared packages and retire the vendored copies, per the "one package" decision). Unblocks registration AND the AI-profile sync.
+- [~] **Phase E — Hardening parity / client re-sync** (in progress):
+  - [x] Shared packages bumped to **v0.3.0**; fixed an invalid `build-backend` in `ecosystem-auth` that blocked installation.
+  - [x] **AFS converted**: retired vendored `ecosystem_auth`/`ecosystem_client`, repointed to the path-installed shared v0.3.0 packages; app imports clean, tests pass. Registration + AI sync now work against the v0.3.0 registry.
+  - [ ] **Decision needed — client secret model**: the canonical client keeps the dev-default secret (matches the registry's dev behavior); LogAnalysis's vendored client hardened it to `""` + warning. Pick one before converting LogAnalysis (else dev interop breaks or hardening regresses).
+  - [ ] LogAnalysis convert (ready once secret model decided).
+  - [ ] OpenEye + MagicMirror: **blocked** on their in-flight WIP (uncommitted edits to the exact auth/client files) + OpenEye's divergent `claude/mystifying-gauss-3aefaf` branch.
+  - Original blocker context: the member apps' vendored `ecosystem_auth` is the OLD scheme (`sign_payload` only; no `sign_request`/`verify_request`/replay protection). Since the registry was upgraded to the v0.3.0 replay-resistant scheme, **the apps can no longer authenticate to it** (register/deregister/AI-profile writes 401). Must re-sync v0.3.0 auth+client into every app (recommended: turn `ecosystem-auth` + `ecosystem-client` into path-installed shared packages and retire the vendored copies, per the "one package" decision). Unblocks registration AND the AI-profile sync.
   - Document: [PUBLISHING.md](PUBLISHING.md). Path-install wired into appEcosystem `scripts/install.sh`.
 - [ ] **Phase F — Facilitator placement**: resource-budget signals → place LLM load on the most capable host.
 
