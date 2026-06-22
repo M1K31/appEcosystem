@@ -50,7 +50,13 @@ This document tracks completed changes, active items, and planned improvements f
 - [x] **Phase B0 — `ecosystem_ai` foundation**: new installable package `packages/ecosystem-ai/`. Provider interface + `OllamaProvider` (default, local-first), `ProviderRouter` (local-first + cloud fallback), `HardwareProbe`/`CapabilityTier` (T0–T3) + tier→model, `CapabilityManager` (feature gating w/ cloud-lift), and the syncable `AIProfile` schema (version/with_change/merge — the shared source of truth that makes a selection in one app appear in all). 25 tests passing.
 - [x] **Phase B1 — Provider plug-ins**: `AnthropicProvider`, `OpenAIProvider` (configurable base_url for OpenAI-compatible/Copilot-style gateways), `GeminiProvider` — httpx-based (no heavy SDKs), opt-in via env keys, uniform `ChatResult`. `build_providers()`/`build_router()` factory assembles the set from a profile (Ollama always + enabled cloud). Copilot deferred per decision. 36 package tests passing.
 - [x] **Phase B2 — Ecosystem AI profile (registry side)**: `AIProfileStore` (JSON-persisted, version-bumped, last-write-wins); `GET /ai-profile` (read) and `PUT /ai-profile` (signed write) on the registry; writes broadcast `ecosystem.ai_profile_changed` so a selection in one app propagates live to all. `ai:` section seeded in `ecosystem.yaml`; `ECOSYSTEM_AI_PROFILE_FILE` documented. Tests for store + endpoints. *(Client-side `EcosystemConfig` precedence + live event handling is part of B3 adoption.)*
-- [ ] **Phase B3 — Adopt in each app**: migrate AFS/LogAnalysis/OpenEye/MagicMirror to `ecosystem_ai`; add Ollama path to OpenEye; Ollama default everywhere.
+- [~] **Phase B3 — Adopt in each app** (in progress):
+  - [x] Shared `AIProfileClient` (in `ecosystem_ai/sync.py`): fetch/write the shared profile, local fallback, live event handling, auth-agnostic signer. 42 package tests.
+  - [x] **AFS reference adoption**: `ecosystem_ai_bridge` propagates an LLM switch to the shared profile and `GET /api/v1/models/shared` reads it; guarded/best-effort so standalone still works. Tests added.
+  - [ ] LogAnalysis: read/write shared profile for its Ollama model selection.
+  - [ ] OpenEye: adopt `ecosystem_ai` **and add an Ollama path** (Claude stays optional).
+  - [ ] MagicMirror (JS): consume the shared profile for HUD AI widgets (pairs with its in-flight ecosystem WIP).
+  - Note: activating sync at runtime needs `ecosystem-ai` installed in each app's env (path install until the package is published) — guarded imports keep apps working without it.
 - [ ] **Phase C — Hardware-adaptive feature gating**: per-app feature requirements → tier-based enable/disable + graceful degradation matrix.
 - [ ] **Phase D — AFS↔LogAnalysis synergy**: first-class log/network agent tools + event-bus correlation.
 - [ ] **Phase E — Hardening parity**: re-sync v0.3.0 auth into every embedded `ecosystem_client`.
