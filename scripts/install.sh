@@ -26,6 +26,11 @@ pip install --upgrade pip -q
 # Install Python dependencies
 pip install -e ".[dev]" 2>/dev/null || pip install -e .
 
+# Install the shared ecosystem packages (path install until published).
+# Apps guard these imports, so this activates the shared AI layer + sync.
+pip install -e "$ROOT_DIR/packages/ecosystem-ai"
+pip install -e "$ROOT_DIR/packages/ecosystem-client"
+
 # Install JS dependencies
 if command -v npm &>/dev/null; then
     npm install --workspaces 2>/dev/null || true

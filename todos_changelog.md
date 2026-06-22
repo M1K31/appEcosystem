@@ -53,13 +53,14 @@ This document tracks completed changes, active items, and planned improvements f
 - [~] **Phase B3 — Adopt in each app** (in progress):
   - [x] Shared `AIProfileClient` (in `ecosystem_ai/sync.py`): fetch/write the shared profile, local fallback, live event handling, auth-agnostic signer. 42 package tests.
   - [x] **AFS reference adoption**: `ecosystem_ai_bridge` propagates an LLM switch to the shared profile and `GET /api/v1/models/shared` reads it; guarded/best-effort so standalone still works. Tests added.
-  - [ ] LogAnalysis: read/write shared profile for its Ollama model selection.
+  - [x] LogAnalysis: `ecosystem_ai_bridge` (prefer shared model in `_select_ollama_model`; propagate on settings save). **Scaffolding only — dormant until Phase E** (its vendored `ecosystem_auth` lacks `sign_request`).
   - [ ] OpenEye: adopt `ecosystem_ai` **and add an Ollama path** (Claude stays optional).
   - [ ] MagicMirror (JS): consume the shared profile for HUD AI widgets (pairs with its in-flight ecosystem WIP).
   - Note: activating sync at runtime needs `ecosystem-ai` installed in each app's env (path install until the package is published) — guarded imports keep apps working without it.
 - [ ] **Phase C — Hardware-adaptive feature gating**: per-app feature requirements → tier-based enable/disable + graceful degradation matrix.
 - [ ] **Phase D — AFS↔LogAnalysis synergy**: first-class log/network agent tools + event-bus correlation.
-- [ ] **Phase E — Hardening parity**: re-sync v0.3.0 auth into every embedded `ecosystem_client`.
+- [ ] **Phase E — Hardening parity / client re-sync** — ⚠️ **BLOCKER, now critical**: the member apps' vendored `ecosystem_auth` is the OLD scheme (`sign_payload` only; no `sign_request`/`verify_request`/replay protection). Since the registry was upgraded to the v0.3.0 replay-resistant scheme, **the apps can no longer authenticate to it** (register/deregister/AI-profile writes 401). Must re-sync v0.3.0 auth+client into every app (recommended: turn `ecosystem-auth` + `ecosystem-client` into path-installed shared packages and retire the vendored copies, per the "one package" decision). Unblocks registration AND the AI-profile sync.
+  - Document: [PUBLISHING.md](PUBLISHING.md). Path-install wired into appEcosystem `scripts/install.sh`.
 - [ ] **Phase F — Facilitator placement**: resource-budget signals → place LLM load on the most capable host.
 
 ### Phase 5: Audit Remediation (2026-06-14)
