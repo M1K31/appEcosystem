@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "ecosystem-auth"
 version = "0.3.0"
 description = "Shared HMAC-SHA256 authentication for the app ecosystem"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 dependencies = ["fastapi>=0.100.0"]
 
 [project.optional-dependencies]
