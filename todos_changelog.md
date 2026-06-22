@@ -54,8 +54,9 @@ This document tracks completed changes, active items, and planned improvements f
   - [x] Shared `AIProfileClient` (in `ecosystem_ai/sync.py`): fetch/write the shared profile, local fallback, live event handling, auth-agnostic signer. 42 package tests.
   - [x] **AFS reference adoption**: `ecosystem_ai_bridge` propagates an LLM switch to the shared profile and `GET /api/v1/models/shared` reads it; guarded/best-effort so standalone still works. Tests added.
   - [x] LogAnalysis: `ecosystem_ai_bridge` (prefer shared model in `_select_ollama_model`; propagate on settings save). **Scaffolding only — dormant until Phase E** (its vendored `ecosystem_auth` lacks `sign_request`).
-  - [ ] OpenEye: adopt `ecosystem_ai` **and add an Ollama path** (Claude stays optional).
-  - [ ] MagicMirror (JS): consume the shared profile for HUD AI widgets (pairs with its in-flight ecosystem WIP).
+  - [x] OpenEye: optional **Ollama-default LLM capability** via `ecosystem_ai` (`summarize_event`) + shared-profile read. (OpenEye had no prior LLM — its AI is computer vision — so this is a net-new optional ability, not a Claude swap.) Tests added.
+  - [x] MagicMirror (JS): added `AIProfileClient` (signed GET/PUT of the shared profile) — canonical in `ecosystem_client_js`, vendored into MM. 5 node tests.
+  - **Phase B3 COMPLETE** — all four apps participate in the shared, hardware-adaptive, Ollama-default AI layer with cross-app selection sync.
   - Note: activating sync at runtime needs `ecosystem-ai` installed in each app's env (path install until the package is published) — guarded imports keep apps working without it.
 - [ ] **Phase C — Hardware-adaptive feature gating**: per-app feature requirements → tier-based enable/disable + graceful degradation matrix.
 - [ ] **Phase D — AFS↔LogAnalysis synergy**: first-class log/network agent tools + event-bus correlation.
