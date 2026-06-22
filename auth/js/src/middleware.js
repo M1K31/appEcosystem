@@ -21,16 +21,21 @@ const _nonceStore = new NonceStore();
 /**
  * Get the shared HMAC secret from environment.
  *
- * Fails closed: if the resolved secret is the known development default and
- * ECOSYSTEM_ENV is anything other than "dev", an error is thrown rather than
- * silently trusting a public key.
+ * Fail-closed everywhere: there is no default. Throws if ECOSYSTEM_HMAC_SECRET
+ * is unset or set to the known development default, rather than silently
+ * trusting a guessable key.
  * @returns {string}
  */
 function getEcosystemSecret() {
-  const secret = process.env.ECOSYSTEM_HMAC_SECRET || DEFAULT_DEV_SECRET;
-  if (secret === DEFAULT_DEV_SECRET && (process.env.ECOSYSTEM_ENV || "dev") !== "dev") {
+  const secret = process.env.ECOSYSTEM_HMAC_SECRET;
+  if (!secret) {
     throw new Error(
-      "Refusing to start: ECOSYSTEM_HMAC_SECRET is unset or set to the insecure default."
+      "ECOSYSTEM_HMAC_SECRET is not set. A shared secret is required (no default)."
+    );
+  }
+  if (secret === DEFAULT_DEV_SECRET) {
+    throw new Error(
+      "Refusing the known development default secret. Set a unique ECOSYSTEM_HMAC_SECRET."
     );
   }
   return secret;

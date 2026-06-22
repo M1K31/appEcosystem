@@ -7,7 +7,8 @@ class TestEcosystemConfig:
     def test_default_values(self):
         config = EcosystemConfig()
         assert config.registry_url == "http://localhost:8500"
-        assert config.hmac_secret == "dev-ecosystem-secret-change-in-production"
+        # Fail-closed: no default secret (a committed default would be forgeable).
+        assert config.hmac_secret == ""
         assert config.service_name is None
         assert config.service_port is None
         assert config.health_endpoint == "/health"

@@ -1,8 +1,11 @@
 """Configuration for the ecosystem client."""
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -10,7 +13,10 @@ class EcosystemConfig:
     """Ecosystem client configuration loaded from env vars, files, or defaults."""
 
     registry_url: str = "http://localhost:8500"
-    hmac_secret: str = "dev-ecosystem-secret-change-in-production"
+    # Fail-closed: no default secret. A committed shared secret is a forgeable
+    # credential. Unset => outbound requests are signed with an empty key and
+    # rejected by peers (who require a real secret), which is the safe outcome.
+    hmac_secret: str = ""
     service_name: str | None = None
     service_port: int | None = None
     health_endpoint: str = "/health"
@@ -41,11 +47,17 @@ class EcosystemConfig:
         port_str = os.environ.get("ECOSYSTEM_SERVICE_PORT")
         port = int(port_str) if port_str else None
 
+        hmac_secret = os.environ.get("ECOSYSTEM_HMAC_SECRET", cls.hmac_secret)
+        if not hmac_secret:
+            logger.warning(
+                "ECOSYSTEM_HMAC_SECRET is not set — outbound ecosystem requests "
+                "will be unsigned/unverifiable by peers. Set it to enable "
+                "inter-service auth."
+            )
+
         return cls(
             registry_url=os.environ.get("ECOSYSTEM_REGISTRY_URL", cls.registry_url),
-            hmac_secret=os.environ.get(
-                "ECOSYSTEM_HMAC_SECRET", cls.hmac_secret
-            ),
+            hmac_secret=hmac_secret,
             service_name=os.environ.get("ECOSYSTEM_SERVICE_NAME"),
             service_port=port,
             health_endpoint=os.environ.get(

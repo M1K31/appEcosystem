@@ -37,19 +37,19 @@ class TestSecretResolution:
         monkeypatch.setenv("ECOSYSTEM_HMAC_SECRET", "from-env")
         assert get_ecosystem_secret() == "from-env"
 
-    def test_default_allowed_in_dev(self, monkeypatch):
+    def test_unset_raises(self, monkeypatch):
+        # Fail-closed: no default anywhere (including dev).
         monkeypatch.delenv("ECOSYSTEM_HMAC_SECRET", raising=False)
         monkeypatch.setenv("ECOSYSTEM_ENV", "dev")
-        assert get_ecosystem_secret() == DEFAULT_DEV_SECRET
-
-    def test_default_rejected_in_production(self, monkeypatch):
-        monkeypatch.delenv("ECOSYSTEM_HMAC_SECRET", raising=False)
-        monkeypatch.setenv("ECOSYSTEM_ENV", "production")
-        with pytest.raises(RuntimeError, match="insecure default"):
+        with pytest.raises(RuntimeError, match="not set"):
             get_ecosystem_secret()
 
-    def test_real_secret_allowed_in_production(self, monkeypatch):
-        monkeypatch.setenv("ECOSYSTEM_ENV", "production")
+    def test_known_default_rejected(self, monkeypatch):
+        monkeypatch.setenv("ECOSYSTEM_HMAC_SECRET", DEFAULT_DEV_SECRET)
+        with pytest.raises(RuntimeError, match="development default"):
+            get_ecosystem_secret()
+
+    def test_real_secret_allowed(self, monkeypatch):
         monkeypatch.setenv("ECOSYSTEM_HMAC_SECRET", "a-real-secret")
         assert get_ecosystem_secret() == "a-real-secret"
 

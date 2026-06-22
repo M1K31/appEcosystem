@@ -13,8 +13,9 @@ import secrets
 import time
 from typing import Optional
 
-# Insecure development default. The ecosystem refuses to start with this value
-# unless ECOSYSTEM_ENV is "dev" (see get_ecosystem_secret).
+# Known insecure development default. There is intentionally NO automatic
+# fallback to it — a committed shared secret is a forgeable credential. The
+# constant is kept only so we can explicitly reject it if someone sets it.
 DEFAULT_DEV_SECRET = "dev-ecosystem-secret-change-in-production"
 
 
@@ -22,18 +23,23 @@ def get_ecosystem_secret(override: Optional[str] = None) -> str:
     """
     Resolve the shared HMAC secret from an explicit override or the environment.
 
-    Single source of truth for every service (registry, event bus, command
-    router, middleware). Fails closed: if the resolved secret is the known
-    development default and ECOSYSTEM_ENV is anything other than "dev", a
-    RuntimeError is raised rather than silently trusting a public key.
+    Fail-closed everywhere: there is no default. If ECOSYSTEM_HMAC_SECRET is
+    unset (and no override is given), or it is set to the known development
+    default, a RuntimeError is raised rather than silently trusting a guessable
+    key. Generate one with:
+        python -c "import secrets; print(secrets.token_hex(32))"
     """
-    secret = override or os.environ.get("ECOSYSTEM_HMAC_SECRET", DEFAULT_DEV_SECRET)
-    if secret == DEFAULT_DEV_SECRET and os.environ.get("ECOSYSTEM_ENV", "dev") != "dev":
+    secret = override or os.environ.get("ECOSYSTEM_HMAC_SECRET")
+    if not secret:
         raise RuntimeError(
-            "Refusing to start: ECOSYSTEM_HMAC_SECRET is unset or set to the "
-            "insecure default. Generate one with "
-            "`python -c \"import secrets; print(secrets.token_hex(32))\"` "
-            "and export ECOSYSTEM_HMAC_SECRET."
+            "ECOSYSTEM_HMAC_SECRET is not set. A shared secret is required and "
+            "there is no default (a committed default would be forgeable). "
+            "Generate one with `python -c \"import secrets; print(secrets.token_hex(32))\"`."
+        )
+    if secret == DEFAULT_DEV_SECRET:
+        raise RuntimeError(
+            "Refusing the known development default secret. "
+            "Set ECOSYSTEM_HMAC_SECRET to a unique generated value."
         )
     return secret
 
