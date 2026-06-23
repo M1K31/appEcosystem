@@ -34,6 +34,10 @@ This document tracks completed changes, active items, and planned improvements f
 - [x] **Optional read-endpoint auth**: `ECOSYSTEM_REQUIRE_READ_AUTH` gates auth on `/services*`; in-repo discovery clients and CLI sign their GETs so enabling it is non-breaking. [RESOLVED]
 - [x] **Self-hosted fonts**: Replaced the render-blocking `fonts.googleapis.com` `@import` with local `@font-face` declarations pointing to vendored variable WOFF2 files (`theme/fonts/`). `scripts/fetch_fonts.py` re-downloads them; system-font fallbacks keep the UI working offline (privacy + MagicMirror HUD). [RESOLVED]
 
+### OpenEye stash salvage (2026-06-22)
+- [x] Salvaged the valuable WIP from OpenEye `stash@{1}` (19 files main hadn't since changed): two-way audio (core+route), scheduled tasks, face pipeline improvements, `event_type` column, alert_manager ecosystem hook, install/setup scripts. Verified compile/syntax.
+- [x] Remaining stash content confirmed **superseded by main** (main.py already wires two-way audio/scheduled-tasks/face_history; ecosystem.py/ecosystem_security.py evolved via PR #7 + Phase A) or **obsolete vendored auth/client** (dropped by Phase E). Both stashes left intact for user review (safe to `git stash drop` when satisfied).
+
 ### Backlog (future)
 - [ ] **Branch protection / required checks**: Enable branch protection on `main` requiring the CI workflow (tests, audits, shellcheck, docker build) to pass before merge.
 - [ ] **Publish Docker image to GHCR on tag**: Add a release workflow that builds and pushes `ghcr.io/<owner>/appecosystem-registry` on `v*` tags.
