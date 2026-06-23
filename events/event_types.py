@@ -12,7 +12,7 @@ class EventType(str, Enum):
     to all subscribers registered for that event type (or wildcard).
     """
 
-    # Security events (OpenEye, AsusGuard)
+    # Security events (OpenEye, AegisSIEM)
     SECURITY_ALERT = "security.alert"
     SECURITY_MOTION_DETECTED = "security.motion_detected"
     SECURITY_PERSON_DETECTED = "security.person_detected"
@@ -26,7 +26,7 @@ class EventType(str, Enum):
     SYSTEM_ERROR = "system.error"
     SYSTEM_CONFIG_CHANGED = "system.config_changed"
 
-    # Network events (AsusGuard)
+    # Network events (AegisSIEM)
     NETWORK_DEVICE_CONNECTED = "network.device_connected"
     NETWORK_DEVICE_DISCONNECTED = "network.device_disconnected"
     NETWORK_ANOMALY = "network.anomaly"

@@ -44,11 +44,11 @@ This document tracks completed changes, active items, and planned improvements f
 
 ### Ecosystem-wide initiative (see [ECOSYSTEM_AUDIT.md](ECOSYSTEM_AUDIT.md) + [ECOSYSTEM_AI_PLAN.md](ECOSYSTEM_AI_PLAN.md))
 - [~] **Phase A — Port reconciliation** (in progress):
-  - [x] `ecosystem.yaml` AsusGuard 8088→8089 (harness keeps 8088).
+  - [x] `ecosystem.yaml` AegisSIEM 8088→8089 (harness keeps 8088).
   - [x] OpenEye: `resolve_service_port()` (ECOSYSTEM_SERVICE_PORT→OPENEYE_PORT→PORT→8200); bind＝register; fixed bind≠register bug; tests.
   - [x] LogAnalysis: `resolve_service_port()` honors ECOSYSTEM_SERVICE_PORT for bind＝register (default 8089); tests.
   - [x] AFS: `resolve_service_port()` (ECOSYSTEM_SERVICE_PORT→PORT→config→8000); bind＝register; tests.
-  - [ ] MagicMirror: standardize on ECOSYSTEM_SERVICE_PORT→MM_PORT→8080. **Deferred** — repo has active WIP (ecosystem-auth edits + new MMM-AsusGuard-SIEM / MMM-CyberHarness modules); already consistent at 8080.
+  - [ ] MagicMirror: standardize on ECOSYSTEM_SERVICE_PORT→MM_PORT→8080. **Deferred** — repo has active WIP (ecosystem-auth edits + new MMM-AegisSIEM-SIEM / MMM-CyberHarness modules); already consistent at 8080.
   - [ ] `port-doctor` preflight (registered＝listening, port-free) in appEcosystem CLI + per-app startup.
   - Note: OpenEye and MagicMirror have **uncommitted WIP touching `ecosystem_auth`/`ecosystem-auth`** (looks like a started Phase E auth sync) — left untouched.
 - [x] **Phase B0 — `ecosystem_ai` foundation**: new installable package `packages/ecosystem-ai/`. Provider interface + `OllamaProvider` (default, local-first), `ProviderRouter` (local-first + cloud fallback), `HardwareProbe`/`CapabilityTier` (T0–T3) + tier→model, `CapabilityManager` (feature gating w/ cloud-lift), and the syncable `AIProfile` schema (version/with_change/merge — the shared source of truth that makes a selection in one app appear in all). 25 tests passing.

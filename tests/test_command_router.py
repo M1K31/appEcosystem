@@ -57,7 +57,7 @@ class TestRoutingCascade:
             "source": "harness",
         })
 
-        result = await router.route("asusguard", "threat_analysis", body={"ip": "1.2.3.4"})
+        result = await router.route("aegissiem", "threat_analysis", body={"ip": "1.2.3.4"})
 
         assert result["status"] == "ok"
         assert result["source"] == "harness"
@@ -85,7 +85,7 @@ class TestRoutingCascade:
             "detail": "harness unavailable",
         })
 
-        result = await router.route("asusguard", "threat_analysis", body={"ip": "1.2.3.4"})
+        result = await router.route("aegissiem", "threat_analysis", body={"ip": "1.2.3.4"})
 
         # Falls through to manifest lookup (no manifests loaded → error)
         assert result["status"] == "error"
@@ -97,7 +97,7 @@ class TestRoutingCascade:
         router._harness_available = AsyncMock(return_value=False)
         router._route_via_harness = AsyncMock()
 
-        result = await router.route("asusguard", "security_scan")
+        result = await router.route("aegissiem", "security_scan")
 
         router._route_via_harness.assert_not_called()
 
@@ -118,7 +118,7 @@ class TestRouteViaHarness:
         mock_resp.json.return_value = {"result": "analysis done", "model": "llama3"}
         router._client.post = AsyncMock(return_value=mock_resp)
 
-        result = await router._route_via_harness("asusguard", "threat_analysis", {"ip": "1.2.3.4"})
+        result = await router._route_via_harness("aegissiem", "threat_analysis", {"ip": "1.2.3.4"})
 
         assert result["status"] == "ok"
         assert result["source"] == "harness"
@@ -126,7 +126,7 @@ class TestRouteViaHarness:
         call_args = router._client.post.call_args
         assert "/api/analyze" in call_args[0][0]
         payload = call_args[1]["json"]
-        assert payload["project"] == "asusguard"
+        assert payload["project"] == "aegissiem"
         assert payload["capability"] == "threat_analysis"
         assert payload["ip"] == "1.2.3.4"
 
@@ -135,7 +135,7 @@ class TestRouteViaHarness:
         mock_resp = MagicMock(status_code=502)
         router._client.post = AsyncMock(return_value=mock_resp)
 
-        result = await router._route_via_harness("asusguard", "log_analysis", {})
+        result = await router._route_via_harness("aegissiem", "log_analysis", {})
 
         assert result["status"] == "error"
 
@@ -175,7 +175,7 @@ class TestExecutePathParams:
 class TestHarnessUrlResolution:
     def test_default_from_port(self, monkeypatch):
         monkeypatch.delenv("ECOSYSTEM_HARNESS_URL", raising=False)
-        monkeypatch.setenv("ASUSGUARD_PORT", "9000")
+        monkeypatch.setenv("AEGISSIEM_PORT", "9000")
         assert CommandRouter._default_harness_url() == "http://localhost:9000"
 
     def test_explicit_url_wins(self, monkeypatch):

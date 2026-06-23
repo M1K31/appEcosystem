@@ -8,7 +8,7 @@
 | Repo | Role | Stack |
 |------|------|-------|
 | `AI-for-Survival` (AFS) | Survival assistant + **LLM/agent hub** (RAG, tool-calling) | Python/FastAPI + Ollama/OpenAI/Anthropic |
-| `LogAnalysis` (AsusGuard) | Router log analysis, SIEM, honeypot, **cyber-harness** | Python/Flask + Ollama |
+| `LogAnalysis` (AegisSIEM) | Router log analysis, SIEM, honeypot, **cyber-harness** | Python/Flask + Ollama |
 | `OpenEye` | OpenCV home-security surveillance | Python/FastAPI + React + Anthropic |
 | `MagicMirror-Custom` | HUD / dashboard | Node/Electron/Express + multi-provider LLM |
 | `appEcosystem` | Registry / event bus / discovery facilitator | Python/FastAPI |
@@ -60,8 +60,8 @@ ports + LLM, plus a port-reconciliation fix) resolves them.
 |---------|---------------------------|--------------------|--------------|---------|
 | AFS | 8000 | 8000 (`PORT`, `main.py:84` / start_command) | `PORT`=8000 | OK |
 | OpenEye | 8200 | **8000** (`OPENEYE_PORT`, `backend/main.py:956`) | **8200** (`PORT`, `main.py:497`) | **bind ≠ register ≠ declared** |
-| LogAnalysis / AsusGuard | **8088** | 8089 (`config.py:35`, `dashboard/app.py:321`) | 8089 | **declared 8088 ≠ actual 8089** |
-| AsusGuard daemon (harness) | 8088 | 8088 (`ASUSGUARD_PORT`) | n/a | OK (8088 = harness) |
+| LogAnalysis / AegisSIEM | **8088** | 8089 (`config.py:35`, `dashboard/app.py:321`) | 8089 | **declared 8088 ≠ actual 8089** |
+| AegisSIEM daemon (harness) | 8088 | 8088 (`AEGISSIEM_PORT`) | n/a | OK (8088 = harness) |
 | MagicMirror | 8080 | 8080 (`MM_PORT`) | 8080 | OK |
 
 **Concrete issues:**
@@ -71,7 +71,7 @@ ports + LLM, plus a port-reconciliation fix) resolves them.
    `OPENEYE_PORT(8000)` (`main.py:956`) and builds self/webhook URLs from
    `OPENEYE_PORT` (`api/routes/ecosystem.py:197,1473,1843`). Health checks and
    peer calls to the registered 8200 fail when OpenEye is run standalone.
-2. **`ecosystem.yaml` is stale** for OpenEye (8200 vs real 8000) and AsusGuard
+2. **`ecosystem.yaml` is stale** for OpenEye (8200 vs real 8000) and AegisSIEM
    (8088 vs real 8089). The harness daemon legitimately uses 8088, so
    LogAnalysis's dashboard should be 8089 in the map.
 3. **8000 three-way collision risk.** AFS *and* OpenEye both default to 8000 in
@@ -144,7 +144,7 @@ ports + LLM, plus a port-reconciliation fix) resolves them.
    `service_port` and the uvicorn bind port from the same resolved port; update
    `api/routes/ecosystem.py` self/webhook URLs to use it.
 3. **Correct `appEcosystem/ecosystem.yaml`:** OpenEye → 8000 (or pick a
-   non-colliding default and set it consistently), AsusGuard dashboard → 8089
+   non-colliding default and set it consistently), AegisSIEM dashboard → 8089
    (leave the harness daemon on 8088). Document the canonical port map.
 4. **Pick collision-free defaults:** AFS 8000, OpenEye 8200, LogAnalysis 8089,
    harness 8088, MagicMirror 8080, registry 8500 — and make each app *default*

@@ -56,7 +56,7 @@ However, **three changelog items marked `[RESOLVED]` are only partially implemen
 
 ### 1.4 Optimization / Dead Code
 - **[MEDIUM] Connection pooling NOT applied to `CommandRouter`** (changelog claims pooling `[RESOLVED]`). `EventBus`/`HealthMonitor` use a persistent `self._client`, but `CommandRouter._execute/_harness_available/_route_via_harness` (`command_router.py:124,146,159`) still create a fresh `httpx.AsyncClient()` per call in the hot path. Promote to a shared client with `aclose()` on shutdown.
-- **[LOW] Config drift** — `CommandRouter._HARNESS_BASE_URL` (`command_router.py:32`) hardcodes `localhost` + `ASUSGUARD_PORT`, ignoring `ecosystem.yaml:cyber_harness.daemon_url`. Single source of truth needed.
+- **[LOW] Config drift** — `CommandRouter._HARNESS_BASE_URL` (`command_router.py:32`) hardcodes `localhost` + `AEGISSIEM_PORT`, ignoring `ecosystem.yaml:cyber_harness.daemon_url`. Single source of truth needed.
 
 ### 1.5 Infrastructure / Longevity
 - **[MEDIUM] Aggressive auto-deregistration** — `HealthMonitor._poll_loop` permanently deregisters a service after `max_failures` (`health_monitor.py:129-150`). A transient blip evicts it until it re-registers; statically pre-registered projects never re-add themselves. Prefer marking `UNHEALTHY` + backoff over deletion, or auto-re-seed statics.
@@ -97,7 +97,7 @@ Suggested additions:
 ## Phase 5 — Documentation
 `README.md`, `usage.md`, `todos_changelog.md` all exist and are solid. Required actions:
 1. **Reconcile `todos_changelog.md`** — un-mark or footnote the three partial items: replay protection (signature path), SIGKILL escalation (CLI), connection pooling (CommandRouter).
-2. **Add `.env.example`** documenting `ECOSYSTEM_HMAC_SECRET`, `ECOSYSTEM_ENV`, `ECOSYSTEM_REGISTRY_FILE`, `ECOSYSTEM_HEALTH_INTERVAL`, `ASUSGUARD_PORT`.
+2. **Add `.env.example`** documenting `ECOSYSTEM_HMAC_SECRET`, `ECOSYSTEM_ENV`, `ECOSYSTEM_REGISTRY_FILE`, `ECOSYSTEM_HEALTH_INTERVAL`, `AEGISSIEM_PORT`.
 3. **No inline `TODO`/`FIXME` found** in source — the tracker is the single source; keep it accurate.
 
 ## Phase 6 — Production Readiness Roadmap

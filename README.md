@@ -19,7 +19,7 @@ The architecture is **standalone-first**: if the coordination layer goes offline
 | **AI-for-Survival** | `192.168.50.73:8000` | Python, FastAPI, Llama3/RAG | Offline LLM assistant and command execution manager. Orchestrates active defense and system triage. |
 | **OpenEye** | `192.168.50.73:8200` | Python, OpenCV, React | Video surveillance, physical intrusion detection, computer vision alerts, and smart home automation. |
 | **MagicMirror** | `192.168.50.73:8080` | Node.js, Electron, Express | Verbal communication hub, ambient smart-HUD, and real-time event visualization interface. |
-| **AsusGuard** | `192.168.50.73:8088` | Python, Flask, Daemon | Network traffic analysis, router syslog parsing, device control, and network threat blocking. |
+| **AegisSIEM** | `192.168.50.73:8088` | Python, Flask, Daemon | Network traffic analysis, router syslog parsing, device control, and network threat blocking. |
 | **appEcosystem (Registry)** | `127.0.0.1:8500` | Python, FastAPI, Zeroconf | Central service registry, async webhook event bus, and discovery broker. |
 
 ---
@@ -38,7 +38,7 @@ graph TD
     subgraph Peers
         AI[AI-for-Survival <br> Port 8000]
         OpenEye[OpenEye OpenCV <br> Port 8200]
-        Asus[AsusGuard <br> Port 8088]
+        Asus[AegisSIEM <br> Port 8088]
         MM[MagicMirror <br> Port 8080]
     end
 
@@ -106,7 +106,7 @@ Key variables:
 | `ECOSYSTEM_REGISTRY_HOST` | `127.0.0.1` | Registry bind host. Use `0.0.0.0` only behind a trusted-network firewall. |
 | `ECOSYSTEM_CORS_ORIGINS` | `*` | Comma-separated allowed origins (dev default `*`). |
 | `ECOSYSTEM_BASE_PATH` | repo parent dir | Root containing the sibling project repos. |
-| `ECOSYSTEM_HARNESS_URL` / `ASUSGUARD_PORT` | `http://localhost:8088` | Cyber-claude-harness daemon location. |
+| `ECOSYSTEM_HARNESS_URL` / `AEGISSIEM_PORT` | `http://localhost:8088` | Cyber-claude-harness daemon location. |
 
 ```bash
 # Generate a strong shared secret:

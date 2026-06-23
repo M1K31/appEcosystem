@@ -9,7 +9,7 @@ steps:
   - name: Collect Service Logs
     goal: >
       Gather recent log data from each ecosystem service:
-      - AsusGuard: http://localhost:8088/api/logs/recent (network/router logs)
+      - AegisSIEM: http://localhost:8088/api/logs/recent (network/router logs)
       - OpenEye: http://localhost:8200/api/ecosystem/health (includes recent events)
       - AI_For_Survival: http://localhost:8000/health (service health + metrics)
 

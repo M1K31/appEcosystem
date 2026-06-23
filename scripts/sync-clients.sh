@@ -30,7 +30,7 @@ sync_python() {
     local dest
     case "$name" in
         openeye)     dest="$target/opencv_surveillance/ecosystem_client" ;;
-        loganalysis) dest="$target/src/asusguard/ecosystem_client" ;;
+        loganalysis) dest="$target/src/aegissiem/ecosystem_client" ;;
         ai_survival) dest="$target/backend/src/ecosystem_client" ;;
     esac
 
@@ -42,7 +42,7 @@ sync_python() {
     local auth_dest
     case "$name" in
         openeye)     auth_dest="$target/opencv_surveillance/ecosystem_auth" ;;
-        loganalysis) auth_dest="$target/src/asusguard/ecosystem_auth" ;;
+        loganalysis) auth_dest="$target/src/aegissiem/ecosystem_auth" ;;
         ai_survival) auth_dest="$target/backend/src/ecosystem_auth" ;;
     esac
     echo "SYNC $name (Auth)   → $auth_dest"

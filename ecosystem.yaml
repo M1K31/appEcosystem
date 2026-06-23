@@ -104,25 +104,25 @@ projects:
     start_command: "node serveronly"
     description: "Smart mirror with modular widget system"
 
-  asusguard:
-    name: "AsusGuard"
+  aegissiem:
+    name: "AegisSIEM"
     path: "LogAnalysis"
     host: "192.168.50.73"
-    # Dashboard runs on 8089. 8088 is the cyber-harness daemon (asusguard_daemon).
+    # Dashboard runs on 8089. 8088 is the cyber-harness daemon (aegissiem_daemon).
     port: 8089
     health_endpoint: "/api/status"
     priority: 10
     stack: "python-flask"
-    start_command: "python -m asusguard.dashboard"
+    start_command: "python -m aegissiem.dashboard"
     description: "Router log analysis and network security monitor"
 
-  asusguard_daemon:
-    name: "AsusGuard_Daemon"
+  aegissiem_daemon:
+    name: "AegisSIEM_Daemon"
     path: "CybersecurityTeam/cyber-claude-agents"
     host: "192.168.50.73"
     port: 8088
     health_endpoint: "/api/status"
     priority: 15
     stack: "python-aiohttp"
-    start_command: "python -m daemon.asusguard_daemon"
+    start_command: "python -m daemon.aegissiem_daemon"
     description: "Cyber Claude Harness daemon — preferred security analysis backend"

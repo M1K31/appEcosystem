@@ -216,7 +216,7 @@ async def publish_alert():
     async with httpx.AsyncClient() as client:
         # Note: the EventBus.publish() method handles automatic signature signing
         resp = await client.post("http://localhost:8500/events/publish", json=event.model_dump())
-        print(resp.json()) # Returns: {"delivered": 2, "failed": 0, "subscribers": ["magicmirror", "asusguard"]}
+        print(resp.json()) # Returns: {"delivered": 2, "failed": 0, "subscribers": ["magicmirror", "aegissiem"]}
 ```
 
 ---
@@ -293,7 +293,7 @@ python -m cli start
 # Stop the central Service Registry daemon
 python -m cli stop
 
-# Start registry + all configured ecosystem projects (AI, OpenEye, AsusGuard, MM)
+# Start registry + all configured ecosystem projects (AI, OpenEye, AegisSIEM, MM)
 python -m cli start-all
 
 # Stop all running ecosystem services and the registry

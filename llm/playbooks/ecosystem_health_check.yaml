@@ -24,7 +24,7 @@ steps:
       - AI_For_Survival: http://localhost:8000/health
       - OpenEye: http://localhost:8200/api/ecosystem/health
       - MagicMirror: http://localhost:8080/api/v1/health
-      - AsusGuard: http://localhost:8088/api/status
+      - AegisSIEM: http://localhost:8088/api/status
 
       Record response time, HTTP status code, and any error details.
     use_knowledge: true

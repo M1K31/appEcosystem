@@ -1,0 +1,16 @@
+
+title: SSH Brute Force
+id: test-001
+status: test
+description: Detects SSH brute force attempts
+logsource:
+    product: linux
+    service: sshd
+detection:
+    selection:
+        event_type: LOGIN_FAIL
+    condition: selection
+level: high
+tags:
+    - attack.credential_access
+    - attack.t1110.001

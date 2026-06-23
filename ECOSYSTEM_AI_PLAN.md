@@ -183,8 +183,8 @@ defaults.
 |---------|------|--------------------------------|--------|
 | AFS | 8000 | `ECOSYSTEM_SERVICE_PORT` → `PORT` → 8000 | `/health` |
 | OpenEye | 8200 | `ECOSYSTEM_SERVICE_PORT` → `OPENEYE_PORT` → 8200 | `/api/health` |
-| LogAnalysis (AsusGuard dashboard) | 8089 | `ECOSYSTEM_SERVICE_PORT` → config → 8089 | `/api/status` |
-| AsusGuard daemon (cyber-harness) | 8088 | `ASUSGUARD_PORT` → 8088 | `/api/status` |
+| LogAnalysis (AegisSIEM dashboard) | 8089 | `ECOSYSTEM_SERVICE_PORT` → config → 8089 | `/api/status` |
+| AegisSIEM daemon (cyber-harness) | 8088 | `AEGISSIEM_PORT` → 8088 | `/api/status` |
 | MagicMirror | 8080 | `ECOSYSTEM_SERVICE_PORT` → `MM_PORT` → 8080 | `/api/v1/health` |
 | appEcosystem registry | 8500 | `ECOSYSTEM_REGISTRY_PORT` → 8500 | `/health` |
 

@@ -106,8 +106,8 @@ KNOWN_MANIFESTS: dict[str, ProjectManifest] = {
         ],
         tags=["ai", "llm", "security", "analysis", "playbooks"],
     ),
-    "asusguard": ProjectManifest(
-        name="AsusGuard",
+    "aegissiem": ProjectManifest(
+        name="AegisSIEM",
         description="Router log analysis and network security monitoring",
         base_url="http://localhost:8088",
         capabilities=[

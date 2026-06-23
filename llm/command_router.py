@@ -35,11 +35,11 @@ class CommandRouter:
     def _default_harness_url() -> str:
         """Resolve the harness daemon URL from the environment (evaluated per
         instance, not at import time). ECOSYSTEM_HARNESS_URL wins; otherwise it
-        is built from ASUSGUARD_PORT."""
+        is built from AEGISSIEM_PORT."""
         explicit = os.environ.get("ECOSYSTEM_HARNESS_URL")
         if explicit:
             return explicit.rstrip("/")
-        return f"http://localhost:{os.environ.get('ASUSGUARD_PORT', '8088')}"
+        return f"http://localhost:{os.environ.get('AEGISSIEM_PORT', '8088')}"
 
     def __init__(
         self,
