@@ -39,8 +39,8 @@ This document tracks completed changes, active items, and planned improvements f
 - [x] Remaining stash content confirmed **superseded by main** (main.py already wires two-way audio/scheduled-tasks/face_history; ecosystem.py/ecosystem_security.py evolved via PR #7 + Phase A) or **obsolete vendored auth/client** (dropped by Phase E). Both stashes left intact for user review (safe to `git stash drop` when satisfied).
 
 ### Backlog (future)
-- [ ] **Branch protection / required checks**: Enable branch protection on `main` requiring the CI workflow (tests, audits, shellcheck, docker build) to pass before merge.
-- [ ] **Publish Docker image to GHCR on tag**: Add a release workflow that builds and pushes `ghcr.io/<owner>/appecosystem-registry` on `v*` tags.
+- [ ] **Branch protection / required checks**: Recommended but **not auto-applied** — the current workflow pushes directly to `main`, which strict protection (required PR/status checks) would disrupt. Enable via GitHub repo settings when moving to a PR-based flow.
+- [x] **Publish Docker image to GHCR on tag**: `.github/workflows/publish-image.yml` builds + pushes `ghcr.io/<owner>/appecosystem-registry` on `v*` tags (and manual dispatch) using `GITHUB_TOKEN`.
 
 ### Ecosystem-wide initiative (see [ECOSYSTEM_AUDIT.md](ECOSYSTEM_AUDIT.md) + [ECOSYSTEM_AI_PLAN.md](ECOSYSTEM_AI_PLAN.md))
 - [~] **Phase A — Port reconciliation** (in progress):
@@ -63,8 +63,8 @@ This document tracks completed changes, active items, and planned improvements f
   - **Phase B3 COMPLETE** — all four apps participate in the shared, hardware-adaptive, Ollama-default AI layer with cross-app selection sync.
   - [x] **Installers wired**: AFS (`bin/setup.sh`), LogAnalysis (`scripts/install.sh`), OpenEye (`opencv_surveillance/scripts/install-local.sh`) now path-install `ecosystem-auth`/`-client`/`-ai` from the sibling appEcosystem checkout (`ECOSYSTEM_BASE_PATH` override; guarded/non-fatal → standalone if absent). MagicMirror vendors the JS, so no pip step. appEcosystem `install.sh` already path-installs.
   - Note: activating sync at runtime needs `ecosystem-ai` installed in each app's env (path install until the package is published) — guarded imports keep apps working without it.
-- [ ] **Phase C — Hardware-adaptive feature gating**: per-app feature requirements → tier-based enable/disable + graceful degradation matrix.
-- [ ] **Phase D — AFS↔LogAnalysis synergy**: first-class log/network agent tools + event-bus correlation.
+- [~] **Phase C — Hardware-adaptive feature gating**: **engine complete** (B0 `CapabilityManager` + tiers `tier_for`/`recommended_model`, tested). Remaining: per-app declaration of feature requirements + UI surfacing of disabled features (each frontend's domain — pending per-app adoption, like B3).
+- [x] **Phase D — AFS↔LogAnalysis synergy**: already implemented in AFS and verified — `tools/ecosystem_tools.py` exposes first-class LogAnalysis agent tools (status, block_ip, threats, approve, honeypot, config); `api/ecosystem_handlers.py` subscribes to SIEM/security events (incl. OpenEye) with LLM triage + auto threat-response; model selection ecosystem-synced via the bridge. 7 tool tests pass.
 - [~] **Phase E — Hardening parity / client re-sync** (in progress):
   - [x] Shared packages bumped to **v0.3.0**; fixed an invalid `build-backend` in `ecosystem-auth` that blocked installation.
   - [x] **AFS converted**: retired vendored `ecosystem_auth`/`ecosystem_client`, repointed to the path-installed shared v0.3.0 packages; app imports clean, tests pass. Registration + AI sync now work against the v0.3.0 registry.
@@ -75,7 +75,7 @@ This document tracks completed changes, active items, and planned improvements f
   - **Phase E COMPLETE for all 4 apps.** OpenEye stash review: `stash@{0}` (mine) is obsolete old-scheme cleanup (safe to drop); `stash@{1}` is **pre-existing substantial WIP** (two-way audio, scheduled tasks, install/setup scripts) — left for the user to salvage (its auth/client parts now conflict with Phase E).
   - Original blocker context: the member apps' vendored `ecosystem_auth` is the OLD scheme (`sign_payload` only; no `sign_request`/`verify_request`/replay protection). Since the registry was upgraded to the v0.3.0 replay-resistant scheme, **the apps can no longer authenticate to it** (register/deregister/AI-profile writes 401). Must re-sync v0.3.0 auth+client into every app (recommended: turn `ecosystem-auth` + `ecosystem-client` into path-installed shared packages and retire the vendored copies, per the "one package" decision). Unblocks registration AND the AI-profile sync.
   - Document: [PUBLISHING.md](PUBLISHING.md). Path-install wired into appEcosystem `scripts/install.sh`.
-- [ ] **Phase F — Facilitator placement**: resource-budget signals → place LLM load on the most capable host.
+- [x] **Phase F — Facilitator placement**: services report hardware via `resources` (auto-detected by the shared client at registration); registry `GET /ai-placement` + `recommend_llm_host` steer LLM load to the most capable healthy host. Tests pass.
 
 ### Phase 5: Audit Remediation (2026-06-14)
 - [x] **Critical: systemd installer crash**: Removed orphan `EOF` in `scripts/install_systemd.sh` that aborted the installer (exit 127) under `set -euo pipefail`. [RESOLVED]
