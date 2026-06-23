@@ -57,6 +57,7 @@ This document tracks completed changes, active items, and planned improvements f
   - [x] OpenEye: optional **Ollama-default LLM capability** via `ecosystem_ai` (`summarize_event`) + shared-profile read. (OpenEye had no prior LLM — its AI is computer vision — so this is a net-new optional ability, not a Claude swap.) Tests added.
   - [x] MagicMirror (JS): added `AIProfileClient` (signed GET/PUT of the shared profile) — canonical in `ecosystem_client_js`, vendored into MM. 5 node tests.
   - **Phase B3 COMPLETE** — all four apps participate in the shared, hardware-adaptive, Ollama-default AI layer with cross-app selection sync.
+  - [x] **Installers wired**: AFS (`bin/setup.sh`), LogAnalysis (`scripts/install.sh`), OpenEye (`opencv_surveillance/scripts/install-local.sh`) now path-install `ecosystem-auth`/`-client`/`-ai` from the sibling appEcosystem checkout (`ECOSYSTEM_BASE_PATH` override; guarded/non-fatal → standalone if absent). MagicMirror vendors the JS, so no pip step. appEcosystem `install.sh` already path-installs.
   - Note: activating sync at runtime needs `ecosystem-ai` installed in each app's env (path install until the package is published) — guarded imports keep apps working without it.
 - [ ] **Phase C — Hardware-adaptive feature gating**: per-app feature requirements → tier-based enable/disable + graceful degradation matrix.
 - [ ] **Phase D — AFS↔LogAnalysis synergy**: first-class log/network agent tools + event-bus correlation.
