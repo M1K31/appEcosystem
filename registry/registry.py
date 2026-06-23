@@ -40,6 +40,7 @@ class ServiceRegistry:
             metadata=registration.metadata,
             priority=registration.priority,
             static=registration.static,
+            resources=registration.resources,
             status=HealthStatus.UNKNOWN,
             registered_at=time.time(),
         )

@@ -13,6 +13,25 @@ from .config import EcosystemConfig
 logger = logging.getLogger(__name__)
 
 
+def _detect_resources() -> dict:
+    """Best-effort hardware capability report for LLM placement.
+
+    Uses ecosystem_ai's hardware probe when available; returns {} otherwise so
+    registration stays backward-compatible and never fails over this."""
+    try:
+        from ecosystem_ai import detect
+        info, tier = detect()
+        return {
+            "tier": int(tier),
+            "ram_gb": info.ram_gb,
+            "has_gpu": info.has_gpu,
+            "vram_gb": info.vram_gb,
+            "arch": info.arch,
+        }
+    except Exception:
+        return {}
+
+
 class DiscoveryMode(str, Enum):
     REGISTRY = "registry"
     PEER_TO_PEER = "peer_to_peer"
@@ -146,6 +165,7 @@ class DiscoveryManager:
                 "webhook_url": webhook_url,
                 "subscriptions": subscriptions or [],
                 "priority": priority,
+                "resources": _detect_resources(),
             }
             from ecosystem_auth.tokens import sign_request
             register_url = f"{self.config.registry_url}/register"

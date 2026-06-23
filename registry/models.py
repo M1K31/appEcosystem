@@ -35,6 +35,11 @@ class ServiceRegistration(BaseModel):
         default=False,
         description="Pre-defined in ecosystem.yaml; never auto-deregistered on failure",
     )
+    resources: dict = Field(
+        default_factory=dict,
+        description="Optional hardware capability report for LLM placement "
+                    "(e.g. {tier, ram_gb, has_gpu, vram_gb})",
+    )
 
 
 class ServiceRecord(BaseModel):
@@ -50,6 +55,7 @@ class ServiceRecord(BaseModel):
     metadata: dict = Field(default_factory=dict)
     priority: int = 0
     static: bool = False
+    resources: dict = Field(default_factory=dict)
     status: HealthStatus = HealthStatus.UNKNOWN
     last_health_check: Optional[float] = None
     last_healthy: Optional[float] = None

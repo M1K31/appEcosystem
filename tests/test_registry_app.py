@@ -137,6 +137,23 @@ class TestAIProfileSync:
         assert body["version"] != 999  # version is server-managed
 
 
+class TestAIPlacement:
+    def test_empty_when_no_resources(self, client):
+        assert client.get("/ai-placement").json() is None
+
+    def test_recommends_reporting_host(self, client):
+        reg = {
+            "name": "workstation", "host": "127.0.0.1", "port": 8400,
+            "resources": {"tier": 3, "ram_gb": 32, "vram_gb": 16, "has_gpu": True},
+        }
+        headers = sign_request("POST", "http://testserver/register", TEST_SECRET, reg)
+        assert client.post("/register", json=reg, headers=headers).status_code == 201
+        best = client.get("/ai-placement").json()
+        assert best is not None
+        assert best["name"] == "workstation"
+        assert best["resources"]["tier"] == 3
+
+
 class TestReadAuth:
     def test_read_open_by_default(self, client):
         assert client.get("/services").status_code == 200

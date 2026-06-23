@@ -181,6 +181,18 @@ async def get_ai_profile(
     return store.get()
 
 
+@app.get("/ai-placement")
+async def ai_placement(
+    registry: ServiceRegistry = Depends(get_registry),
+    _auth=Depends(require_read_auth),
+):
+    """Recommend the best host for LLM workloads from reported resources.
+
+    Returns null when no registered service has reported its hardware."""
+    from .placement import recommend_llm_host
+    return recommend_llm_host(registry.get_all())
+
+
 @app.put("/ai-profile")
 async def update_ai_profile(
     changes: dict,
