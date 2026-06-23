@@ -38,6 +38,14 @@ This document tracks completed changes, active items, and planned improvements f
 - [x] Salvaged the valuable WIP from OpenEye `stash@{1}` (19 files main hadn't since changed): two-way audio (core+route), scheduled tasks, face pipeline improvements, `event_type` column, alert_manager ecosystem hook, install/setup scripts. Verified compile/syntax.
 - [x] Remaining stash content confirmed **superseded by main** (main.py already wires two-way audio/scheduled-tasks/face_history; ecosystem.py/ecosystem_security.py evolved via PR #7 + Phase A) or **obsolete vendored auth/client** (dropped by Phase E). Both stashes left intact for user review (safe to `git stash drop` when satisfied).
 
+### Branding rename: AsusGuard → AegisSIEM (2026-06-22)
+- [x] **Full ecosystem rename** (`asusguard`→`aegissiem`, `AsusGuard`→`AegisSIEM`, `ASUSGUARD`→`AEGISSIEM`):
+  - LogAnalysis: Python package `src/asusguard`→`src/aegissiem`, all imports/paths, pyproject + console script, `AEGISSIEM_PORT`, config dir `~/.aegissiem`, systemd unit, service id. **155 files; full suite 243 passed, 1 skipped.**
+  - appEcosystem: `ecosystem.yaml` keys (`aegissiem`, `aegissiem_daemon`), command_router harness env, playbooks, docs, tests. **17 files; 202 tests pass.**
+  - AFS: `ecosystem_tools` agent tool keys/names, SIEM handlers, config. **36 files; 15 ecosystem tests pass.**
+  - MagicMirror: network-security module. **2 files.** (OpenEye: no refs.)
+  - ⚠️ Installed instances now out of sync with renamed code/paths/config dir → reinstall required to pick up the rename.
+
 ### Backlog (future)
 - [ ] **Branch protection / required checks**: Recommended but **not auto-applied** — the current workflow pushes directly to `main`, which strict protection (required PR/status checks) would disrupt. Enable via GitHub repo settings when moving to a PR-based flow.
 - [x] **Publish Docker image to GHCR on tag**: `.github/workflows/publish-image.yml` builds + pushes `ghcr.io/<owner>/appecosystem-registry` on `v*` tags (and manual dispatch) using `GITHUB_TOKEN`.
