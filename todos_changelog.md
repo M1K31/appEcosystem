@@ -60,7 +60,9 @@ This document tracks completed changes, active items, and planned improvements f
 - [x] **AI-for-Survival**: rebuilt internal daemon venv (now installs shared pkgs); daemon restarted healthy on **:8000** (ollama+db connected).
 - [x] **Registry**: running on **:8500** (session) — registers/health-checks AFS+AegisSIEM OK. Cleared stale `asusguard` entries from `data/registry.json`.
 - [ ] **⚠️ Registry launchd install fails from the external Locker2 volume** (exit 78 — macOS launchd TCC/exec restriction on external volumes; same class the apps fixed with internal-disk venvs). **Follow-up:** add `appEcosystem/scripts/install-local.sh` (internal-disk venv + plist) mirroring AFS/AegisSIEM. Running in-session via background uvicorn for now.
-- [ ] **OpenEye** (:8200) + **MagicMirror** (:8080): fresh installs pending (then Chrome UI testing).
+- [x] **MagicMirror** (:8080): seeded `config.js` from sample; `node serveronly` serves `<html>MagicMirror³` 200. (Registry marks it unhealthy only because the static entry health-checks the LAN IP, not localhost.)
+- [x] **Live ecosystem verified**: AFS + AegisSIEM **self-register as healthy** (shared-secret auth works); AFS reports hardware via `resources` (tier 2 / 16GB / GPU) and `/ai-placement` responds — Phase F live.
+- [ ] **⚠️ OpenEye (:8200) BLOCKED**: install fails on `aiortc`→`av` (WebRTC), which needs system **ffmpeg** to build `av<15`, but only `av 15` has a prebuilt wheel; OpenEye hard-imports `aiortc.MediaStreamTrack` (two-way-audio), so the backend won't import. **Options:** (a) `brew install ffmpeg` + pin `av==14.x`/`aiortc` compatibly; (b) make the WebRTC/two-way-audio import optional so the app degrades gracefully; (c) UI-test the other 4 apps for now. Needs a decision.
 - [x] Shared `ECOSYSTEM_HMAC_SECRET` set for the launchd domain (`launchctl setenv`) + `~/.ecosystem_hmac_secret` (600) so services share one secret (fail-closed requires it). **Note:** not persisted across reboot — bake into plists / a sourced env file for production.
 
 ### Backlog (future)
