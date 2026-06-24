@@ -18,30 +18,98 @@ from typing import Optional
 # constant is kept only so we can explicitly reject it if someone sets it.
 DEFAULT_DEV_SECRET = "dev-ecosystem-secret-change-in-production"
 
+# Single source of truth for the shared secret on a device. Every service
+# (launchd, systemd, or shell) reads this same file at runtime, so writing it
+# once provisions the whole machine — no launchctl setenv / per-plist env needed.
+# Override the location with ECOSYSTEM_SECRET_FILE.
+import pathlib
 
-def get_ecosystem_secret(override: Optional[str] = None) -> str:
-    """
-    Resolve the shared HMAC secret from an explicit override or the environment.
 
-    Fail-closed everywhere: there is no default. If ECOSYSTEM_HMAC_SECRET is
-    unset (and no override is given), or it is set to the known development
-    default, a RuntimeError is raised rather than silently trusting a guessable
-    key. Generate one with:
-        python -c "import secrets; print(secrets.token_hex(32))"
-    """
-    secret = override or os.environ.get("ECOSYSTEM_HMAC_SECRET")
-    if not secret:
-        raise RuntimeError(
-            "ECOSYSTEM_HMAC_SECRET is not set. A shared secret is required and "
-            "there is no default (a committed default would be forgeable). "
-            "Generate one with `python -c \"import secrets; print(secrets.token_hex(32))\"`."
-        )
+def secret_file_path() -> "pathlib.Path":
+    return pathlib.Path(
+        os.environ.get("ECOSYSTEM_SECRET_FILE", "")
+        or (pathlib.Path.home() / ".config" / "ecosystem" / "secret.env")
+    )
+
+
+def _read_secret_file() -> Optional[str]:
+    """Read ECOSYSTEM_HMAC_SECRET from the shared secret file, if present."""
+    p = secret_file_path()
+    try:
+        if not p.exists():
+            return None
+        for raw in p.read_text().splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[len("export "):]
+            if line.startswith("ECOSYSTEM_HMAC_SECRET="):
+                val = line.split("=", 1)[1].strip().strip('"').strip("'")
+                return val or None
+    except Exception:
+        return None
+    return None
+
+
+def _validate_secret(secret: str) -> str:
     if secret == DEFAULT_DEV_SECRET:
         raise RuntimeError(
             "Refusing the known development default secret. "
-            "Set ECOSYSTEM_HMAC_SECRET to a unique generated value."
+            "Set a unique generated value (e.g. `ecosystem secret generate`)."
         )
     return secret
+
+
+def get_ecosystem_secret(override: Optional[str] = None) -> str:
+    """
+    Resolve the shared HMAC secret. Resolution order:
+        explicit override -> ECOSYSTEM_HMAC_SECRET env -> ~/.config/ecosystem/secret.env
+
+    Fail-closed: there is no built-in default. If none is found (or it is the
+    known development default), a RuntimeError is raised rather than trusting a
+    guessable key. Provision one with `ecosystem secret generate` / `import`.
+    """
+    secret = override or os.environ.get("ECOSYSTEM_HMAC_SECRET") or _read_secret_file()
+    if not secret:
+        raise RuntimeError(
+            "No ecosystem secret found (checked override, ECOSYSTEM_HMAC_SECRET, "
+            f"and {secret_file_path()}). A shared secret is required and there is "
+            "no default. Run `ecosystem secret generate` (or `ecosystem secret "
+            "import <value>` on additional devices)."
+        )
+    return _validate_secret(secret)
+
+
+def write_secret(value: str) -> "pathlib.Path":
+    """Persist a secret to the shared file (chmod 600). Returns the path."""
+    value = _validate_secret(value.strip())
+    if not value:
+        raise ValueError("Refusing to write an empty secret")
+    p = secret_file_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(f"ECOSYSTEM_HMAC_SECRET={value}\n")
+    try:
+        p.chmod(0o600)
+    except Exception:
+        pass
+    return p
+
+
+def ensure_ecosystem_secret() -> str:
+    """Return the existing shared secret, or generate+persist one (install-time).
+
+    Unlike get_ecosystem_secret (read-only, runtime), this MAY create the secret
+    file — use it from installers / the `ecosystem secret` CLI, never per-request.
+    """
+    existing = (
+        os.environ.get("ECOSYSTEM_HMAC_SECRET") or _read_secret_file()
+    )
+    if existing and existing != DEFAULT_DEV_SECRET:
+        return existing
+    generated = secrets.token_hex(32)
+    write_secret(generated)
+    return generated
 
 
 def generate_secure_token(length: int = 32) -> str:

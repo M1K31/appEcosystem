@@ -73,6 +73,22 @@ must share. Resolution order on each install:
   profile, ports, discovery) propagates through the registry (Phase B2); the
   secret is deliberately kept out of that channel, so cross-device sharing is a
   one-time manual copy rather than an automatic network push.
+- **File is the single source of truth.** `get_ecosystem_secret()` resolves:
+  override → `ECOSYSTEM_HMAC_SECRET` env → `~/.config/ecosystem/secret.env` →
+  fail-closed. Because every service (launchd, systemd, or shell) reads the same
+  file at runtime, this **removes the need for `launchctl setenv`/plist env**
+  entirely — write the file once and all local apps pick it up.
+
+**Two ways to set the secret on a device (both write `secret.env`):**
+- **Terminal** (baseline; required for headless registry/daemon nodes):
+  `ecosystem secret show` (print, on the source device) /
+  `ecosystem secret import <value>` / `ecosystem secret generate`.
+- **UI form** (friendly path for apps that have a UI — AFS, OpenEye,
+  MagicMirror, AegisSIEM dashboard): an "Ecosystem" settings field to paste the
+  shared secret; the source device's UI can reveal/copy it. Caveats: the
+  set-secret endpoint must be **loopback-only or authenticated**, and the field
+  **masked** (write-mostly; reveal only with explicit action). Both paths call
+  the same file-writer, so they interoperate.
 
 ### B. Internal-disk runtime for the registry (fixes #6)
 Add `appEcosystem/scripts/install-local.sh` mirroring AFS/AegisSIEM: build the

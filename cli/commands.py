@@ -434,3 +434,48 @@ def cmd_uninstall() -> int:
     else:
         print(f"No plist found at {PLIST_PATH}")
     return 0
+
+
+def cmd_secret(action: str, value: str | None = None) -> int:
+    """Manage the shared ecosystem HMAC secret (file-backed, device-local).
+
+    Actions: generate (create if absent), show (print for copying to another
+    device), import <value> (set on this device), path (print the file location).
+    """
+    try:
+        from auth.python.ecosystem_auth.tokens import (
+            ensure_ecosystem_secret, get_ecosystem_secret, write_secret, secret_file_path,
+        )
+    except Exception as e:  # pragma: no cover
+        print(f"ecosystem_auth not available: {e}")
+        return 1
+
+    if action == "path":
+        print(secret_file_path())
+        return 0
+
+    if action == "generate":
+        secret = ensure_ecosystem_secret()
+        print(f"Shared secret ready at {secret_file_path()}")
+        print("\nTo join another device to this ecosystem, run there:")
+        print(f"  ecosystem secret import {secret}")
+        return 0
+
+    if action == "import":
+        if not value:
+            print("Usage: ecosystem secret import <value>")
+            return 1
+        p = write_secret(value)
+        print(f"Saved shared secret to {p}")
+        return 0
+
+    if action == "show":
+        try:
+            print(get_ecosystem_secret())
+            return 0
+        except Exception as e:
+            print(str(e))
+            return 1
+
+    print(f"Unknown secret action: {action} (use generate|show|import|path)")
+    return 1

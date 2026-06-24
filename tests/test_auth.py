@@ -37,11 +37,13 @@ class TestSecretResolution:
         monkeypatch.setenv("ECOSYSTEM_HMAC_SECRET", "from-env")
         assert get_ecosystem_secret() == "from-env"
 
-    def test_unset_raises(self, monkeypatch):
-        # Fail-closed: no default anywhere (including dev).
+    def test_unset_raises(self, monkeypatch, tmp_path):
+        # Fail-closed: no default anywhere (including dev). Isolate the secret
+        # file so a real ~/.config/ecosystem/secret.env doesn't satisfy it.
         monkeypatch.delenv("ECOSYSTEM_HMAC_SECRET", raising=False)
+        monkeypatch.setenv("ECOSYSTEM_SECRET_FILE", str(tmp_path / "none.env"))
         monkeypatch.setenv("ECOSYSTEM_ENV", "dev")
-        with pytest.raises(RuntimeError, match="not set"):
+        with pytest.raises(RuntimeError, match="No ecosystem secret"):
             get_ecosystem_secret()
 
     def test_known_default_rejected(self, monkeypatch):
@@ -52,6 +54,58 @@ class TestSecretResolution:
     def test_real_secret_allowed(self, monkeypatch):
         monkeypatch.setenv("ECOSYSTEM_HMAC_SECRET", "a-real-secret")
         assert get_ecosystem_secret() == "a-real-secret"
+
+
+class TestSecretFile:
+    """File-backed secret: override -> env -> ~/.config/ecosystem/secret.env."""
+
+    @pytest.fixture(autouse=True)
+    def isolate(self, monkeypatch, tmp_path):
+        from ecosystem_auth import tokens
+        self.tokens = tokens
+        monkeypatch.setenv("ECOSYSTEM_SECRET_FILE", str(tmp_path / "secret.env"))
+        monkeypatch.delenv("ECOSYSTEM_HMAC_SECRET", raising=False)
+        yield
+
+    def test_unset_everywhere_raises(self):
+        with pytest.raises(RuntimeError, match="No ecosystem secret"):
+            self.tokens.get_ecosystem_secret()
+
+    def test_file_fallback(self):
+        self.tokens.write_secret("filesecret123")
+        assert self.tokens.get_ecosystem_secret() == "filesecret123"
+
+    def test_env_beats_file(self, monkeypatch):
+        self.tokens.write_secret("filesecret")
+        monkeypatch.setenv("ECOSYSTEM_HMAC_SECRET", "envsecret")
+        assert self.tokens.get_ecosystem_secret() == "envsecret"
+
+    def test_override_beats_all(self, monkeypatch):
+        self.tokens.write_secret("filesecret")
+        monkeypatch.setenv("ECOSYSTEM_HMAC_SECRET", "envsecret")
+        assert self.tokens.get_ecosystem_secret("explicit") == "explicit"
+
+    def test_write_secret_chmod_600(self):
+        import stat
+        p = self.tokens.write_secret("abc123")
+        assert (p.stat().st_mode & 0o777) == 0o600
+
+    def test_write_rejects_dev_default(self):
+        with pytest.raises(RuntimeError, match="development default"):
+            self.tokens.write_secret(self.tokens.DEFAULT_DEV_SECRET)
+
+    def test_ensure_generates_and_persists(self):
+        s1 = self.tokens.ensure_ecosystem_secret()
+        assert s1 and len(s1) >= 32
+        # second call reuses the persisted value (idempotent)
+        assert self.tokens.ensure_ecosystem_secret() == s1
+        assert self.tokens.get_ecosystem_secret() == s1
+
+    def test_export_prefixed_line_parsed(self):
+        p = self.tokens.secret_file_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("export ECOSYSTEM_HMAC_SECRET=prefixed\n")
+        assert self.tokens.get_ecosystem_secret() == "prefixed"
 
 
 class TestNonceStore:
