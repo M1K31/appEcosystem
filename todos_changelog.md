@@ -67,7 +67,11 @@ This document tracks completed changes, active items, and planned improvements f
 
 ### Install remediation plan (see [INSTALL_REMEDIATION_PLAN.md](INSTALL_REMEDIATION_PLAN.md))
 Make clean-machine installs "just work" for **single-host, networked (multi-device), and subset** deployments:
-- [ ] **Phase 1 (Critical)**: OpenEye WebRTC — **install av/aiortc by default** (installer ensures `ffmpeg` first via brew/apt, pin `av<15`+compatible `aiortc`) so the feature works out-of-the-box; import-guard those imports only as resilience (feature toggleable, never crashes if missing). **Multi-device-safe shared secret** (env → `~/.config/ecosystem/secret.env` → generate+print; `ecosystem secret show/import`; registry never distributes it) sourced by every service. `appEcosystem/scripts/install-local.sh` (internal-disk venv) for the registry under launchd.
+- [x] **Phase 1 (Critical) — DONE**:
+  - File-backed shared secret: `get_ecosystem_secret` resolves override→env→`~/.config/ecosystem/secret.env` (no more launchctl-setenv); `write_secret`/`ensure_ecosystem_secret` + `ecosystem secret generate|show|import|path`. Same-machine auto; cross-device via `secret import`. Tested.
+  - OpenEye WebRTC: backend imports without aiortc (fallback base `object`, gated by `WEBRTC_AVAILABLE`); `install-local.sh` ensures ffmpeg first (brew/apt) so av/aiortc build by default, with graceful retry-without-WebRTC. Verified: `/api/health` 200, serves on :8200.
+  - Registry internal-disk install: `appEcosystem/scripts/install-local.sh` (runtime under `~/.local/share/ecosystem`, non-editable, file-backed secret) → launchd/systemd. **Fixes the external-volume exit-78**; verified registry healthy on :8500 under launchd.
+  - appEcosystem now imports the installed `ecosystem_auth` package (not the repo path). 210 tests pass.
 - [ ] **Phase 2 (High)**: `ECOSYSTEM_MODE` (local|lan) with **bind-host ≠ advertised-host** resolution (auto-detect LAN IP in lan mode); remove baked `192.168.50.73`; MM seeds `config.js`, self-registers, binds mode host (not IPv6-only); registry tolerates subset/absent members (no false "unhealthy").
 - [ ] **Phase 3 (Med/Low)**: non-interactive installer flag; per-device enabled-apps record; idempotency pass.
 - [ ] **Phase 4**: `scripts/smoke-ecosystem.sh` acceptance test — single-host all-five + **two-device split** + **subset** runs, macOS + Linux.
