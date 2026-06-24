@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# Install ecosystem as a macOS launchd service
+# Install the ecosystem registry as a service:
+#   macOS -> launchd (via `cli install`)
+#   Linux -> systemd (via scripts/install_systemd.sh, needs sudo)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+OS="$(uname -s)"
 
-echo "=== Installing Ecosystem Service ==="
+echo "=== Installing Ecosystem Service ($OS) ==="
 
 # Create data directory
 mkdir -p "$ROOT_DIR/data"
@@ -36,11 +39,24 @@ if command -v npm &>/dev/null; then
     npm install --workspaces 2>/dev/null || true
 fi
 
-# Install launchd service
-python -m cli.main install
+# Install the service appropriate to this OS
+case "$OS" in
+  Darwin)
+    python -m cli.main install   # launchd agent
+    ;;
+  Linux)
+    if [ -x "$SCRIPT_DIR/install_systemd.sh" ]; then
+        echo "Installing systemd service (may prompt for sudo)..."
+        sudo "$SCRIPT_DIR/install_systemd.sh" || \
+            echo "systemd install skipped/failed — run 'sudo scripts/install_systemd.sh' manually."
+    fi
+    ;;
+  *)
+    echo "Unknown OS '$OS' — skipping service install; start manually with 'python -m cli.main start'."
+    ;;
+esac
 
 echo ""
-echo "Installation complete. The registry will start automatically on login."
-echo "Virtual environment: $VENV_DIR"
-echo "Activate with: source .venv/bin/activate"
+echo "Installation complete."
+echo "Virtual environment: $VENV_DIR  (activate: source .venv/bin/activate)"
 echo "Check status with: python -m cli.main status"
