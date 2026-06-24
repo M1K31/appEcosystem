@@ -39,22 +39,19 @@ if command -v npm &>/dev/null; then
     npm install --workspaces 2>/dev/null || true
 fi
 
-# Install the service appropriate to this OS
-case "$OS" in
-  Darwin)
-    python -m cli.main install   # launchd agent
-    ;;
-  Linux)
-    if [ -x "$SCRIPT_DIR/install_systemd.sh" ]; then
-        echo "Installing systemd service (may prompt for sudo)..."
-        sudo "$SCRIPT_DIR/install_systemd.sh" || \
-            echo "systemd install skipped/failed — run 'sudo scripts/install_systemd.sh' manually."
+# Install the registry as a service via the internal-disk installer (runs the
+# runtime off the internal disk, not the source volume; provisions the shared
+# secret). It detects the OS (launchd on macOS, systemd on Linux).
+if [ -x "$SCRIPT_DIR/install-local.sh" ]; then
+    if [ "$OS" = "Linux" ] && [ "$EUID" -ne 0 ]; then
+        sudo "$SCRIPT_DIR/install-local.sh" || \
+            echo "Service install skipped/failed — run 'sudo scripts/install-local.sh' manually."
+    else
+        "$SCRIPT_DIR/install-local.sh"
     fi
-    ;;
-  *)
-    echo "Unknown OS '$OS' — skipping service install; start manually with 'python -m cli.main start'."
-    ;;
-esac
+else
+    echo "scripts/install-local.sh missing — start manually with 'python -m cli.main start'."
+fi
 
 echo ""
 echo "Installation complete."
