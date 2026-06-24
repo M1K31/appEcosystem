@@ -22,12 +22,12 @@ class DiscoveryAgent:
     def __init__(self, registry_url: str = "http://localhost:8500",
                  hmac_secret: Optional[str] = None):
         self.registry_url = registry_url
-        from auth.python.ecosystem_auth.tokens import get_ecosystem_secret
+        from ecosystem_auth.tokens import get_ecosystem_secret
         self.hmac_secret = get_ecosystem_secret(hmac_secret)
 
     def _signed_headers(self, url: str) -> dict:
         """Sign a GET so discovery works when read endpoints require auth."""
-        from auth.python.ecosystem_auth.tokens import sign_request
+        from ecosystem_auth.tokens import sign_request
         return sign_request("GET", url, self.hmac_secret)
 
     async def discover_all(self) -> list[ProjectManifest]:

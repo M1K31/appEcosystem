@@ -215,7 +215,7 @@ def cmd_status() -> int:
 
     # Check registered services (signed so it works if read-auth is enabled)
     try:
-        from auth.python.ecosystem_auth.tokens import get_ecosystem_secret, sign_request
+        from ecosystem_auth.tokens import get_ecosystem_secret, sign_request
         services_url = f"{registry_url}/services"
         headers = sign_request("GET", services_url, get_ecosystem_secret())
         resp = httpx.get(services_url, timeout=3.0, headers=headers)
@@ -443,7 +443,7 @@ def cmd_secret(action: str, value: str | None = None) -> int:
     device), import <value> (set on this device), path (print the file location).
     """
     try:
-        from auth.python.ecosystem_auth.tokens import (
+        from ecosystem_auth.tokens import (
             ensure_ecosystem_secret, get_ecosystem_secret, write_secret, secret_file_path,
         )
     except Exception as e:  # pragma: no cover

@@ -47,7 +47,7 @@ class CommandRouter:
         hmac_secret: Optional[str] = None,
         harness_url: Optional[str] = None,
     ):
-        from auth.python.ecosystem_auth.tokens import get_ecosystem_secret
+        from ecosystem_auth.tokens import get_ecosystem_secret
 
         self.discovery = discovery or DiscoveryAgent()
         self.hmac_secret = get_ecosystem_secret(hmac_secret)
@@ -133,7 +133,7 @@ class CommandRouter:
 
         headers = {}
         if endpoint.auth_required:
-            from auth.python.ecosystem_auth.tokens import sign_request
+            from ecosystem_auth.tokens import sign_request
 
             sign_body = None if endpoint.method.upper() in ("GET", "DELETE") else body
             headers.update(

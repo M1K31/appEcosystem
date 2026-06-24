@@ -12,7 +12,7 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException, Request, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials
-from auth.python.ecosystem_auth.middleware import require_ecosystem_auth, security_scheme
+from ecosystem_auth.middleware import require_ecosystem_auth, security_scheme
 
 from .health_monitor import HealthMonitor
 from .models import HealthCheckResult, ServiceRecord, ServiceRegistration

@@ -29,7 +29,7 @@ class EventBus:
         retry_delay: float = 5.0,
         timeout: float = 10.0,
     ):
-        from auth.python.ecosystem_auth.tokens import get_ecosystem_secret
+        from ecosystem_auth.tokens import get_ecosystem_secret
 
         self.registry = registry
         self.hmac_secret = get_ecosystem_secret(hmac_secret)
@@ -50,7 +50,7 @@ class EventBus:
         subscriber's webhook_url. Returns delivery results.
         """
         # Sign the event
-        from auth.python.ecosystem_auth.tokens import sign_payload
+        from ecosystem_auth.tokens import sign_payload
 
         event.signature = sign_payload(event.signable_dict(), self.hmac_secret)
 
