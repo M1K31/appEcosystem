@@ -66,11 +66,11 @@ This document tracks completed changes, active items, and planned improvements f
 - [x] Shared `ECOSYSTEM_HMAC_SECRET` set for the launchd domain (`launchctl setenv`) + `~/.ecosystem_hmac_secret` (600) so services share one secret (fail-closed requires it). **Note:** not persisted across reboot — bake into plists / a sourced env file for production.
 
 ### Install remediation plan (see [INSTALL_REMEDIATION_PLAN.md](INSTALL_REMEDIATION_PLAN.md))
-Make clean-machine installs "just work" — address every issue from the reinstall test:
-- [ ] **Phase 1 (Critical)**: OpenEye optional-WebRTC (import-guard `aiortc`/two-way-audio + move `av`/`aiortc` to a `[webrtc]` extra so installs never fail on ffmpeg); auto-provision a persistent shared `ECOSYSTEM_HMAC_SECRET` (`~/.config/ecosystem/secret.env`, sourced by every service); add `appEcosystem/scripts/install-local.sh` (internal-disk venv) so the registry runs under launchd off the external volume.
-- [ ] **Phase 2 (High)**: default `ecosystem.yaml` host to `127.0.0.1`/`${ECOSYSTEM_HOST}` (drop baked LAN IP); MM installer seeds `config.js`, self-registers, binds a reachable host; confirm AegisSIEM port + shared-pkg fixes in a clean run.
-- [ ] **Phase 3 (Med/Low)**: non-interactive installer flag (OpenEye `read -p`); registry stale-entry cleanup/TTL; idempotency pass.
-- [ ] **Phase 4**: `scripts/smoke-ecosystem.sh` clean-machine acceptance test (install → serve → self-register → reboot → uninstall) on macOS + Linux.
+Make clean-machine installs "just work" for **single-host, networked (multi-device), and subset** deployments:
+- [ ] **Phase 1 (Critical)**: OpenEye optional-WebRTC — import-guard `aiortc`/two-way-audio + move `av`/`aiortc` to a `[webrtc]` extra (DECIDED) so installs never fail; **multi-device-safe shared secret** (env → `~/.config/ecosystem/secret.env` → generate+print; `ecosystem secret show/import`) sourced by every service; `appEcosystem/scripts/install-local.sh` (internal-disk venv) for the registry under launchd.
+- [ ] **Phase 2 (High)**: `ECOSYSTEM_MODE` (local|lan) with **bind-host ≠ advertised-host** resolution (auto-detect LAN IP in lan mode); remove baked `192.168.50.73`; MM seeds `config.js`, self-registers, binds mode host (not IPv6-only); registry tolerates subset/absent members (no false "unhealthy").
+- [ ] **Phase 3 (Med/Low)**: non-interactive installer flag; per-device enabled-apps record; idempotency pass.
+- [ ] **Phase 4**: `scripts/smoke-ecosystem.sh` acceptance test — single-host all-five + **two-device split** + **subset** runs, macOS + Linux.
 
 ### Backlog (future)
 - [ ] **Branch protection / required checks**: Recommended but **not auto-applied** — the current workflow pushes directly to `main`, which strict protection (required PR/status checks) would disrupt. Enable via GitHub repo settings when moving to a PR-based flow.
