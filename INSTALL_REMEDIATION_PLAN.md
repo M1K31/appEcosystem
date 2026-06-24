@@ -62,10 +62,17 @@ must share. Resolution order on each install:
    joining a second device is one command — no manual file editing.
 5. Every service's launchd plist / systemd unit sources `secret.env` (launchd
    wrapper: `set -a; . secret.env`; systemd: `EnvironmentFile=`).
-- **Single-host:** step 3 auto-generates; everything local shares it — zero config.
-- **Networked:** generate on the first device, import on the rest (steps 1/4).
+- **Single-host:** step 3 auto-generates; every app installed on that machine
+  finds and reuses the same `secret.env` — zero config, fully automatic.
+- **Networked:** generate on the first device, then supply the *same* value once
+  on each other device (steps 1/4). After that it's saved locally there too.
 - **Subset:** unaffected — each installed app just needs the shared secret to
   talk to the others; apps you didn't install simply aren't contacted.
+- **Security invariant:** the **registry never stores or distributes the
+  secret** — it only *verifies* signatures made with it. Non-secret config (AI
+  profile, ports, discovery) propagates through the registry (Phase B2); the
+  secret is deliberately kept out of that channel, so cross-device sharing is a
+  one-time manual copy rather than an automatic network push.
 
 ### B. Internal-disk runtime for the registry (fixes #6)
 Add `appEcosystem/scripts/install-local.sh` mirroring AFS/AegisSIEM: build the
@@ -128,13 +135,23 @@ Three viable paths (pick one; A+B together is best):
 - **C. Pin to a prebuilt-wheel combo** (e.g. an `av`/`aiortc` release with
   arm64/py3.9 wheels) to avoid source builds entirely, if one exists.
 
-**DECISION (confirmed):** Go with **A (optional WebRTC)** so installs never fail,
-**plus B** (guided ffmpeg) for users who want two-way audio. Concretely:
-import-guard every `aiortc`/`av`/two-way-audio import so the backend serves with
-the feature disabled when absent; move `aiortc`+`av` out of the core
-`requirements.txt` into an optional `[webrtc]` extra (fixes #3 — core install no
-longer pulls `av`); installer detects missing ffmpeg and offers
-`brew/apt install ffmpeg` + the `[webrtc]` extra.
+**DECISION (confirmed, revised):** Install the WebRTC packages **by default** —
+they stay in the core `requirements.txt` — but make the *feature* optional and
+crash-proof. Concretely:
+1. **Installer ensures `ffmpeg` first** (the missing build dep): detect it, and
+   on macOS `brew install ffmpeg` / Linux `apt install ffmpeg` (prompt unless
+   `--yes`) *before* pip, so `av`/`aiortc` build and install every time.
+2. Pin a compatible `av`/`aiortc` pair (aiortc needs `av<15`) so the build is
+   deterministic once ffmpeg is present.
+3. **Import-guard** every `aiortc`/`av`/two-way-audio import purely as
+   resilience — if the wheel is somehow missing/broken, the backend still
+   imports and serves with two-way audio disabled (fixes #2/#3) instead of
+   dying at `class AudioTrack(MediaStreamTrack)`.
+4. A runtime toggle (config flag) can disable the feature without uninstalling.
+
+Net: packages are present out-of-the-box (feature works), the install never
+hard-fails on the native build, and the app degrades gracefully if WebRTC is
+unavailable.
 
 ---
 
