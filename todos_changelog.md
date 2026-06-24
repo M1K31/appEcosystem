@@ -65,6 +65,13 @@ This document tracks completed changes, active items, and planned improvements f
 - [ ] **⚠️ OpenEye (:8200) BLOCKED**: install fails on `aiortc`→`av` (WebRTC), which needs system **ffmpeg** to build `av<15`, but only `av 15` has a prebuilt wheel; OpenEye hard-imports `aiortc.MediaStreamTrack` (two-way-audio), so the backend won't import. **Options:** (a) `brew install ffmpeg` + pin `av==14.x`/`aiortc` compatibly; (b) make the WebRTC/two-way-audio import optional so the app degrades gracefully; (c) UI-test the other 4 apps for now. Needs a decision.
 - [x] Shared `ECOSYSTEM_HMAC_SECRET` set for the launchd domain (`launchctl setenv`) + `~/.ecosystem_hmac_secret` (600) so services share one secret (fail-closed requires it). **Note:** not persisted across reboot — bake into plists / a sourced env file for production.
 
+### Install remediation plan (see [INSTALL_REMEDIATION_PLAN.md](INSTALL_REMEDIATION_PLAN.md))
+Make clean-machine installs "just work" — address every issue from the reinstall test:
+- [ ] **Phase 1 (Critical)**: OpenEye optional-WebRTC (import-guard `aiortc`/two-way-audio + move `av`/`aiortc` to a `[webrtc]` extra so installs never fail on ffmpeg); auto-provision a persistent shared `ECOSYSTEM_HMAC_SECRET` (`~/.config/ecosystem/secret.env`, sourced by every service); add `appEcosystem/scripts/install-local.sh` (internal-disk venv) so the registry runs under launchd off the external volume.
+- [ ] **Phase 2 (High)**: default `ecosystem.yaml` host to `127.0.0.1`/`${ECOSYSTEM_HOST}` (drop baked LAN IP); MM installer seeds `config.js`, self-registers, binds a reachable host; confirm AegisSIEM port + shared-pkg fixes in a clean run.
+- [ ] **Phase 3 (Med/Low)**: non-interactive installer flag (OpenEye `read -p`); registry stale-entry cleanup/TTL; idempotency pass.
+- [ ] **Phase 4**: `scripts/smoke-ecosystem.sh` clean-machine acceptance test (install → serve → self-register → reboot → uninstall) on macOS + Linux.
+
 ### Backlog (future)
 - [ ] **Branch protection / required checks**: Recommended but **not auto-applied** — the current workflow pushes directly to `main`, which strict protection (required PR/status checks) would disrupt. Enable via GitHub repo settings when moving to a PR-based flow.
 - [x] **Publish Docker image to GHCR on tag**: `.github/workflows/publish-image.yml` builds + pushes `ghcr.io/<owner>/appecosystem-registry` on `v*` tags (and manual dispatch) using `GITHUB_TOKEN`.
