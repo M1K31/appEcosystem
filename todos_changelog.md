@@ -55,6 +55,14 @@ This document tracks completed changes, active items, and planned improvements f
   - AFS (already covered): `bin/install-local.sh` (macOS) + `ai-survival-packaging/install.sh` (Linux) + `bin/uninstall.sh`.
   - All installers path-install the shared `ecosystem-auth`/`-client`/`-ai` packages (guarded). Service labels standardized to `com.smartindustries.*` for new ones.
 
+### Uninstall/reinstall test (2026-06-23, macOS)
+- [x] **AegisSIEM**: uninstalled old `com.mikelsmart.asusguard`; reinstalled via `install-local.sh --plist` (internal venv + shared pkgs + plist). Serves `/api/status` 200 on **:8089**. Found+fixed: `config.example.yml` dashboard port `8088`→`8089` (was colliding with the harness); `install-local.sh` now installs shared packages.
+- [x] **AI-for-Survival**: rebuilt internal daemon venv (now installs shared pkgs); daemon restarted healthy on **:8000** (ollama+db connected).
+- [x] **Registry**: running on **:8500** (session) — registers/health-checks AFS+AegisSIEM OK. Cleared stale `asusguard` entries from `data/registry.json`.
+- [ ] **⚠️ Registry launchd install fails from the external Locker2 volume** (exit 78 — macOS launchd TCC/exec restriction on external volumes; same class the apps fixed with internal-disk venvs). **Follow-up:** add `appEcosystem/scripts/install-local.sh` (internal-disk venv + plist) mirroring AFS/AegisSIEM. Running in-session via background uvicorn for now.
+- [ ] **OpenEye** (:8200) + **MagicMirror** (:8080): fresh installs pending (then Chrome UI testing).
+- [x] Shared `ECOSYSTEM_HMAC_SECRET` set for the launchd domain (`launchctl setenv`) + `~/.ecosystem_hmac_secret` (600) so services share one secret (fail-closed requires it). **Note:** not persisted across reboot — bake into plists / a sourced env file for production.
+
 ### Backlog (future)
 - [ ] **Branch protection / required checks**: Recommended but **not auto-applied** — the current workflow pushes directly to `main`, which strict protection (required PR/status checks) would disrupt. Enable via GitHub repo settings when moving to a PR-based flow.
 - [x] **Publish Docker image to GHCR on tag**: `.github/workflows/publish-image.yml` builds + pushes `ghcr.io/<owner>/appecosystem-registry` on `v*` tags (and manual dispatch) using `GITHUB_TOKEN`.
