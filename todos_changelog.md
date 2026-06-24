@@ -46,6 +46,15 @@ This document tracks completed changes, active items, and planned improvements f
   - MagicMirror: network-security module. **2 files.** (OpenEye: no refs.)
   - ⚠️ Installed instances now out of sync with renamed code/paths/config dir → reinstall required to pick up the rename.
 
+### Cross-platform installers (2026-06-22)
+- [x] Reworked install/uninstall to support **macOS (launchd) + Linux (systemd)** across all apps:
+  - appEcosystem: `install.sh`/`uninstall.sh` now OS-detect (launchd via `cli` on macOS, systemd scripts on Linux).
+  - OpenEye: `install-local.sh` adds a launchd agent (`com.smartindustries.openeye`) alongside systemd, using the resolved port (8200, not hardcoded 8000); `uninstall.sh` removes the launchd agent.
+  - MagicMirror: new `scripts/install.sh`/`uninstall.sh` (launchd + systemd) for the Node server-only process.
+  - LogAnalysis (already cross-platform): `install-local.sh` (macOS launchd `com.mikelsmart.aegissiem`) + `install.sh` (Linux systemd) + unified `uninstall.sh`.
+  - AFS (already covered): `bin/install-local.sh` (macOS) + `ai-survival-packaging/install.sh` (Linux) + `bin/uninstall.sh`.
+  - All installers path-install the shared `ecosystem-auth`/`-client`/`-ai` packages (guarded). Service labels standardized to `com.smartindustries.*` for new ones.
+
 ### Backlog (future)
 - [ ] **Branch protection / required checks**: Recommended but **not auto-applied** — the current workflow pushes directly to `main`, which strict protection (required PR/status checks) would disrupt. Enable via GitHub repo settings when moving to a PR-based flow.
 - [x] **Publish Docker image to GHCR on tag**: `.github/workflows/publish-image.yml` builds + pushes `ghcr.io/<owner>/appecosystem-registry` on `v*` tags (and manual dispatch) using `GITHUB_TOKEN`.
