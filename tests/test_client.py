@@ -47,6 +47,54 @@ class TestEcosystemClient:
         mock_register.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_register_self_uses_advertise_host(self, monkeypatch):
+        """_register_self advertises the topology host (mode-correct), not a raw
+        local-IP probe."""
+        from ecosystem_client import EcosystemClient
+        from ecosystem_client import topology
+
+        monkeypatch.setenv("ECOSYSTEM_MODE", "local")
+        client = EcosystemClient(service_name="svc", service_port=8000)
+        with patch.object(
+            client._discovery, "register_self",
+            new_callable=AsyncMock, return_value=True,
+        ) as mock_register:
+            ok = await client._register_self()
+
+        assert ok is True
+        # local mode advertises loopback, and the client records what it used
+        assert client._advertised_host == topology.advertise_host() == "127.0.0.1"
+        kwargs = mock_register.call_args.kwargs
+        assert kwargs["host"] == "127.0.0.1"
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_reregisters_on_ip_change(self, monkeypatch):
+        """A DHCP/IP change between intervals is pushed to the registry: the
+        heartbeat re-registers with the new advertise host."""
+        from ecosystem_client import EcosystemClient
+        from ecosystem_client.discovery import DiscoveryMode
+
+        client = EcosystemClient(service_name="svc", service_port=8000)
+        client._discovery._mode = DiscoveryMode.REGISTRY
+
+        hosts = iter(["10.0.0.5", "10.0.0.9"])  # IP changes on the 2nd call
+        monkeypatch.setattr(client, "_current_advertise_host",
+                            AsyncMock(side_effect=lambda: next(hosts)))
+
+        with patch.object(
+            client._discovery, "register_self",
+            new_callable=AsyncMock, return_value=True,
+        ) as mock_register:
+            await client._register_self()
+            assert client._advertised_host == "10.0.0.5"
+            await client._register_self()
+            assert client._advertised_host == "10.0.0.9"
+
+        assert mock_register.call_count == 2
+        assert mock_register.call_args_list[0].kwargs["host"] == "10.0.0.5"
+        assert mock_register.call_args_list[1].kwargs["host"] == "10.0.0.9"
+
+    @pytest.mark.asyncio
     async def test_discover_returns_peer(self):
         from ecosystem_client import EcosystemClient
         from ecosystem_client.discovery import DiscoveryMode

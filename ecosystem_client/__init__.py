@@ -62,6 +62,7 @@ class EcosystemClient:
         self._peer_objects: dict[str, Peer] = {}
         self._started = False
         self._refresh_task: asyncio.Task | None = None
+        self._advertised_host: str | None = None  # last host we registered with
 
     @property
     def mode(self) -> DiscoveryMode:
@@ -76,18 +77,7 @@ class EcosystemClient:
         self._publisher._mode = mode
 
         if mode == DiscoveryMode.REGISTRY:
-            host = self._get_local_ip()
-            webhook_url = f"http://{host}:{self._service_port}{self._config.webhook_path}"
-            all_subs = list(set(self._subscriptions + self._subscriber.subscriptions))
-            await self._discovery.register_self(
-                name=self._service_name,
-                host=host,
-                port=self._service_port,
-                health_endpoint=self._health_endpoint,
-                webhook_url=webhook_url,
-                subscriptions=all_subs,
-                priority=self._config.priority,
-            )
+            await self._register_self()
 
         # Discover peers
         await self._refresh_peers()
@@ -153,6 +143,37 @@ class EcosystemClient:
         """Process an incoming webhook event."""
         await self._subscriber.dispatch(envelope)
 
+    async def _current_advertise_host(self) -> str:
+        """The host other services should use to reach us, resolved fresh each
+        call so a DHCP/IP change is picked up. Falls back to the legacy local-IP
+        probe if the topology helper is unavailable."""
+        try:
+            from .topology import advertise_host
+            return advertise_host()
+        except Exception:
+            return self._get_local_ip()
+
+    async def _register_self(self) -> bool:
+        """(Re-)register this service with the registry using the current
+        advertise host. Idempotent — the registry upserts by name, so calling
+        this on an interval acts as a heartbeat that keeps our IP and last-seen
+        fresh and re-adds us if we were pruned while unreachable."""
+        host = await self._current_advertise_host()
+        webhook_url = f"http://{host}:{self._service_port}{self._config.webhook_path}"
+        all_subs = list(set(self._subscriptions + self._subscriber.subscriptions))
+        ok = await self._discovery.register_self(
+            name=self._service_name,
+            host=host,
+            port=self._service_port,
+            health_endpoint=self._health_endpoint,
+            webhook_url=webhook_url,
+            subscriptions=all_subs,
+            priority=self._config.priority,
+        )
+        if ok:
+            self._advertised_host = host
+        return ok
+
     async def _refresh_peers(self) -> None:
         """Refresh the peer list from discovery."""
         self._peers = await self._discovery.get_peers()
@@ -172,7 +193,13 @@ class EcosystemClient:
             self._publisher.set_peer_webhooks(webhooks)
 
     async def _periodic_refresh(self) -> None:
-        """Periodically re-check discovery and refresh peers."""
+        """Periodically re-check discovery, re-register self, and refresh peers.
+
+        Re-registering each interval is what makes dynamic IPs work: if this
+        host's address changes (DHCP renewal, reconnect) we push the new
+        advertise host to the registry instead of leaving a stale, unreachable
+        registration behind. It also re-adds us if the health monitor pruned us
+        while we were briefly unreachable."""
         while True:
             await asyncio.sleep(self._config.discovery_interval)
             try:
@@ -183,6 +210,14 @@ class EcosystemClient:
                         f"Mode changed: {old_mode.value} -> {new_mode.value}"
                     )
                     self._publisher._mode = new_mode
+                if new_mode == DiscoveryMode.REGISTRY:
+                    prev = self._advertised_host
+                    await self._register_self()  # heartbeat / IP refresh
+                    if prev and prev != self._advertised_host:
+                        logger.info(
+                            f"Advertise host changed {prev} -> {self._advertised_host}; "
+                            "re-registered with the new address"
+                        )
                 await self._refresh_peers()
             except Exception as e:
                 logger.debug(f"Periodic refresh error: {e}")
