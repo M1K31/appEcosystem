@@ -59,6 +59,61 @@ class TestRegistryEndpoints:
         assert 'ecosystem_services{status="' in body
 
 
+class TestStaticSubsetTolerance:
+    """Static pre-registration only includes locally-present apps (subset/
+    multi-device tolerance) unless ECOSYSTEM_REGISTER_ALL_STATIC forces all."""
+
+    def _write_config(self, tmp_path):
+        import yaml
+        # base/ is the sibling-repo root (config lives at base/repo/ecosystem.yaml).
+        base = tmp_path / "base"
+        repo = base / "repo"
+        repo.mkdir(parents=True)
+        (base / "present_app").mkdir()  # installed locally
+        # absent_app dir intentionally not created
+        cfg = {
+            "ecosystem": {"base_path": str(base)},
+            "projects": {
+                "present_app": {"path": "present_app", "port": 9001,
+                                "health_endpoint": "/health"},
+                "absent_app": {"path": "absent_app", "port": 9002,
+                               "health_endpoint": "/health"},
+            },
+        }
+        cfg_path = repo / "ecosystem.yaml"
+        cfg_path.write_text(yaml.safe_dump(cfg))
+        return cfg_path
+
+    def test_skips_apps_not_installed_locally(self, tmp_path, monkeypatch):
+        from registry.app import _register_static_projects
+        from registry.registry import ServiceRegistry
+
+        cfg_path = self._write_config(tmp_path)
+        monkeypatch.setenv("ECOSYSTEM_CONFIG", str(cfg_path))
+        monkeypatch.delenv("ECOSYSTEM_REGISTER_ALL_STATIC", raising=False)
+
+        reg = ServiceRegistry(persistence_path=str(tmp_path / "reg.json"))
+        _register_static_projects(reg)
+
+        names = {s.name for s in reg.get_all()}
+        assert "present_app" in names
+        assert "absent_app" not in names  # not installed here -> not pre-registered
+
+    def test_register_all_override_includes_absent(self, tmp_path, monkeypatch):
+        from registry.app import _register_static_projects
+        from registry.registry import ServiceRegistry
+
+        cfg_path = self._write_config(tmp_path)
+        monkeypatch.setenv("ECOSYSTEM_CONFIG", str(cfg_path))
+        monkeypatch.setenv("ECOSYSTEM_REGISTER_ALL_STATIC", "1")
+
+        reg = ServiceRegistry(persistence_path=str(tmp_path / "reg.json"))
+        _register_static_projects(reg)
+
+        names = {s.name for s in reg.get_all()}
+        assert {"present_app", "absent_app"} <= names
+
+
 class TestReplayProtection:
     REG_URL = "http://testserver/register"
 

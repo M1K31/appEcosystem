@@ -295,9 +295,17 @@ async def check_service_health(
 
 
 def _register_static_projects(reg: ServiceRegistry) -> None:
-    """Pre-register projects defined in ecosystem.yaml."""
+    """Pre-register projects defined in ecosystem.yaml that are present locally.
+
+    Subset/multi-device tolerance: only projects whose repo actually exists on
+    this device are pre-registered, so a partial install does not show
+    not-installed apps as "unhealthy". Apps deployed on other devices self-
+    register over the network when they start. Set
+    ``ECOSYSTEM_REGISTER_ALL_STATIC=1`` to force pre-registering every project
+    regardless of local presence (e.g. a single-host dev box with all repos)."""
     try:
         import yaml
+        from pathlib import Path
 
         config_path = os.environ.get("ECOSYSTEM_CONFIG", "ecosystem.yaml")
         if not os.path.exists(config_path):
@@ -313,11 +321,31 @@ def _register_static_projects(reg: ServiceRegistry) -> None:
             def resolve_static_host(host: str) -> str:  # type: ignore
                 return host or "localhost"
 
+        # Resolve the sibling-repo base path the same way the CLI does so the
+        # local-presence check matches where apps are actually installed.
+        register_all = os.environ.get(
+            "ECOSYSTEM_REGISTER_ALL_STATIC", ""
+        ).lower() in ("1", "true", "yes")
+        base_str = (
+            os.environ.get("ECOSYSTEM_BASE_PATH")
+            or (config.get("ecosystem") or {}).get("base_path", "")
+        )
+        # ecosystem.yaml lives at <repo>/ecosystem.yaml; siblings live in <repo>/..
+        base = Path(base_str) if base_str else Path(config_path).resolve().parent.parent
+
         for key, proj in (config.get("projects") or {}).items():
             # Validate per-project so one malformed entry doesn't abort the
             # entire static load.
             if "port" not in proj:
                 logger.warning(f"Skipping static project '{key}': missing 'port'")
+                continue
+            rel_path = proj.get("path")
+            if not register_all and rel_path and not (base / rel_path).exists():
+                logger.info(
+                    "Skipping static project '%s': not installed locally (%s). "
+                    "It will appear if it self-registers from its own device.",
+                    key, base / rel_path,
+                )
                 continue
             try:
                 reg.register(
