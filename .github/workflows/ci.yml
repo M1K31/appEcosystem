@@ -23,6 +23,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
+          # Workspace packages have their own tests collected by `pytest -q`;
+          # install them so collection imports succeed.
+          pip install -e auth/python
+          pip install -e packages/ecosystem-ai
+          pip install -e packages/ecosystem-client
       - name: Run tests
         run: pytest -q
 

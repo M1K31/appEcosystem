@@ -23,6 +23,7 @@ if [ ! -d "$VENV_DIR" ]; then
 fi
 
 # Activate venv and install
+# shellcheck source=/dev/null
 source "$VENV_DIR/bin/activate"
 pip install --upgrade pip -q
 

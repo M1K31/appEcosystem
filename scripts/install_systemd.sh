@@ -38,6 +38,9 @@ After=network.target
 Type=simple
 User=$USER_NAME
 WorkingDirectory=$ROOT_DIR
+# Pin HOME so the file-backed shared secret (~/.config/ecosystem/secret.env,
+# resolved via Path.home()) is found regardless of how systemd seeds the env.
+Environment=HOME=$USER_HOME
 Environment=ECOSYSTEM_REGISTRY_FILE=data/registry.json
 # Bind to loopback by default. Change to 0.0.0.0 only when the registry is
 # firewalled to a trusted network.

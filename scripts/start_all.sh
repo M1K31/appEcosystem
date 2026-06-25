@@ -10,6 +10,7 @@ echo "=== Starting Ecosystem ==="
 # Activate venv if available
 cd "$ROOT_DIR"
 if [ -f "$ROOT_DIR/.venv/bin/activate" ]; then
+    # shellcheck source=/dev/null
     source "$ROOT_DIR/.venv/bin/activate"
 fi
 
