@@ -1,174 +1,25 @@
-# Todos & Changelog
+# Ecosystem TODOs & Pending Work
 
-This document tracks completed changes, active items, and planned improvements for the central **appEcosystem** layer.
+## MagicMirror³
+- **UI/UX**: Fix facebook birthday issue in calendar fetcher (`calendarfetcherutils.js`)
+- **Security Dashboard**: Show specific camera in fullscreen mode (`security.js`)
+- **Weather Integration**: Add unit conversion for precipitation (currently hardcoded to `mm`) (`weatherflow.js`)
+- **Core Refactor**: Move configuration passing logic into core to prevent breaking tests (`main.js`, `check_config.js`)
+- **Hotfix**: Pending hotfix pull request (`app.js`)
 
----
-
-## Active & Pending Todos
-
-### Phase 1: Security & Cryptography
-- [x] **Fix GET Request Verification Bug**: Resolve the disconnect between `CommandRouter` (which signs `{"url": url, "method": method}`) and `require_ecosystem_auth` (which expects a JSON request body and tries to call `request.json()`, failing with `400 Bad Request` on GETs). [RESOLVED]
-- [x] **Registry Access Control**: Implement signature verification or token-based authentication on registry endpoints (`/register`, `/deregister/{name}`) to prevent malicious services from spoofing or hijacking registrations. [RESOLVED]
-- [x] **HMAC Token Replay Protection**: Modify ecosystem tokens to include a short-lived nonce or timestamp verification in the signature payload (currently only signing static `service`, `issued_at`, and `expires_at`), which allows replay attacks within the 24-hour expiration window. [RESOLVED]
-- [x] **Bind Token Field**: Include the generated secure random `token` hex in the HMAC signature payload of the ecosystem token so that the random token actually acts as a cryptographic anchor. [RESOLVED]
-
-### Phase 2: Architecture & Code Quality
-- [x] **FastAPI Event Loop Blocking**: Fix the `Zeroconf` discovery blocking issue. Currently, `EcosystemDiscovery.discover_services()` calls `time.sleep(2)`, which blocks the main thread and halts the entire FastAPI event loop for 2 seconds. Rewrite to use `asyncio.sleep()` or run it inside an executor thread pool using `asyncio.to_thread`. [RESOLVED]
-- [x] **Client Connection Pooling**: Replace inline `async with httpx.AsyncClient()` instances inside loops (e.g. in `HealthMonitor` checks and `EventBus` webhook delivery retries) with a single, persistent, and shared `httpx.AsyncClient` session. [RESOLVED]
-- [x] **Safe Start Command Split**: Refactor `subprocess.Popen(cmd.split())` inside `cli/commands.py` to use `shlex.split(cmd)` to safely handle start commands with shell arguments and quotes. [RESOLVED]
-- [x] **Self-Contained Client Packaging**: Restructure the Python client package (`packages/ecosystem-client`) to bundle or depend on the `ecosystem_auth` package to prevent runtime `ImportError` on client-only installations. [RESOLVED]
-
-### Phase 3: UI/UX & Theming
-- [x] **Unified Theme Switcher**: Build a global CSS layout that toggles classes between Light Mode (`ecosystem-theme-light.css`) and Dark Mode (`ecosystem-theme.css`) dynamically. [RESOLVED]
-- [x] **Apple HIG Responsive Layout**: Implement custom grid systems using the 8pt spacing system (`--spacing-xs` to `--spacing-2xl`) and ensure all interactive elements maintain the `--touch-target-min` of `44px`. [RESOLVED]
-- [x] **Magic Mirror Color Degrade**: Create a specialized high-contrast monochrome utility class for MagicMirror's HUD display, respecting its limited color-serving hardware. [RESOLVED]
-
-### Phase 4: DevOps, Lifecycle & Orchestration
-- [x] **Ecosystem Process Daemonization**: Generate robust lifecycle scripts with signal interception (`SIGINT`, `SIGTERM`) for graceful shutdowns. [RESOLVED]
-- [x] **Timeout to SIGKILL Escalation**: Refactor `cmd_stop_all` to poll active processes and force-terminate with `SIGKILL` (signal 9) if they fail to shut down gracefully within 5 seconds. [RESOLVED — escalation now in `cli/commands.py` `_terminate_pid`, used by `cmd_stop`/`cmd_stop_all`, not just `process_manager.py`]
-- [x] **Linux systemd Installer**: Create systemd configuration templates to support Arm Linux (Raspberry Pi) and Intel Linux deployment parity with macOS launchd. [RESOLVED]
-
-### Phase 6: Hardening & Observability (2026-06-16)
-- [x] **Token lifetime cap**: `verify_ecosystem_token` rejects implausibly long-lived tokens (>48h) and future `issued_at`, bounding a leaked-secret blast radius (Python + JS). [RESOLVED]
-- [x] **Observability**: Prometheus `GET /metrics` (counters + live service gauges), structured JSON logging via `ECOSYSTEM_LOG_FORMAT`, and a non-root `Dockerfile` with `HEALTHCHECK`; CI builds the image. [RESOLVED]
-- [x] **Optional read-endpoint auth**: `ECOSYSTEM_REQUIRE_READ_AUTH` gates auth on `/services*`; in-repo discovery clients and CLI sign their GETs so enabling it is non-breaking. [RESOLVED]
-- [x] **Self-hosted fonts**: Replaced the render-blocking `fonts.googleapis.com` `@import` with local `@font-face` declarations pointing to vendored variable WOFF2 files (`theme/fonts/`). `scripts/fetch_fonts.py` re-downloads them; system-font fallbacks keep the UI working offline (privacy + MagicMirror HUD). [RESOLVED]
-
-### OpenEye stash salvage (2026-06-22)
-- [x] Salvaged the valuable WIP from OpenEye `stash@{1}` (19 files main hadn't since changed): two-way audio (core+route), scheduled tasks, face pipeline improvements, `event_type` column, alert_manager ecosystem hook, install/setup scripts. Verified compile/syntax.
-- [x] Remaining stash content confirmed **superseded by main** (main.py already wires two-way audio/scheduled-tasks/face_history; ecosystem.py/ecosystem_security.py evolved via PR #7 + Phase A) or **obsolete vendored auth/client** (dropped by Phase E). Both stashes left intact for user review (safe to `git stash drop` when satisfied).
-
-### Branding rename: AsusGuard → AegisSIEM (2026-06-22)
-- [x] **Full ecosystem rename** (`asusguard`→`aegissiem`, `AsusGuard`→`AegisSIEM`, `ASUSGUARD`→`AEGISSIEM`):
-  - LogAnalysis: Python package `src/asusguard`→`src/aegissiem`, all imports/paths, pyproject + console script, `AEGISSIEM_PORT`, config dir `~/.aegissiem`, systemd unit, service id. **155 files; full suite 243 passed, 1 skipped.**
-  - appEcosystem: `ecosystem.yaml` keys (`aegissiem`, `aegissiem_daemon`), command_router harness env, playbooks, docs, tests. **17 files; 202 tests pass.**
-  - AFS: `ecosystem_tools` agent tool keys/names, SIEM handlers, config. **36 files; 15 ecosystem tests pass.**
-  - MagicMirror: network-security module. **2 files.** (OpenEye: no refs.)
-  - ⚠️ Installed instances now out of sync with renamed code/paths/config dir → reinstall required to pick up the rename.
-
-### Cross-platform installers (2026-06-22)
-- [x] Reworked install/uninstall to support **macOS (launchd) + Linux (systemd)** across all apps:
-  - appEcosystem: `install.sh`/`uninstall.sh` now OS-detect (launchd via `cli` on macOS, systemd scripts on Linux).
-  - OpenEye: `install-local.sh` adds a launchd agent (`com.smartindustries.openeye`) alongside systemd, using the resolved port (8200, not hardcoded 8000); `uninstall.sh` removes the launchd agent.
-  - MagicMirror: new `scripts/install.sh`/`uninstall.sh` (launchd + systemd) for the Node server-only process.
-  - LogAnalysis (already cross-platform): `install-local.sh` (macOS launchd `com.mikelsmart.aegissiem`) + `install.sh` (Linux systemd) + unified `uninstall.sh`.
-  - AFS (already covered): `bin/install-local.sh` (macOS) + `ai-survival-packaging/install.sh` (Linux) + `bin/uninstall.sh`.
-  - All installers path-install the shared `ecosystem-auth`/`-client`/`-ai` packages (guarded). Service labels standardized to `com.smartindustries.*` for new ones.
-
-### Uninstall/reinstall test (2026-06-23, macOS)
-- [x] **AegisSIEM**: uninstalled old `com.mikelsmart.asusguard`; reinstalled via `install-local.sh --plist` (internal venv + shared pkgs + plist). Serves `/api/status` 200 on **:8089**. Found+fixed: `config.example.yml` dashboard port `8088`→`8089` (was colliding with the harness); `install-local.sh` now installs shared packages.
-- [x] **AI-for-Survival**: rebuilt internal daemon venv (now installs shared pkgs); daemon restarted healthy on **:8000** (ollama+db connected).
-- [x] **Registry**: running on **:8500** (session) — registers/health-checks AFS+AegisSIEM OK. Cleared stale `asusguard` entries from `data/registry.json`.
-- [ ] **⚠️ Registry launchd install fails from the external Locker2 volume** (exit 78 — macOS launchd TCC/exec restriction on external volumes; same class the apps fixed with internal-disk venvs). **Follow-up:** add `appEcosystem/scripts/install-local.sh` (internal-disk venv + plist) mirroring AFS/AegisSIEM. Running in-session via background uvicorn for now.
-- [x] **MagicMirror** (:8080): seeded `config.js` from sample; `node serveronly` serves `<html>MagicMirror³` 200. (Registry marks it unhealthy only because the static entry health-checks the LAN IP, not localhost.)
-- [x] **Live ecosystem verified**: AFS + AegisSIEM **self-register as healthy** (shared-secret auth works); AFS reports hardware via `resources` (tier 2 / 16GB / GPU) and `/ai-placement` responds — Phase F live.
-- [ ] **⚠️ OpenEye (:8200) BLOCKED**: install fails on `aiortc`→`av` (WebRTC), which needs system **ffmpeg** to build `av<15`, but only `av 15` has a prebuilt wheel; OpenEye hard-imports `aiortc.MediaStreamTrack` (two-way-audio), so the backend won't import. **Options:** (a) `brew install ffmpeg` + pin `av==14.x`/`aiortc` compatibly; (b) make the WebRTC/two-way-audio import optional so the app degrades gracefully; (c) UI-test the other 4 apps for now. Needs a decision.
-- [x] Shared `ECOSYSTEM_HMAC_SECRET` set for the launchd domain (`launchctl setenv`) + `~/.ecosystem_hmac_secret` (600) so services share one secret (fail-closed requires it). **Note:** not persisted across reboot — bake into plists / a sourced env file for production.
-
-### Install remediation plan (see [INSTALL_REMEDIATION_PLAN.md](INSTALL_REMEDIATION_PLAN.md))
-Make clean-machine installs "just work" for **single-host, networked (multi-device), and subset** deployments:
-- [x] **Phase 1 (Critical) — DONE**:
-  - File-backed shared secret: `get_ecosystem_secret` resolves override→env→`~/.config/ecosystem/secret.env` (no more launchctl-setenv); `write_secret`/`ensure_ecosystem_secret` + `ecosystem secret generate|show|import|path`. Same-machine auto; cross-device via `secret import`. Tested.
-  - OpenEye WebRTC: backend imports without aiortc (fallback base `object`, gated by `WEBRTC_AVAILABLE`); `install-local.sh` ensures ffmpeg first (brew/apt) so av/aiortc build by default, with graceful retry-without-WebRTC. Verified: `/api/health` 200, serves on :8200.
-  - Registry internal-disk install: `appEcosystem/scripts/install-local.sh` (runtime under `~/.local/share/ecosystem`, non-editable, file-backed secret) → launchd/systemd. **Fixes the external-volume exit-78**; verified registry healthy on :8500 under launchd.
-  - appEcosystem now imports the installed `ecosystem_auth` package (not the repo path). 210 tests pass.
-- [x] **Phase 2 (High) — DONE**:
-  - `ECOSYSTEM_MODE` (local|lan) with **bind-host ≠ advertised-host**: new `ecosystem_client/topology.py` (`get_mode`/`bind_host`/`advertise_host`/`detect_lan_ip`/`resolve_static_host`) + JS port `js/ecosystem-client/topology.js`. local→loopback; lan→`0.0.0.0` bind + auto-detected LAN IP advertise. `ECOSYSTEM_BIND_HOST`/`ECOSYSTEM_ADVERTISE_HOST` override.
-  - Removed baked `192.168.50.73` (×5) from `ecosystem.yaml` → `localhost`; registry static pre-registration promotes loopback→LAN IP in lan mode; `install-local.sh` registry bind + `ECOSYSTEM_MODE` follow the mode.
-  - `register_self`/MM `index.js` default to the advertise host; MM `config.js(.sample)` binds IPv4 loopback in local / `0.0.0.0` in lan. **Verified: MM flips from unhealthy→healthy, binds `127.0.0.1:8080` (was IPv6 `::1`), self-registers.** Commits `9659cc8` (appEcosystem), `b322c56` (MagicMirror).
-  - **Registry subset-install tolerance**: static pre-registration only includes apps whose repo is present locally (`base_path/<path>` exists), so partial installs don't show not-installed apps as "unhealthy"; remote apps self-register over the network. `ECOSYSTEM_REGISTER_ALL_STATIC=1` forces all. +2 tests. Commit `d770c36`.
-  - **In-app "Ecosystem Setup" secret form** (browser path beside `ecosystem secret`): shared fail-closed core `ecosystem_auth.setup` (`secret_status`/`apply_secret`/`generate_secret` — hex-validated, overwrite-protected, value never echoed except once on generate), auth bumped 0.3.0→0.4.0, +9 tests. Native-styled panels wired per app: **AegisSIEM** Flask settings (`21fe102`), **OpenEye** React SystemSettings (`fa81329`), **AFS** React System page (`ff59833`). **MagicMirror** (passive display) instead gets file-backed/fail-closed secret parity in its JS client — `secret.js` reads `~/.config/ecosystem/secret.env`, no dev-default (`534f471`). appEcosystem core commit `f591f12`. 195 tests pass.
-- [x] **Phase 3 (Med/Low) — DONE**: non-interactive installer flag (`ECOSYSTEM_NONINTERACTIVE`/`CI`/`--yes`) in `scripts/uninstall.sh` (remove-venv via `ECOSYSTEM_REMOVE_VENV`) and OpenEye `install-local.sh` (`confirm()` helper; venv-keep + service-skip defaults, `OPENEYE_INSTALL_SERVICE=1` to opt in); apt installs already `-y`. Per-device enabled-apps record: `ecosystem apps [--json]` lists apps present on this device (repo under base_path) vs hosted elsewhere. Idempotent venv reuse. +3 tests (198 total). Commits `b1a26e0` (appEcosystem), `43a8845` (OpenEye).
-- [x] **Phase 4 — DONE**: `scripts/smoke-ecosystem.sh` (+ `smoke_ecosystem.py`) acceptance test runs the real registry ASGI app in an isolated temp env and asserts all guarantees across **single-host / subset / networked-split**: secret fail-closed→provisioned (value never leaked), topology local/lan, registry boot + health, subset = absent app not pre-registered, auth (unsigned 401 / signed 201), remote LAN-IP advertise honored, AI-profile signed update, per-device apps record. **17/17 checks pass**; wired into CI as the `ecosystem-smoke` job. Commit `eb9c20d`.
-- [x] **CI green-up** (`54b4274`): fixed pre-existing red main CI — made the `packages/ecosystem-client/ecosystem_client` symlink **relative** (was an absolute path that dangled on every other checkout, breaking `node --test` + fresh clones); installed workspace path packages in the Python job so `pytest -q` collects the ecosystem-ai tests (240 pass); shellcheck `source=/dev/null` directives + wired `Environment=HOME=` into the systemd unit (so the file-backed secret resolves). **All 8 CI jobs now pass.**
-
-### Backlog (future)
-- [ ] **Branch protection / required checks**: Recommended but **not auto-applied** — the current workflow pushes directly to `main`, which strict protection (required PR/status checks) would disrupt. Enable via GitHub repo settings when moving to a PR-based flow.
-- [x] **Publish Docker image to GHCR on tag**: `.github/workflows/publish-image.yml` builds + pushes `ghcr.io/<owner>/appecosystem-registry` on `v*` tags (and manual dispatch) using `GITHUB_TOKEN`.
-
-### Ecosystem-wide initiative (see [ECOSYSTEM_AUDIT.md](ECOSYSTEM_AUDIT.md) + [ECOSYSTEM_AI_PLAN.md](ECOSYSTEM_AI_PLAN.md))
-- [~] **Phase A — Port reconciliation** (in progress):
-  - [x] `ecosystem.yaml` AegisSIEM 8088→8089 (harness keeps 8088).
-  - [x] OpenEye: `resolve_service_port()` (ECOSYSTEM_SERVICE_PORT→OPENEYE_PORT→PORT→8200); bind＝register; fixed bind≠register bug; tests.
-  - [x] LogAnalysis: `resolve_service_port()` honors ECOSYSTEM_SERVICE_PORT for bind＝register (default 8089); tests.
-  - [x] AFS: `resolve_service_port()` (ECOSYSTEM_SERVICE_PORT→PORT→config→8000); bind＝register; tests.
-  - [ ] MagicMirror: standardize on ECOSYSTEM_SERVICE_PORT→MM_PORT→8080. **Deferred** — repo has active WIP (ecosystem-auth edits + new MMM-AegisSIEM-SIEM / MMM-CyberHarness modules); already consistent at 8080.
-  - [ ] `port-doctor` preflight (registered＝listening, port-free) in appEcosystem CLI + per-app startup.
-  - Note: OpenEye and MagicMirror have **uncommitted WIP touching `ecosystem_auth`/`ecosystem-auth`** (looks like a started Phase E auth sync) — left untouched.
-- [x] **Phase B0 — `ecosystem_ai` foundation**: new installable package `packages/ecosystem-ai/`. Provider interface + `OllamaProvider` (default, local-first), `ProviderRouter` (local-first + cloud fallback), `HardwareProbe`/`CapabilityTier` (T0–T3) + tier→model, `CapabilityManager` (feature gating w/ cloud-lift), and the syncable `AIProfile` schema (version/with_change/merge — the shared source of truth that makes a selection in one app appear in all). 25 tests passing.
-- [x] **Phase B1 — Provider plug-ins**: `AnthropicProvider`, `OpenAIProvider` (configurable base_url for OpenAI-compatible/Copilot-style gateways), `GeminiProvider` — httpx-based (no heavy SDKs), opt-in via env keys, uniform `ChatResult`. `build_providers()`/`build_router()` factory assembles the set from a profile (Ollama always + enabled cloud). Copilot deferred per decision. 36 package tests passing.
-- [x] **Phase B2 — Ecosystem AI profile (registry side)**: `AIProfileStore` (JSON-persisted, version-bumped, last-write-wins); `GET /ai-profile` (read) and `PUT /ai-profile` (signed write) on the registry; writes broadcast `ecosystem.ai_profile_changed` so a selection in one app propagates live to all. `ai:` section seeded in `ecosystem.yaml`; `ECOSYSTEM_AI_PROFILE_FILE` documented. Tests for store + endpoints. *(Client-side `EcosystemConfig` precedence + live event handling is part of B3 adoption.)*
-- [~] **Phase B3 — Adopt in each app** (in progress):
-  - [x] Shared `AIProfileClient` (in `ecosystem_ai/sync.py`): fetch/write the shared profile, local fallback, live event handling, auth-agnostic signer. 42 package tests.
-  - [x] **AFS reference adoption**: `ecosystem_ai_bridge` propagates an LLM switch to the shared profile and `GET /api/v1/models/shared` reads it; guarded/best-effort so standalone still works. Tests added.
-  - [x] LogAnalysis: `ecosystem_ai_bridge` (prefer shared model in `_select_ollama_model`; propagate on settings save). **Scaffolding only — dormant until Phase E** (its vendored `ecosystem_auth` lacks `sign_request`).
-  - [x] OpenEye: optional **Ollama-default LLM capability** via `ecosystem_ai` (`summarize_event`) + shared-profile read. (OpenEye had no prior LLM — its AI is computer vision — so this is a net-new optional ability, not a Claude swap.) Tests added.
-  - [x] MagicMirror (JS): added `AIProfileClient` (signed GET/PUT of the shared profile) — canonical in `ecosystem_client_js`, vendored into MM. 5 node tests.
-  - **Phase B3 COMPLETE** — all four apps participate in the shared, hardware-adaptive, Ollama-default AI layer with cross-app selection sync.
-  - [x] **Installers wired**: AFS (`bin/setup.sh`), LogAnalysis (`scripts/install.sh`), OpenEye (`opencv_surveillance/scripts/install-local.sh`) now path-install `ecosystem-auth`/`-client`/`-ai` from the sibling appEcosystem checkout (`ECOSYSTEM_BASE_PATH` override; guarded/non-fatal → standalone if absent). MagicMirror vendors the JS, so no pip step. appEcosystem `install.sh` already path-installs.
-  - Note: activating sync at runtime needs `ecosystem-ai` installed in each app's env (path install until the package is published) — guarded imports keep apps working without it.
-- [~] **Phase C — Hardware-adaptive feature gating**: **engine complete** (B0 `CapabilityManager` + tiers `tier_for`/`recommended_model`, tested). Remaining: per-app declaration of feature requirements + UI surfacing of disabled features (each frontend's domain — pending per-app adoption, like B3).
-- [x] **Phase D — AFS↔LogAnalysis synergy**: already implemented in AFS and verified — `tools/ecosystem_tools.py` exposes first-class LogAnalysis agent tools (status, block_ip, threats, approve, honeypot, config); `api/ecosystem_handlers.py` subscribes to SIEM/security events (incl. OpenEye) with LLM triage + auto threat-response; model selection ecosystem-synced via the bridge. 7 tool tests pass.
-- [~] **Phase E — Hardening parity / client re-sync** (in progress):
-  - [x] Shared packages bumped to **v0.3.0**; fixed an invalid `build-backend` in `ecosystem-auth` that blocked installation.
-  - [x] **AFS converted**: retired vendored `ecosystem_auth`/`ecosystem_client`, repointed to the path-installed shared v0.3.0 packages; app imports clean, tests pass. Registration + AI sync now work against the v0.3.0 registry.
-  - [x] **Secret model decided: fail-closed everywhere** (no default). Implemented in `get_ecosystem_secret` (Python), `EcosystemConfig` (client, `hmac_secret=""` + warning), and JS `getEcosystemSecret`. Tests + conftest updated. 195 appEcosystem + 9 JS tests pass.
-  - [x] **LogAnalysis converted**: retired vendored auth/client → shared v0.3.0 packages; bridge now active; full suite 243 passed, 1 skipped.
-  - [x] **OpenEye converted**: stashed old-scheme WIP, retired vendored auth/client → shared v0.3.0 packages (verified on Python 3.9), dropped the superseded `claude/mystifying-gauss-3aefaf` branch + embedded worktree. Required lowering `ecosystem-auth` requires-python to >=3.9 (compatibility tenet).
-  - [x] **MagicMirror converted**: replaced vendored `js/ecosystem-auth`/`ecosystem-client` with the canonical v0.3.0 JS (signRequest/verifyRequest/NonceStore), repointed the auth require to MM's sibling dir; verified via node require smoke. Old-scheme WIP stashed.
-  - **Phase E COMPLETE for all 4 apps.** OpenEye stash review: `stash@{0}` (mine) is obsolete old-scheme cleanup (safe to drop); `stash@{1}` is **pre-existing substantial WIP** (two-way audio, scheduled tasks, install/setup scripts) — left for the user to salvage (its auth/client parts now conflict with Phase E).
-  - Original blocker context: the member apps' vendored `ecosystem_auth` is the OLD scheme (`sign_payload` only; no `sign_request`/`verify_request`/replay protection). Since the registry was upgraded to the v0.3.0 replay-resistant scheme, **the apps can no longer authenticate to it** (register/deregister/AI-profile writes 401). Must re-sync v0.3.0 auth+client into every app (recommended: turn `ecosystem-auth` + `ecosystem-client` into path-installed shared packages and retire the vendored copies, per the "one package" decision). Unblocks registration AND the AI-profile sync.
-  - Document: [PUBLISHING.md](PUBLISHING.md). Path-install wired into appEcosystem `scripts/install.sh`.
-- [x] **Phase F — Facilitator placement**: services report hardware via `resources` (auto-detected by the shared client at registration); registry `GET /ai-placement` + `recommend_llm_host` steer LLM load to the most capable healthy host. Tests pass.
-
-### Phase 5: Audit Remediation (2026-06-14)
-- [x] **Critical: systemd installer crash**: Removed orphan `EOF` in `scripts/install_systemd.sh` that aborted the installer (exit 127) under `set -euo pipefail`. [RESOLVED]
-- [x] **Fail-closed HMAC secret**: `get_ecosystem_secret()` now refuses the insecure default when `ECOSYSTEM_ENV != dev` (Python + JS); single source of truth replaces four duplicated lookups. Added `.env.example`. [RESOLVED]
-- [x] **Loopback bind + scoped CORS**: Registry defaults to `127.0.0.1`; CORS origins configurable via `ECOSYSTEM_CORS_ORIGINS`; method/header allowlists replace wildcards. [RESOLVED]
-- [x] **CommandRouter pooling + path-param encoding**: Shared `httpx.AsyncClient` with `aclose()`; LLM-supplied path params URL-encoded to block traversal. [RESOLVED]
-- [x] **CLI lifecycle parity**: Added `restart` and `monitor` commands; `_terminate_pid` SIGKILL escalation; launchd plist now wraps uvicorn in `process_manager.py` for macOS/Linux parity. [RESOLVED]
-- [x] **Static service resilience**: Config-defined services are retained (not auto-deregistered) so they recover; static load validates per-project. [RESOLVED]
-- [x] **App.state dependencies**: Registry/health-monitor resolved via FastAPI dependencies returning 503 before startup, instead of module globals. [RESOLVED]
-- [x] **Machine-agnostic base path**: `ECOSYSTEM_BASE_PATH` override; removed hardcoded developer path from `ecosystem.yaml`. [RESOLVED]
-- [x] **CI + lockfiles**: GitHub Actions (pytest matrix, pip-audit, npm audit, shellcheck); committed `package-lock.json`. [RESOLVED]
-- [x] **HMAC replay protection (request signature path)**: The `X-Ecosystem-Signature` scheme now binds a timestamp, a unique nonce, and a body digest over a host-independent canonical path. Verifiers enforce a ±300s freshness window and a `NonceStore` rejects replays. Implemented and tested in Python and JS (cross-language signature parity verified); all signers (`CommandRouter`, Python/JS discovery clients) and both middlewares updated. [RESOLVED]
-
----
-
-## Changelog
-
-### [v0.3.0] — 2026-06-14
-#### Security
-- Replay-resistant request signatures: `X-Ecosystem-Signature` now binds a timestamp, nonce, and body digest over a canonical (host-independent) path; verifiers enforce a freshness window and a nonce store (Python + JS, cross-language parity tested).
-- Fail-closed HMAC secret resolution (`get_ecosystem_secret`) across Python and JS; refuses the insecure default outside `dev`.
-- Registry binds to `127.0.0.1` by default; CORS origins configurable and method/header allowlists scoped.
-- URL-encode LLM-supplied path params in `CommandRouter` to prevent path traversal.
-- Fixed a shadowed `import json` in the auth middleware that broke signature-body parsing.
-#### Added
-- `ecosystem restart` and `ecosystem monitor` CLI commands.
-- `.env.example`, GitHub Actions CI (tests, pip-audit, npm audit, shellcheck), committed `package-lock.json`.
-- `static` service flag; config-defined services are retained on failure for recovery.
-#### Fixed
-- Critical: orphan `EOF` aborting the systemd installer.
-- CLI `stop`/`stop-all` now escalate SIGTERM → SIGKILL.
-- Registry singletons resolved via `app.state` dependencies (503 before startup, not AttributeError).
-- Removed hardcoded developer `base_path` from `ecosystem.yaml` (use `ECOSYSTEM_BASE_PATH`).
-#### Changed
-- `CommandRouter` uses a single pooled `httpx.AsyncClient`.
-- launchd plist wraps uvicorn in `process_manager.py` for macOS/Linux shutdown parity.
-
-### [v0.2.0] — 2026-03-24
-#### Added
-- Added `cyber_harness` section to `ecosystem.yaml` to configure the cybersecurity daemon on port `8088`.
-- Integrated `CommandRouter` with `cyber-claude-harness` daemon (`localhost:8088`), prioritizing it for security capabilities (`threat_analysis`, `log_analysis`, `security_scan`, `incident_triage`, `block_ip`, `security_status`).
-- Added automatic fallback to legacy direct API routes if the cybersecurity daemon is offline or returns an error.
-- Added platform compatibility logs to `vault/platform-compatibility.md`.
-
-### [v0.1.0] — 2026-02-10
-#### Added
-- Initial release of the `appEcosystem` coordination layer.
-- Implemented **3-Mode Discovery Cascade**: central registry -> local mDNS (Zeroconf) -> static configuration (`ecosystem.yaml`).
-- Implemented **Event Bus**: webhook-based publish/subscribe system supporting wildcard channels (e.g. `security.*`).
-- Implemented **HMAC-SHA256 inter-service authentication** middleware for FastAPI and Express.
-- Created `ecosystem` CLI tool with `start`, `stop`, `start-all`, `stop-all`, `status`, `logs`, `install`, and `uninstall` commands.
-- Implemented launchd integration for macOS.
+## OpenEye Surveillance
+- **UI/Components**: Replace native alerts with proper notification components (`HardwareDetectionPage.jsx`)
+- **PTZ Controls**: Implement logic to fetch current pan position (`PTZControl.jsx`)
+- **Automation Engine**: 
+  - Integrate with the actual push notification system
+  - Integrate with camera recording system and fetch `recording_id` from database
+  - Register with the face detection event system
+- **Face Recognition API**:
+  - Make training feature toggles configurable
+  - Dynamically calculate quality scores and encoding quality instead of hardcoding `0.9`
+- **Ecosystem API**: 
+  - Load push notification configuration from the database
+  - Implement actual notification delivery methods
+- **Integrations**: Load and save configurations for Home Assistant, HomeKit, and Google Nest
+- **Hardware API**: Implement statistics collection from running cameras
+- **DevOps**: Set Docker Hub credentials and username in `docker-push.sh`
