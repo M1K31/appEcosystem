@@ -479,3 +479,46 @@ def cmd_secret(action: str, value: str | None = None) -> int:
 
     print(f"Unknown secret action: {action} (use generate|show|import|path)")
     return 1
+
+
+def _device_apps() -> list[dict]:
+    """Per-device enabled-apps record: which ecosystem apps are present here.
+
+    An app is "present" (enabled on this device) when its repo directory exists
+    under the resolved base path — the same signal the registry uses to decide
+    what to pre-register. This is what makes subset / multi-device installs
+    legible: apps absent here are simply hosted elsewhere (or not installed),
+    not "broken"."""
+    config = _load_config()
+    apps = []
+    for proj in _resolve_projects(config):
+        apps.append({
+            "key": proj["key"],
+            "name": proj["name"],
+            "present": Path(proj["abs_path"]).exists(),
+            "path": str(proj["abs_path"]),
+            "port": proj["port"],
+        })
+    return apps
+
+
+def cmd_apps(as_json: bool = False) -> int:
+    """List which ecosystem apps are installed/enabled on this device."""
+    apps = _device_apps()
+    if as_json:
+        print(json.dumps(apps, indent=2))
+        return 0
+
+    present = [a for a in apps if a["present"]]
+    absent = [a for a in apps if not a["present"]]
+    print(f"Ecosystem apps on this device ({len(present)}/{len(apps)} present):\n")
+    for a in apps:
+        mark = "✓ present" if a["present"] else "· not here"
+        print(f"  {mark}  {a['name']:<20} :{a['port']}  {a['path']}")
+    if absent:
+        print(
+            f"\n{len(absent)} app(s) not installed here are expected on other "
+            "devices (or simply not used) — this is normal for subset/networked "
+            "deployments."
+        )
+    return 0

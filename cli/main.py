@@ -4,8 +4,8 @@ import argparse
 import sys
 
 from .commands import (
-    cmd_install, cmd_logs, cmd_monitor, cmd_restart, cmd_secret, cmd_start,
-    cmd_start_all, cmd_status, cmd_stop, cmd_stop_all, cmd_uninstall,
+    cmd_apps, cmd_install, cmd_logs, cmd_monitor, cmd_restart, cmd_secret,
+    cmd_start, cmd_start_all, cmd_status, cmd_stop, cmd_stop_all, cmd_uninstall,
 )
 
 
@@ -38,6 +38,10 @@ def main():
     sub.add_parser("install", help="Install ecosystem as a system service (launchd)")
     sub.add_parser("uninstall", help="Remove ecosystem system service")
 
+    apps_parser = sub.add_parser("apps", help="List which ecosystem apps are installed on this device")
+    apps_parser.add_argument("--json", action="store_true", dest="as_json",
+                             help="Output the per-device app record as JSON")
+
     secret_parser = sub.add_parser("secret", help="Manage the shared ecosystem HMAC secret")
     secret_parser.add_argument("action", choices=["generate", "show", "import", "path"],
                                help="generate (if absent), show (to copy elsewhere), import <value>, path")
@@ -63,6 +67,8 @@ def main():
         sys.exit(cmd_monitor(args.interval, args.once))
     elif args.command == "secret":
         sys.exit(cmd_secret(args.action, args.value))
+    elif args.command == "apps":
+        sys.exit(cmd_apps(args.as_json))
     elif args.command in commands:
         sys.exit(commands[args.command]())
     else:

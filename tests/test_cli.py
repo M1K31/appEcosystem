@@ -58,6 +58,56 @@ class TestProjectResolver:
         assert commands._resolve_projects(config)[0]["abs_path"] == expected
 
 
+class TestDeviceApps:
+    """Per-device enabled-apps record (cmd_apps): presence from disk."""
+
+    def _config(self, base):
+        return {
+            "ecosystem": {"base_path": str(base)},
+            "projects": {
+                "here": {"path": "here_app", "port": 9101},
+                "elsewhere": {"path": "elsewhere_app", "port": 9102},
+            },
+        }
+
+    def test_device_apps_marks_present_by_disk(self, tmp_path, monkeypatch):
+        from cli import commands
+
+        monkeypatch.delenv("ECOSYSTEM_BASE_PATH", raising=False)
+        (tmp_path / "here_app").mkdir()  # installed locally; elsewhere_app absent
+        monkeypatch.setattr(commands, "_load_config", lambda: self._config(tmp_path))
+
+        apps = {a["key"]: a for a in commands._device_apps()}
+        assert apps["here"]["present"] is True
+        assert apps["elsewhere"]["present"] is False
+        assert apps["here"]["port"] == 9101
+
+    def test_cmd_apps_json_output(self, tmp_path, monkeypatch, capsys):
+        import json
+        from cli import commands
+
+        (tmp_path / "here_app").mkdir()
+        monkeypatch.setattr(commands, "_load_config", lambda: self._config(tmp_path))
+
+        rc = commands.cmd_apps(as_json=True)
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        present = {d["key"]: d["present"] for d in data}
+        assert present == {"here": True, "elsewhere": False}
+
+    def test_cmd_apps_human_output(self, tmp_path, monkeypatch, capsys):
+        from cli import commands
+
+        (tmp_path / "here_app").mkdir()
+        monkeypatch.setattr(commands, "_load_config", lambda: self._config(tmp_path))
+
+        rc = commands.cmd_apps()
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "1/2 present" in out
+        assert "not installed here are expected on other" in out
+
+
 class TestHealthCheck:
     @pytest.mark.asyncio
     async def test_check_health_healthy(self):
