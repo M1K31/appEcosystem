@@ -72,7 +72,11 @@ Make clean-machine installs "just work" for **single-host, networked (multi-devi
   - OpenEye WebRTC: backend imports without aiortc (fallback base `object`, gated by `WEBRTC_AVAILABLE`); `install-local.sh` ensures ffmpeg first (brew/apt) so av/aiortc build by default, with graceful retry-without-WebRTC. Verified: `/api/health` 200, serves on :8200.
   - Registry internal-disk install: `appEcosystem/scripts/install-local.sh` (runtime under `~/.local/share/ecosystem`, non-editable, file-backed secret) → launchd/systemd. **Fixes the external-volume exit-78**; verified registry healthy on :8500 under launchd.
   - appEcosystem now imports the installed `ecosystem_auth` package (not the repo path). 210 tests pass.
-- [ ] **Phase 2 (High)**: `ECOSYSTEM_MODE` (local|lan) with **bind-host ≠ advertised-host** resolution (auto-detect LAN IP in lan mode); remove baked `192.168.50.73`; MM seeds `config.js`, self-registers, binds mode host (not IPv6-only); registry tolerates subset/absent members (no false "unhealthy").
+- [~] **Phase 2 (High)** — *topology model DONE; registry subset-tolerance + UI secret form remain*:
+  - `ECOSYSTEM_MODE` (local|lan) with **bind-host ≠ advertised-host**: new `ecosystem_client/topology.py` (`get_mode`/`bind_host`/`advertise_host`/`detect_lan_ip`/`resolve_static_host`) + JS port `js/ecosystem-client/topology.js`. local→loopback; lan→`0.0.0.0` bind + auto-detected LAN IP advertise. `ECOSYSTEM_BIND_HOST`/`ECOSYSTEM_ADVERTISE_HOST` override.
+  - Removed baked `192.168.50.73` (×5) from `ecosystem.yaml` → `localhost`; registry static pre-registration promotes loopback→LAN IP in lan mode; `install-local.sh` registry bind + `ECOSYSTEM_MODE` follow the mode.
+  - `register_self`/MM `index.js` default to the advertise host; MM `config.js(.sample)` binds IPv4 loopback in local / `0.0.0.0` in lan. **Verified: MM flips from unhealthy→healthy, binds `127.0.0.1:8080` (was IPv6 `::1`), self-registers.** 184 tests pass (+13 topology). Commits `9659cc8` (appEcosystem), `b322c56` (MagicMirror).
+  - [ ] Remaining: registry tolerance of subset/absent members (no false "unhealthy" for not-installed apps); UI "Ecosystem setup" secret-entry form (friendly second path beside the CLI).
 - [ ] **Phase 3 (Med/Low)**: non-interactive installer flag; per-device enabled-apps record; idempotency pass.
 - [ ] **Phase 4**: `scripts/smoke-ecosystem.sh` acceptance test — single-host all-five + **two-device split** + **subset** runs, macOS + Linux.
 
