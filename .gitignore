@@ -48,3 +48,6 @@ pytest-of-mikelsmart/
 
 # Node V8 compile cache — machine/version-specific, regenerated every run
 node-compile-cache/
+
+# Smoke-test scratch (auto-cleaned, but a safety net if a run fails mid-way)
+eco-smoke-*/
