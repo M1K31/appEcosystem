@@ -41,3 +41,10 @@ Thumbs.db
 
 # Worktrees
 .worktrees/
+
+# Pytest scratch (tmp_path basetemp + cache) — regenerated every run
+pytest-of-mikelsmart/
+.pytest_cache/
+
+# Node V8 compile cache — machine/version-specific, regenerated every run
+node-compile-cache/
