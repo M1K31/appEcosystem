@@ -18,3 +18,5 @@ theme/demo.html
 .env.*
 !.env.example
 .github
+ECOSYSTEM_AI_PLAN.md
+ECOSYSTEM_AUDIT.md
