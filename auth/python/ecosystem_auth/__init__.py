@@ -14,6 +14,7 @@ from .tokens import (
     verify_signature,
     write_secret,
 )
+from .setup import apply_secret, generate_secret, secret_status
 from .middleware import require_ecosystem_auth
 
 __all__ = [
@@ -29,5 +30,8 @@ __all__ = [
     "sign_payload",
     "verify_signature",
     "write_secret",
+    "apply_secret",
+    "generate_secret",
+    "secret_status",
     "require_ecosystem_auth",
 ]
