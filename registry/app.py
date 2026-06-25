@@ -305,6 +305,14 @@ def _register_static_projects(reg: ServiceRegistry) -> None:
         with open(config_path) as f:
             config = yaml.safe_load(f)
 
+        # In lan mode, loopback hosts in committed config are advertised on this
+        # host's LAN IP so other devices can health-check co-located services.
+        try:
+            from ecosystem_client.topology import resolve_static_host
+        except Exception:
+            def resolve_static_host(host: str) -> str:  # type: ignore
+                return host or "localhost"
+
         for key, proj in (config.get("projects") or {}).items():
             # Validate per-project so one malformed entry doesn't abort the
             # entire static load.
@@ -315,7 +323,7 @@ def _register_static_projects(reg: ServiceRegistry) -> None:
                 reg.register(
                     ServiceRegistration(
                         name=key,
-                        host=proj.get("host", "localhost"),
+                        host=resolve_static_host(proj.get("host", "localhost")),
                         port=proj["port"],
                         health_endpoint=proj.get("health_endpoint", "/health"),
                         priority=proj.get("priority", 0),

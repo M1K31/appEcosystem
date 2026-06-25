@@ -17,7 +17,17 @@ DATA="$PREFIX/data"
 PY="${PYTHON_BIN:-python3.12}"
 OS="$(uname -s)"
 PORT="${ECOSYSTEM_REGISTRY_PORT:-8500}"
-BIND="${ECOSYSTEM_REGISTRY_HOST:-127.0.0.1}"
+MODE="${ECOSYSTEM_MODE:-local}"
+# Bind host follows the deployment mode unless explicitly overridden: loopback
+# in local mode, all interfaces in lan mode so other devices can reach the
+# control plane (firewall it to the trusted network).
+if [ -n "${ECOSYSTEM_REGISTRY_HOST:-}" ]; then
+  BIND="$ECOSYSTEM_REGISTRY_HOST"
+elif [ "$MODE" = "lan" ]; then
+  BIND="0.0.0.0"
+else
+  BIND="127.0.0.1"
+fi
 CONFIG="${ECOSYSTEM_CONFIG:-$REPO/ecosystem.yaml}"
 LABEL="com.ecosystem.registry"
 
@@ -53,6 +63,7 @@ case "$OS" in
   <key>WorkingDirectory</key><string>$PREFIX</string>
   <key>EnvironmentVariables</key><dict>
     <key>ECOSYSTEM_CONFIG</key><string>$CONFIG</string>
+    <key>ECOSYSTEM_MODE</key><string>$MODE</string>
     <key>ECOSYSTEM_REGISTRY_FILE</key><string>$DATA/registry.json</string>
     <key>ECOSYSTEM_AI_PROFILE_FILE</key><string>$DATA/ai_profile.json</string>
   </dict>
@@ -80,6 +91,7 @@ Type=simple
 User=$USER_NAME
 WorkingDirectory=$PREFIX
 Environment=ECOSYSTEM_CONFIG=$CONFIG
+Environment=ECOSYSTEM_MODE=$MODE
 Environment=ECOSYSTEM_REGISTRY_FILE=$DATA/registry.json
 Environment=ECOSYSTEM_AI_PROFILE_FILE=$DATA/ai_profile.json
 ExecStart=$VENV/bin/python -m uvicorn registry.app:app --host $BIND --port $PORT

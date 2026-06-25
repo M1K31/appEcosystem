@@ -149,13 +149,18 @@ class DiscoveryManager:
             logger.warning(f"Failed to fetch services from registry: {e}")
             return []
 
-    async def register_self(self, name: str, host: str, port: int,
+    async def register_self(self, name: str, host: str | None, port: int,
                             health_endpoint: str, webhook_url: str | None = None,
                             subscriptions: list[str] | None = None,
                             priority: int = 0) -> bool:
-        """Register this service with the registry (Mode 1 only)."""
+        """Register this service with the registry (Mode 1 only).
+
+        When ``host`` is falsy, the mode-appropriate advertise host is used
+        (loopback in local mode, this host's LAN IP in lan mode) so a service
+        never has to hardcode where it is reachable."""
         if self._mode != DiscoveryMode.REGISTRY:
             return False
+        host = host or self.config.advertise_host
         try:
             payload = {
                 "name": name,

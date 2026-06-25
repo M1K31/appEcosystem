@@ -16,10 +16,21 @@ auth:
   token_validity_hours: 24
   token_rotation_hours: 12
 
+# Deployment topology
+#   local (default) — every service runs on this machine; bind + advertise on
+#                     loopback. Nothing is exposed on the network.
+#   lan             — services may live on different devices; they bind on all
+#                     interfaces and advertise their real LAN IP via self-
+#                     registration. Set ECOSYSTEM_MODE=lan on each device.
+# Per-service static `host` values below are single-host defaults (localhost);
+# in lan mode a co-located static service is advertised on the detected LAN IP,
+# and remote services self-register their own address.
+mode: "local"
+
 # Service registry
 # host defaults to loopback so the control plane is not exposed on all
-# interfaces. Override with ECOSYSTEM_REGISTRY_HOST=0.0.0.0 only when the
-# registry is firewalled to a trusted network.
+# interfaces. In lan mode set ECOSYSTEM_REGISTRY_HOST=0.0.0.0 (firewalled to a
+# trusted network) so other devices can reach the control plane.
 registry:
   host: "127.0.0.1"
   port: 8500
@@ -74,7 +85,7 @@ projects:
   ai_for_survival:
     name: "AI_For_Survival"
     path: "AI-for-Survival/backend"
-    host: "192.168.50.73"
+    host: "localhost"
     port: 8000
     health_endpoint: "/health"
     priority: 100          # Preferred ecosystem manager
@@ -85,7 +96,7 @@ projects:
   openeye:
     name: "OpenEye"
     path: "OpenEye-OpenCV_Home_Security/opencv_surveillance"
-    host: "192.168.50.73"
+    host: "localhost"
     port: 8200
     health_endpoint: "/api/health"
     priority: 50           # Fallback ecosystem manager
@@ -96,7 +107,7 @@ projects:
   magicmirror:
     name: "MagicMirror"
     path: "MagicMirror-Custom"
-    host: "192.168.50.73"
+    host: "localhost"
     port: 8080
     health_endpoint: "/api/v1/health"
     priority: 10
@@ -107,7 +118,7 @@ projects:
   aegissiem:
     name: "AegisSIEM"
     path: "LogAnalysis"
-    host: "192.168.50.73"
+    host: "localhost"
     # Dashboard runs on 8089. 8088 is the cyber-harness daemon (aegissiem_daemon).
     port: 8089
     health_endpoint: "/api/status"
@@ -119,7 +130,7 @@ projects:
   aegissiem_daemon:
     name: "AegisSIEM_Daemon"
     path: "CybersecurityTeam/cyber-claude-agents"
-    host: "192.168.50.73"
+    host: "localhost"
     port: 8088
     health_endpoint: "/api/status"
     priority: 15

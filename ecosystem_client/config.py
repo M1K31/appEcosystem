@@ -28,6 +28,12 @@ class EcosystemConfig:
     event_retry_delay: float = 5.0
     priority: int = 0
     peers: dict[str, str] = field(default_factory=dict)
+    # Deployment topology (see topology.py). bind_host is where this service's
+    # server should listen; advertise_host is what it registers with the registry
+    # so peers can reach it. Defaults resolve from ECOSYSTEM_MODE.
+    mode: str = "local"
+    bind_host: str = "127.0.0.1"
+    advertise_host: str = "127.0.0.1"
 
     @classmethod
     def from_env(cls) -> "EcosystemConfig":
@@ -55,6 +61,8 @@ class EcosystemConfig:
                 "inter-service auth."
             )
 
+        from .topology import advertise_host, bind_host, get_mode
+
         return cls(
             registry_url=os.environ.get("ECOSYSTEM_REGISTRY_URL", cls.registry_url),
             hmac_secret=hmac_secret,
@@ -69,6 +77,9 @@ class EcosystemConfig:
             ),
             priority=int(os.environ.get("ECOSYSTEM_PRIORITY", "0")),
             peers=peers,
+            mode=get_mode(),
+            bind_host=bind_host(),
+            advertise_host=advertise_host(),
         )
 
     @classmethod
