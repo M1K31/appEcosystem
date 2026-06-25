@@ -38,6 +38,7 @@ Thumbs.db
 
 # Claude
 .claude/
+CLAUDE.md
 
 # Worktrees
 .worktrees/
@@ -51,3 +52,12 @@ node-compile-cache/
 
 # Smoke-test scratch (auto-cleaned, but a safety net if a run fails mid-way)
 eco-smoke-*/
+
+# UserCreated
+todos_changelog.md
+PUBLISHING.md 
+TRIAGE_FINDINGS.md
+vault/
+overview.rtf
+INSTALL_REMEDIATION_PLAN.md
+AUDIT_REPORT.md
