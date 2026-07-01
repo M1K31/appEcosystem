@@ -270,8 +270,11 @@ def cmd_start_all() -> int:
 
         log_file = _get_log_file(key)
         with open(log_file, "a") as log_fh:
+            cmd_parts = shlex.split(cmd)
+            if cmd_parts and cmd_parts[0] == "python":
+                cmd_parts[0] = sys.executable
             proc = subprocess.Popen(
-                shlex.split(cmd),
+                cmd_parts,
                 cwd=str(abs_path),
                 stdout=log_fh,
                 stderr=subprocess.STDOUT,
