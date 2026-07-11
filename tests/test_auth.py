@@ -354,3 +354,23 @@ class TestCrossLanguageCompatibility:
         js_sig = result.stdout.strip()
 
         assert py_sig == js_sig, f"Python: {py_sig}, JS: {js_sig}\nstderr: {result.stderr}"
+
+
+def test_sign_request_without_key_id_omits_header():
+    from ecosystem_auth.tokens import sign_request, KEY_ID_HEADER
+    headers = sign_request("POST", "http://x/register", "s3cr3t", {"name": "a"})
+    assert KEY_ID_HEADER not in headers
+
+
+def test_sign_request_with_key_id_adds_header():
+    from ecosystem_auth.tokens import sign_request, KEY_ID_HEADER
+    headers = sign_request("POST", "http://x/register", "s3cr3t", {"name": "a"}, key_id="k_123")
+    assert headers[KEY_ID_HEADER] == "k_123"
+
+
+def test_sign_request_key_id_does_not_change_signature():
+    from ecosystem_auth.tokens import sign_request, SIGNATURE_HEADER
+    kw = dict(ts=1000, nonce="fixednonce")
+    a = sign_request("POST", "http://x/register", "s3cr3t", {"name": "a"}, **kw)
+    b = sign_request("POST", "http://x/register", "s3cr3t", {"name": "a"}, key_id="k_123", **kw)
+    assert a[SIGNATURE_HEADER] == b[SIGNATURE_HEADER]
