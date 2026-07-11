@@ -192,3 +192,52 @@ class TestStatusOutput:
 
         line = _format_status_line("MyApp", 8000, False)
         assert "DOWN" in line
+
+
+def test_partner_add_and_list(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("ECOSYSTEM_APPS_FILE", str(tmp_path / "apps.json"))
+    from cli.commands import cmd_partner
+    rc = cmd_partner("add", app_id="org.acme", name="Acme", owner="dev@acme",
+                     service_names="acme_thermostat")
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "org.acme" in out and "key_id" in out.lower() and "secret" in out.lower()
+
+    rc = cmd_partner("list")
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "org.acme" in out and "acme_thermostat" in out
+
+
+def test_partner_add_rejects_reserved_name(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("ECOSYSTEM_APPS_FILE", str(tmp_path / "apps.json"))
+    from cli.commands import cmd_partner
+    rc = cmd_partner("add", app_id="org.evil", name="Evil", owner="e@x",
+                     service_names="openeye")
+    assert rc == 1
+    assert "reserved" in capsys.readouterr().out.lower()
+
+
+def test_partner_list_and_show_never_print_secret(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("ECOSYSTEM_APPS_FILE", str(tmp_path / "apps.json"))
+    from cli.commands import cmd_partner
+    cmd_partner("add", app_id="org.acme", name="Acme", owner="dev@acme",
+                service_names="acme_thermostat")
+    secret_line = [l for l in capsys.readouterr().out.splitlines() if "secret" in l.lower()]
+    printed_secret = secret_line[0].split()[-1] if secret_line else "UNSET"
+    cmd_partner("show", app_id="org.acme")
+    cmd_partner("list")
+    out = capsys.readouterr().out
+    assert printed_secret not in out
+
+
+def test_partner_suspend(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("ECOSYSTEM_APPS_FILE", str(tmp_path / "apps.json"))
+    from cli.commands import cmd_partner
+    cmd_partner("add", app_id="org.acme", name="Acme", owner="dev@acme",
+                service_names="acme_thermostat")
+    capsys.readouterr()
+    rc = cmd_partner("suspend", app_id="org.acme")
+    assert rc == 0
+    cmd_partner("show", app_id="org.acme")
+    assert "suspended" in capsys.readouterr().out.lower()

@@ -4,8 +4,9 @@ import argparse
 import sys
 
 from .commands import (
-    cmd_apps, cmd_install, cmd_logs, cmd_monitor, cmd_restart, cmd_secret,
-    cmd_start, cmd_start_all, cmd_status, cmd_stop, cmd_stop_all, cmd_uninstall,
+    cmd_apps, cmd_install, cmd_logs, cmd_monitor, cmd_partner, cmd_restart,
+    cmd_secret, cmd_start, cmd_start_all, cmd_status, cmd_stop, cmd_stop_all,
+    cmd_uninstall,
 )
 
 
@@ -48,6 +49,15 @@ def main():
     secret_parser.add_argument("value", nargs="?", default=None,
                                help="secret value (for 'import')")
 
+    partner_parser = sub.add_parser("partner", help="Manage third-party partner app credentials")
+    partner_parser.add_argument("action",
+                                choices=["add", "list", "show", "suspend", "resume", "remove"])
+    partner_parser.add_argument("app_id", nargs="?", default=None)
+    partner_parser.add_argument("--name", default=None, help="Display name (add)")
+    partner_parser.add_argument("--owner", default=None, help="Owner contact (add)")
+    partner_parser.add_argument("--service-names", dest="service_names", default=None,
+                                help="Comma-separated service names the app may manage (add)")
+
     args = parser.parse_args()
 
     commands = {
@@ -69,6 +79,8 @@ def main():
         sys.exit(cmd_secret(args.action, args.value))
     elif args.command == "apps":
         sys.exit(cmd_apps(args.as_json))
+    elif args.command == "partner":
+        sys.exit(cmd_partner(args.action, args.app_id, args.name, args.owner, args.service_names))
     elif args.command in commands:
         sys.exit(commands[args.command]())
     else:
