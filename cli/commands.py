@@ -585,10 +585,8 @@ def cmd_partner(action: str, app_id: str | None = None, name: str | None = None,
         if not ok:
             print(f"No such partner app: {app_id}")
             return 1
-        if action == "remove":
-            print(f"Partner app '{app_id}' removed.")
-        else:
-            print(f"Partner app '{app_id}' {action}d.")
+        past = {"remove": "removed", "suspend": "suspended", "resume": "resumed"}[action]
+        print(f"Partner app '{app_id}' {past}.")
         return 0
 
     print(f"Unknown partner action: {action} (use add|list|show|suspend|resume|remove)")
