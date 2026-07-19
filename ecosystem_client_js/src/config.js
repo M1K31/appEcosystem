@@ -3,10 +3,16 @@
  * Mirrors Python ecosystem_client.config.
  */
 
+const { resolveSecret } = require("./secret");
+
 class EcosystemConfig {
     constructor(opts = {}) {
         this.registryUrl = opts.registryUrl || process.env.ECOSYSTEM_REGISTRY_URL || "http://localhost:8500";
-        this.hmacSecret = opts.hmacSecret || process.env.ECOSYSTEM_HMAC_SECRET || "dev-ecosystem-secret-change-in-production";
+        // Fail-closed, file-backed: explicit override -> ECOSYSTEM_HMAC_SECRET env
+        // -> ~/.config/ecosystem/secret.env. Never the committed dev default (the
+        // registry rejects it), so an unprovisioned client gets "" and is refused
+        // rather than silently signing with a forgeable key.
+        this.hmacSecret = resolveSecret(opts.hmacSecret);
         this.serviceName = opts.serviceName || process.env.ECOSYSTEM_SERVICE_NAME || null;
         this.servicePort = opts.servicePort || parseInt(process.env.ECOSYSTEM_SERVICE_PORT || "0") || null;
         this.healthEndpoint = opts.healthEndpoint || process.env.ECOSYSTEM_HEALTH_ENDPOINT || "/health";

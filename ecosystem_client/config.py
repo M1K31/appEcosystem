@@ -53,12 +53,28 @@ class EcosystemConfig:
         port_str = os.environ.get("ECOSYSTEM_SERVICE_PORT")
         port = int(port_str) if port_str else None
 
-        hmac_secret = os.environ.get("ECOSYSTEM_HMAC_SECRET", cls.hmac_secret)
+        # Resolve the shared secret the same way the rest of the ecosystem does:
+        # ECOSYSTEM_HMAC_SECRET env var first, then the file-backed secret at
+        # ~/.config/ecosystem/secret.env. The installers provision the file and
+        # deliberately do NOT export the env var (so no per-plist/launchctl setenv
+        # is needed), so a client that only checked the env var signed every
+        # request with an empty key and got 401'd by the registry.
+        hmac_secret = os.environ.get("ECOSYSTEM_HMAC_SECRET", "")
+        if not hmac_secret:
+            try:
+                from ecosystem_auth.tokens import get_ecosystem_secret
+
+                hmac_secret = get_ecosystem_secret()
+            except Exception:
+                # No env var, no readable file, or the known dev default: fall
+                # through to the empty (fail-closed) secret and warn below.
+                hmac_secret = cls.hmac_secret
         if not hmac_secret:
             logger.warning(
-                "ECOSYSTEM_HMAC_SECRET is not set — outbound ecosystem requests "
-                "will be unsigned/unverifiable by peers. Set it to enable "
-                "inter-service auth."
+                "No ecosystem secret found (ECOSYSTEM_HMAC_SECRET unset and no "
+                "readable ~/.config/ecosystem/secret.env) — outbound ecosystem "
+                "requests will be unsigned and rejected by peers. Run "
+                "`ecosystem secret generate` to provision one."
             )
 
         from .topology import advertise_host, bind_host, get_mode
