@@ -180,6 +180,7 @@ def _request_payload(method: str, url: str, ts: int, nonce: str, body: Optional[
 SIGNATURE_HEADER = "X-Ecosystem-Signature"
 TIMESTAMP_HEADER = "X-Ecosystem-Timestamp"
 NONCE_HEADER = "X-Ecosystem-Nonce"
+KEY_ID_HEADER = "X-Ecosystem-Key-Id"
 
 
 def sign_request(
@@ -189,20 +190,26 @@ def sign_request(
     body: Optional[dict] = None,
     ts: Optional[int] = None,
     nonce: Optional[str] = None,
+    key_id: Optional[str] = None,
 ) -> dict:
     """Produce signature/timestamp/nonce headers for an authenticated request.
 
     The signed payload binds method, canonical path, a timestamp and a unique
     nonce, plus a digest of the body, so captured requests cannot be replayed.
+    ``key_id`` (optional) is attached as a header to identify a per-app
+    credential; it is NOT part of the signed payload.
     """
     ts = int(time.time()) if ts is None else ts
     nonce = nonce or secrets.token_hex(16)
     payload = _request_payload(method, url, ts, nonce, body)
-    return {
+    headers = {
         SIGNATURE_HEADER: sign_payload(payload, secret),
         TIMESTAMP_HEADER: str(ts),
         NONCE_HEADER: nonce,
     }
+    if key_id:
+        headers[KEY_ID_HEADER] = key_id
+    return headers
 
 
 def verify_request(

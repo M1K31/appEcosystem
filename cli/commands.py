@@ -525,3 +525,69 @@ def cmd_apps(as_json: bool = False) -> int:
             "deployments."
         )
     return 0
+
+
+def cmd_partner(action: str, app_id: str | None = None, name: str | None = None,
+                owner: str | None = None, service_names: str | None = None) -> int:
+    """Manage third-party partner app credentials (per-app HMAC keys)."""
+    from registry.app_store import AppStore
+    store = AppStore()
+
+    if action == "add":
+        if not (app_id and name and owner and service_names):
+            print("Usage: ecosystem partner add <app_id> --name <display> "
+                  "--owner <contact> --service-names a,b")
+            return 1
+        names = [n.strip() for n in service_names.split(",") if n.strip()]
+        try:
+            rec, secret = store.add(app_id, name, owner, names)
+        except ValueError as e:
+            print(f"Error: {e}")
+            return 1
+        print(f"Created partner app '{rec['app_id']}' (owns: {', '.join(rec['owned_names'])})")
+        print("Copy these now — the secret is shown only once:")
+        print(f"  key_id: {rec['key_id']}")
+        print(f"  secret: {secret}")
+        return 0
+
+    if action == "list":
+        apps = store.list()
+        if not apps:
+            print("No partner apps registered.")
+            return 0
+        print(f"Partner apps ({len(apps)}):\n")
+        for a in apps:
+            print(f"  {a['status']:<9} {a['app_id']:<24} {a['display_name']:<18} "
+                  f"owns={','.join(a['owned_names'])}  created={a['created_at']}")
+        return 0
+
+    if action == "show":
+        if not app_id:
+            print("Usage: ecosystem partner show <app_id>")
+            return 1
+        a = store.get(app_id)
+        if not a:
+            print(f"No such partner app: {app_id}")
+            return 1
+        for k in ("app_id", "key_id", "display_name", "owner", "owned_names",
+                  "scopes", "status", "created_at"):
+            print(f"  {k}: {a.get(k)}")
+        return 0
+
+    if action in ("suspend", "resume", "remove"):
+        if not app_id:
+            print(f"Usage: ecosystem partner {action} <app_id>")
+            return 1
+        if action == "remove":
+            ok = store.remove(app_id)
+        else:
+            ok = store.set_status(app_id, "suspended" if action == "suspend" else "approved")
+        if not ok:
+            print(f"No such partner app: {app_id}")
+            return 1
+        past = {"remove": "removed", "suspend": "suspended", "resume": "resumed"}[action]
+        print(f"Partner app '{app_id}' {past}.")
+        return 0
+
+    print(f"Unknown partner action: {action} (use add|list|show|suspend|resume|remove)")
+    return 1

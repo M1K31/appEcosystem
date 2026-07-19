@@ -12,8 +12,11 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException, Request, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials
-from ecosystem_auth.middleware import require_ecosystem_auth, security_scheme
+from ecosystem_auth.middleware import (
+    authenticate_request, require_ecosystem_auth, security_scheme,
+)
 
+from .app_store import AppStore, RESERVED_NAMES, default_apps_path
 from .health_monitor import HealthMonitor
 from .models import HealthCheckResult, ServiceRecord, ServiceRegistration
 from .registry import ServiceRegistry
@@ -59,12 +62,17 @@ async def lifespan(app: FastAPI):
     ai_profile_path = os.environ.get("ECOSYSTEM_AI_PROFILE_FILE", "data/ai_profile.json")
     ai_profile_store = AIProfileStore(persistence_path=ai_profile_path)
 
+    # Per-app credential store for third-party participants (owner path uses the
+    # shared secret; enrolled apps use their own key). Live-reloads from disk.
+    app_store = AppStore(persistence_path=default_apps_path())
+
     # Stash on app.state so request handlers resolve them via dependencies
     # rather than module globals (which could be None before startup).
     app.state.registry = registry
     app.state.health_monitor = health_monitor
     app.state.event_bus = event_bus
     app.state.ai_profile_store = ai_profile_store
+    app.state.app_store = app_store
 
     logger.info("Ecosystem registry started")
     yield
@@ -119,6 +127,43 @@ def _read_auth_required() -> bool:
     )
 
 
+def _key_resolver(request: Request):
+    """Build a per-app key resolver from the request's AppStore (or None)."""
+    store = getattr(request.app.state, "app_store", None)
+    if store is None:
+        return None
+
+    def resolve(key_id: str):
+        return store.get_by_key_id(key_id)  # None if unknown/suspended
+
+    return resolve
+
+
+async def require_registry_auth(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme),
+) -> dict:
+    """Registry auth: per-app key when present, else shared-secret owner."""
+    return await authenticate_request(request, credentials, key_resolver=_key_resolver(request))
+
+
+def require_name_owner(name: str, auth: dict) -> None:
+    """403 unless the caller owns `name` (owner may use any non-collision name)."""
+    owned = auth.get("owned_names", [])
+    if owned == ["*"]:
+        return
+    if name in RESERVED_NAMES:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"'{name}' is a reserved first-party service name",
+        )
+    if name not in owned:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"app '{auth.get('app_id')}' does not own service name '{name}'",
+        )
+
+
 async def require_read_auth(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme),
@@ -126,7 +171,7 @@ async def require_read_auth(
     """Conditionally enforce ecosystem auth on read endpoints."""
     if not _read_auth_required():
         return None
-    return await require_ecosystem_auth(request, credentials)
+    return await require_registry_auth(request, credentials)
 
 
 app = FastAPI(
@@ -197,12 +242,20 @@ async def ai_placement(
 async def update_ai_profile(
     changes: dict,
     request: Request,
-    auth: dict = Depends(require_ecosystem_auth),
+    auth: dict = Depends(require_registry_auth),
     store=Depends(get_profile_store),
 ):
     """Apply changes to the shared AI profile, bump its version, and broadcast an
-    `ecosystem.ai_profile_changed` event so other apps update live."""
-    updated_by = (auth or {}).get("service") or "unknown"
+    `ecosystem.ai_profile_changed` event so other apps update live.
+
+    Owner-only in Phase 1: the shared AI profile is a trust-critical surface, so
+    third-party (enrolled) keys are rejected regardless of scope."""
+    if auth.get("app_id") != "__owner__":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="AI profile changes are owner-only",
+        )
+    updated_by = (auth or {}).get("app_id") or "unknown"
     profile = store.update(changes, updated_by=updated_by)
 
     event_bus = getattr(request.app.state, "event_bus", None)
@@ -228,10 +281,11 @@ async def update_ai_profile(
 @app.post("/register", response_model=ServiceRecord, status_code=status.HTTP_201_CREATED)
 async def register_service(
     registration: ServiceRegistration,
-    auth: dict = Depends(require_ecosystem_auth),
+    auth: dict = Depends(require_registry_auth),
     registry: ServiceRegistry = Depends(get_registry),
 ):
     """Register a new service with the ecosystem."""
+    require_name_owner(registration.name, auth)
     record = registry.register(registration)
     return record
 
@@ -239,10 +293,11 @@ async def register_service(
 @app.delete("/deregister/{name}")
 async def deregister_service(
     name: str,
-    auth: dict = Depends(require_ecosystem_auth),
+    auth: dict = Depends(require_registry_auth),
     registry: ServiceRegistry = Depends(get_registry),
 ):
     """Remove a service from the registry."""
+    require_name_owner(name, auth)
     if not registry.deregister(name):
         raise HTTPException(status_code=404, detail=f"Service '{name}' not found")
     return {"status": "deregistered", "name": name}
