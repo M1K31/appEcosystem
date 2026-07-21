@@ -791,6 +791,226 @@ git -C /Volumes/Locker2/GitHub/AI-for-Survival commit -m "test: fix test_guardra
 
 ---
 
+### Task 9: Move OpenEye's runtime fully off the external volume
+
+**Execute immediately after Task 2** — it completes Task 2's unfinished verification.
+
+Task 2 installed the launchd agent, but the service crash-loops with
+`PermissionError: [Errno 1] Operation not permitted`. Task 1 moved the venv to a new
+interpreter path (`venv/bin/python3` → symlink to CommandLineTools Python 3.9) that
+macOS TCC has never granted disk access, while OpenEye's `WorkingDirectory` and all its
+data still live on `/Volumes/Locker2`. Manual `./start.sh` works only because Terminal
+already holds that grant; launchd has its own TCC context.
+
+Rather than granting Full Disk Access to a shared system interpreter, remove the
+dependency: run the service entirely from the internal disk. `backend/core/paths.py`
+already supports `OPENEYE_DATA_DIR`, `OPENEYE_RECORDINGS_DIR`, `OPENEYE_SNAPSHOTS_DIR`,
+`OPENEYE_THUMBNAILS_DIR`, and `OPENEYE_FACES_DIR`, so **no application code changes** —
+only installer paths.
+
+**Files:**
+- Modify: `OpenEye-OpenCV_Home_Security/opencv_surveillance/scripts/install-local.sh`
+- Modify: `OpenEye-OpenCV_Home_Security/uninstall.sh`
+- Modify: `OpenEye-OpenCV_Home_Security/scripts/check-venv-location.sh` (extend to assert no `/Volumes` path in the plist)
+
+**Interfaces:**
+- Consumes: `$VENV` (Task 1), the launchd agent (Task 2).
+- Produces: `APP_DIR=$HOME/.local/share/openeye/app` (code snapshot) and
+  `DATA_ROOT=$HOME/.local/share/openeye` (db + media). The plist references neither `/Volumes` nor the repo.
+
+**Precondition — verify before starting.** This is safe only while there is no user data:
+
+```bash
+cd /Volumes/Locker2/GitHub/OpenEye-OpenCV_Home_Security/opencv_surveillance
+python3 -c "
+import sqlite3; c=sqlite3.connect('surveillance.db'); q=c.cursor()
+for t in ('users','cameras','recording_events'):
+    q.execute(f'select count(*) from {t}'); print(t, q.fetchone()[0])"
+find recordings faces data -type f 2>/dev/null | wc -l
+```
+Expected: all counts `0`. **If any count is non-zero, STOP and report** — migrating live
+footage and accounts needs its own copy-and-verify step not covered here.
+
+- [ ] **Step 1: Extend the guard to assert nothing points at /Volumes**
+
+Append to `scripts/check-venv-location.sh`, before its final success `echo`:
+
+```bash
+PLIST="$HOME/Library/LaunchAgents/com.smartindustries.openeye.plist"
+if [ -f "$PLIST" ] && grep -q '/Volumes/' "$PLIST"; then
+    echo "FAIL: launchd plist still references an external volume:"
+    grep -n '/Volumes/' "$PLIST"
+    exit 1
+fi
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+```bash
+/Volumes/Locker2/GitHub/OpenEye-OpenCV_Home_Security/scripts/check-venv-location.sh
+```
+Expected: `FAIL: launchd plist still references an external volume:` plus the
+`WorkingDirectory` line (exit 1).
+
+- [ ] **Step 3: Add the internal app + data roots to the installer**
+
+In `install-local.sh`, immediately after the existing `VENV=` line, add:
+
+```bash
+# The service must not depend on the repo volume. macOS TCC denies launchd-spawned
+# binaries access to /Volumes unless individually granted, and an external volume can
+# vanish mid-run. Code is snapshotted into APP_DIR; db + media live under DATA_ROOT.
+DATA_ROOT="${OPENEYE_DATA_ROOT:-$HOME/.local/share/openeye}"
+APP_DIR="$DATA_ROOT/app"
+```
+
+- [ ] **Step 4: Snapshot the application code into APP_DIR**
+
+Add a function, and call it after `install_python_deps` and after the frontend build
+(so `frontend/dist` exists) but before `create_launch_script`:
+
+```bash
+# Copy the runnable application to the internal disk. This is a snapshot: changes in
+# the repo require re-running this installer, the same non-editable tradeoff the
+# ecosystem registry already makes.
+sync_app_to_internal() {
+    log_info "Syncing application code to $APP_DIR (internal disk)..."
+    mkdir -p "$APP_DIR"
+    rsync -a --delete \
+        --exclude 'venv/' --exclude '.venv/' \
+        --exclude 'frontend/node_modules/' \
+        --exclude '__pycache__/' --exclude '*.pyc' \
+        --exclude '.git/' \
+        --exclude 'recordings/' --exclude 'faces/' --exclude 'data/' \
+        --exclude 'surveillance.db*' \
+        "$PROJECT_DIR/" "$APP_DIR/"
+    log_success "Application synced to $APP_DIR"
+}
+```
+
+- [ ] **Step 5: Point the generated .env at internal absolute paths**
+
+In `generate_secrets()`, inside the `.env` heredoc, replace the `DATABASE_URL` line and
+add the path overrides (keep the existing SECRET_KEY / JWT_SECRET_KEY / PORT=8200 /
+CORS lines exactly as they are):
+
+```bash
+# Absolute internal paths so the service never touches the repo volume.
+DATABASE_URL=sqlite:///$DATA_ROOT/surveillance.db
+OPENEYE_DATA_DIR=$DATA_ROOT/data
+OPENEYE_RECORDINGS_DIR=$DATA_ROOT/recordings
+OPENEYE_SNAPSHOTS_DIR=$DATA_ROOT/data/snapshots
+OPENEYE_THUMBNAILS_DIR=$DATA_ROOT/data/thumbnails
+OPENEYE_FACES_DIR=$DATA_ROOT/faces
+```
+
+Create the directories in the installer before first run:
+
+```bash
+mkdir -p "$DATA_ROOT/data/snapshots" "$DATA_ROOT/data/thumbnails" \
+         "$DATA_ROOT/recordings" "$DATA_ROOT/faces"
+```
+
+Write `.env` into **both** `$PROJECT_DIR` (for manual `./start.sh` from the repo) and
+`$APP_DIR` (what the service reads). Generate it once, then copy it to `$APP_DIR/.env`
+after `sync_app_to_internal` runs.
+
+- [ ] **Step 6: Run start.sh and the service from APP_DIR**
+
+In the generated `start.sh`, change the working-directory line so it runs from the
+internal snapshot rather than the script's own location:
+
+```bash
+cd "@@APP_DIR@@"
+```
+
+and extend the existing portable substitution to resolve it:
+
+```bash
+sed -e "s|@@VENV@@|$VENV|g" -e "s|@@APP_DIR@@|$APP_DIR|g" start.sh > start.sh.tmp \
+    && mv start.sh.tmp start.sh
+chmod +x start.sh
+```
+
+In `create_systemd_service()`, change the launchd plist:
+
+```xml
+  <key>WorkingDirectory</key><string>$APP_DIR</string>
+```
+
+Confirm the plist's `ProgramArguments` still uses `$VENV/bin/python3` (Task 1) — it does
+not change here.
+
+- [ ] **Step 7: Teach the uninstaller about the internal app + data**
+
+In `uninstall.sh`, add `$APP_DIR` removal alongside the venv removal, and put the
+internal data under the existing keep-data branch:
+
+```bash
+run "rm -rf \"${OPENEYE_DATA_ROOT:-$HOME/.local/share/openeye}/app\""
+```
+
+and in the full-purge (not `--keep-data`) branch:
+
+```bash
+DATA_ROOT="${OPENEYE_DATA_ROOT:-$HOME/.local/share/openeye}"
+run "rm -f \"$DATA_ROOT/surveillance.db\" \"$DATA_ROOT/surveillance.db-shm\" \"$DATA_ROOT/surveillance.db-wal\""
+for d in recordings faces data; do
+    run "rm -rf \"$DATA_ROOT/$d\""
+done
+```
+
+`--keep-data` must preserve `$DATA_ROOT`'s db and media while still removing `app/` and the venv.
+
+- [ ] **Step 8: Reinstall and verify the guard passes**
+
+```bash
+cd /Volumes/Locker2/GitHub/OpenEye-OpenCV_Home_Security/opencv_surveillance
+pkill -f 'uvicorn.*backend.main:app' 2>/dev/null; sleep 2
+OPENEYE_NONINTERACTIVE=1 ECOSYSTEM_BASE_PATH=/Volumes/Locker2/GitHub bash scripts/install-local.sh
+cd .. && ./scripts/check-venv-location.sh
+grep -c '/Volumes/' ~/Library/LaunchAgents/com.smartindustries.openeye.plist
+```
+Expected: guard prints OK, and the plist `/Volumes/` count is `0`.
+
+- [ ] **Step 9: Prove the launchd service now actually serves (the Task 2 gap)**
+
+```bash
+launchctl bootout "gui/$(id -u)/com.smartindustries.openeye" 2>/dev/null || true
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.smartindustries.openeye.plist
+sleep 35
+~/.local/share/ecosystem/venv/bin/python -c "import httpx; r=httpx.get('http://127.0.0.1:8200/api/health',timeout=8); print(r.status_code, r.text[:120])"
+grep -c 'Operation not permitted' ~/Library/Logs/OpenEye/stderr.log
+```
+Expected: `200` with `"status":"healthy"`, and `0` permission errors.
+(`/health` is the SPA catch-all and returns 200 regardless — always use `/api/health`.)
+
+- [ ] **Step 10: Prove KeepAlive restarts it**
+
+```bash
+pkill -f 'uvicorn.*backend.main:app'; sleep 35
+~/.local/share/ecosystem/venv/bin/python -c "import httpx; print(httpx.get('http://127.0.0.1:8200/api/health',timeout=8).status_code)"
+```
+Expected: `200` — launchd restarted it unattended.
+
+- [ ] **Step 11: Commit**
+
+```bash
+git -C /Volumes/Locker2/GitHub/OpenEye-OpenCV_Home_Security add \
+  opencv_surveillance/scripts/install-local.sh uninstall.sh scripts/check-venv-location.sh
+git -C /Volumes/Locker2/GitHub/OpenEye-OpenCV_Home_Security commit -m "fix(install): run entirely from the internal disk
+
+The launchd service crash-looped with 'Operation not permitted': macOS TCC denies
+launchd-spawned binaries access to /Volumes unless individually granted, and both the
+WorkingDirectory and all data lived there. Code is now snapshotted to
+~/.local/share/openeye/app and db+media to ~/.local/share/openeye, using the
+OPENEYE_*_DIR overrides paths.py already supports — no application code changes.
+Removes the external-volume dependency entirely rather than granting Full Disk Access
+to a shared system interpreter."
+```
+
+---
+
 ## Final Verification
 
 After all tasks, run a full cold-start check:
