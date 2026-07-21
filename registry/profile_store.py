@@ -54,7 +54,7 @@ def default_profile_dict() -> dict[str, Any]:
 # Top-level fields a client is allowed to change via PUT (no version/timestamps).
 _WRITABLE = {
     "default_provider", "selected_model", "ollama_base_url", "models_dir",
-    "task_models", "cloud", "prefer", "allow_cloud_fallback",
+    "task_models", "task_providers", "cloud", "prefer", "allow_cloud_fallback",
 }
 
 

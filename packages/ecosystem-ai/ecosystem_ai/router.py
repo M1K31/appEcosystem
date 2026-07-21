@@ -39,10 +39,25 @@ class ProviderRouter:
             model = recommended_model(self.tier) if self.tier is not None else ""
         return model
 
-    def _ordered_providers(self) -> list[str]:
-        """Provider preference order based on profile.prefer."""
+    def _ordered_providers(self, task: str = "chat") -> list[str]:
+        """Provider preference order for a task.
+
+        A per-task provider (profile.task_providers[task]) wins outright: that is
+        the cost-control lever, letting a user send security analysis to a cloud
+        model while chat and embeddings stay local. A blank or missing entry
+        falls back to the profile-wide preference, so an untouched profile
+        behaves exactly as before.
+        """
         default = self.profile.default_provider
         cloud = [name for name, c in self.profile.cloud.items() if c.enabled]
+
+        pinned = (getattr(self.profile, "task_providers", {}) or {}).get(task, "")
+        if pinned:
+            # Keep the rest as fallback order (used only when fallback is allowed),
+            # with the pinned provider first and never duplicated.
+            rest = [p for p in ([default] + cloud) if p != pinned]
+            return [pinned] + rest
+
         if self.profile.prefer == "cloud":
             return cloud + [default]
         # local-first (default) and "quality" both start local here
@@ -111,7 +126,7 @@ class ProviderRouter:
 
     async def pick(self, task: str = "chat") -> tuple[AIProvider, str]:
         """Choose an available provider + model for the task."""
-        order = self._ordered_providers()
+        order = self._ordered_providers(task)
         allow_fallback = self.profile.allow_cloud_fallback
         first_choice = order[0] if order else None
 
@@ -124,8 +139,12 @@ class ProviderRouter:
                 break
             if await provider.available():
                 model = self.resolve_model(task)
-                if name != self.profile.default_provider:
-                    # Cloud provider: use its configured model if set.
+                # Classify by membership in the cloud map, NOT by "differs from
+                # default_provider": with per-task pinning a user can pin the
+                # local provider for one task while the default is a cloud one,
+                # and the old test would then misclassify local as cloud and skip
+                # the installed-model check below.
+                if name in self.profile.cloud:
                     cfg = self.profile.cloud.get(name)
                     if cfg and cfg.model:
                         model = cfg.model

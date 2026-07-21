@@ -47,6 +47,17 @@ class AIProfile:
         }
     )
 
+    # Per task-class PROVIDER overrides — the cost-control lever.
+    #
+    # Cloud tokens are metered, so users want them spent selectively: e.g. a
+    # cloud model for security analysis (low volume, high value) while chat and
+    # embeddings stay local (high volume, would run up overages). An entry here
+    # pins that task to a provider; a blank value or a missing key falls back to
+    # default_provider, so an untouched profile behaves exactly as before.
+    task_providers: dict[str, str] = field(
+        default_factory=lambda: {"chat": "", "security": "", "embed": "", "vision": ""}
+    )
+
     # Routing policy.
     prefer: str = "local"            # "local" | "cloud" | "quality"
     allow_cloud_fallback: bool = True
