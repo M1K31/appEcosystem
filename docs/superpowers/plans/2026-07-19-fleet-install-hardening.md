@@ -22,12 +22,16 @@
 **Verification baseline (all tasks assume this passes at the end):**
 ```bash
 for u in http://127.0.0.1:8500/health http://127.0.0.1:8000/health \
-         http://127.0.0.1:8200/health http://127.0.0.1:8089/api/status \
+         http://127.0.0.1:8200/api/health http://127.0.0.1:8089/api/status \
          http://127.0.0.1:8080 http://127.0.0.1:8088/api/status; do
   printf '%-46s %s\n' "$u" "$(curl -s -o /dev/null -w '%{http_code}' "$u" 2>/dev/null || echo ERR)"
 done
 ```
 (Use `~/.local/share/ecosystem/venv/bin/python -c "import httpx; ..."` if `curl` is blocked by hooks.)
+
+> **Health-check caveat:** OpenEye's `/health` is served by the SPA catch-all and returns
+> `200 text/html` even when the backend is broken — it is NOT a health check. Always use
+> `/api/health` (JSON), which is what `ecosystem.yaml` registers for the service.
 
 ---
 
@@ -183,7 +187,7 @@ Expected: `OK: internal-disk venv at /Users/<you>/.local/share/openeye/venv`
 ```bash
 cd opencv_surveillance && nohup bash start.sh > /tmp/openeye.log 2>&1 &
 sleep 25
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8200/health
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8200/api/health
 grep -c 'weak SECRET_KEY' /tmp/openeye.log
 ```
 Expected: `200`, and `0` weak-secret warnings.
@@ -260,7 +264,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.smartindustries.open
 ```bash
 test -f ~/Library/LaunchAgents/com.smartindustries.openeye.plist && echo "OK: plist present"
 launchctl list | grep com.smartindustries.openeye
-sleep 25; curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8200/health
+sleep 25; curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8200/api/health
 ```
 Expected: `OK: plist present`, a launchctl row, and `200`.
 
@@ -268,7 +272,7 @@ Expected: `OK: plist present`, a launchctl row, and `200`.
 
 ```bash
 pkill -f 'uvicorn.*backend.main:app'; sleep 25
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8200/health
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8200/api/health
 ```
 Expected: `200` (launchd restarted it).
 
@@ -802,7 +806,7 @@ Expected: all six report `bounced` (none `MISSING`).
 
 ```bash
 for u in http://127.0.0.1:8500/health http://127.0.0.1:8000/health \
-         http://127.0.0.1:8200/health http://127.0.0.1:8089/api/status \
+         http://127.0.0.1:8200/api/health http://127.0.0.1:8089/api/status \
          http://127.0.0.1:8080 http://127.0.0.1:8088/api/status; do
   printf '%-46s %s\n' "$u" "$(curl -s -o /dev/null -w '%{http_code}' "$u" 2>/dev/null || echo ERR)"
 done
