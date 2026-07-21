@@ -30,6 +30,10 @@ jobs:
           pip install -e packages/ecosystem-client
       - name: Run tests
         run: pytest -q
+      # Skips itself (exit 0) when MagicMirror is not checked out beside this repo,
+      # so it never fails CI here; it guards developers running it locally.
+      - name: Check JS client parity
+        run: ./scripts/check-js-client-parity.sh
 
   ecosystem-smoke:
     name: Ecosystem acceptance smoke test
