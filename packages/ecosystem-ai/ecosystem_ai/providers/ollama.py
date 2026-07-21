@@ -49,6 +49,25 @@ class OllamaProvider:
         except Exception:
             return False
 
+    async def pull(self, model: str, timeout: float = 1800.0) -> None:
+        """Download a model into Ollama.
+
+        Only used on a genuine first run — when no models are installed at all —
+        so an existing setup is never surprised by a multi-gigabyte download.
+        The generous timeout reflects real model sizes on a slow link.
+        """
+        if not model:
+            raise ProviderError("ollama pull requires a model name")
+        try:
+            resp = await self._client.post(
+                f"{self.base_url}/api/pull",
+                json={"model": model, "stream": False},
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+        except Exception as e:
+            raise ProviderError(f"ollama pull of {model!r} failed: {e}") from e
+
     async def list_models(self) -> list[ModelInfo]:
         try:
             resp = await self._client.get(f"{self.base_url}/api/tags")
