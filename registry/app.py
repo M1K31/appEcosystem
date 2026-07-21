@@ -300,16 +300,11 @@ def _require_loopback(request: Request) -> None:
     A forwarded header means the request crossed a proxy, so it is not a genuine
     local caller even when request.client.host looks local. 404 (not 403) so the
     existence of these write routes isn't disclosed to a remote caller.
-
-    "testclient" is Starlette's TestClient sentinel host: the ASGI test
-    transport reports it for every in-process request and it can never appear
-    over the network (real ASGI servers populate request.client from the
-    actual socket peer), so trusting it here doesn't weaken the real check.
     """
     if request.headers.get("x-forwarded-for"):
         raise HTTPException(status_code=404, detail="Not Found")
     host = (request.client.host if request.client else "") or ""
-    if host not in ("127.0.0.1", "::1", "localhost", "testclient"):
+    if host not in ("127.0.0.1", "::1", "localhost"):
         raise HTTPException(status_code=404, detail="Not Found")
 
 
@@ -327,8 +322,13 @@ async def set_provider_key(
     provider: str,
     request: Request,
     body: ProviderKeyBody = Body(...),
+    auth: dict = Depends(require_registry_auth),
 ):
-    """Store (or replace) a provider's API key. Loopback-only; see _require_loopback."""
+    """Store (or replace) a provider's API key.
+
+    Loopback-only AND registry-auth-gated: loopback stops remote callers,
+    auth stops unauthorized local ones (e.g. a different local user/process).
+    """
     _require_loopback(request)
     store = _provider_store(request)
     try:
@@ -340,8 +340,14 @@ async def set_provider_key(
 
 
 @app.delete("/ai/providers/{provider}/key")
-async def delete_provider_key(provider: str, request: Request):
-    """Remove a provider's stored API key, if any. Loopback-only."""
+async def delete_provider_key(
+    provider: str,
+    request: Request,
+    auth: dict = Depends(require_registry_auth),
+):
+    """Remove a provider's stored API key, if any.
+
+    Loopback-only AND registry-auth-gated (see set_provider_key)."""
     _require_loopback(request)
     if provider not in SUPPORTED_PROVIDERS:
         raise HTTPException(status_code=400, detail=f"Unknown provider {provider!r}")
