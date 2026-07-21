@@ -9,14 +9,16 @@ from typing import TYPE_CHECKING
 
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request, status, Depends
+from fastapi import Body, FastAPI, HTTPException, Request, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials
+from pydantic import BaseModel
 from ecosystem_auth.middleware import (
     authenticate_request, require_ecosystem_auth, security_scheme,
 )
 
 from .app_store import AppStore, RESERVED_NAMES, default_apps_path
+from .credential_store import SUPPORTED_PROVIDERS, ProviderCredentialStore
 from .health_monitor import HealthMonitor
 from .models import HealthCheckResult, ServiceRecord, ServiceRegistration
 from .registry import ServiceRegistry
@@ -66,6 +68,11 @@ async def lifespan(app: FastAPI):
     # shared secret; enrolled apps use their own key). Live-reloads from disk.
     app_store = AppStore(persistence_path=default_apps_path())
 
+    # Cloud AI provider API keys (Anthropic/OpenAI/Gemini), file-backed at
+    # ~/.config/ecosystem/provider_keys.json. Local-only surface — see the
+    # /ai/providers routes below, which gate writes to loopback callers.
+    provider_credential_store = ProviderCredentialStore()
+
     # Stash on app.state so request handlers resolve them via dependencies
     # rather than module globals (which could be None before startup).
     app.state.registry = registry
@@ -73,6 +80,7 @@ async def lifespan(app: FastAPI):
     app.state.event_bus = event_bus
     app.state.ai_profile_store = ai_profile_store
     app.state.app_store = app_store
+    app.state.provider_credential_store = provider_credential_store
 
     logger.info("Ecosystem registry started")
     yield
@@ -276,6 +284,69 @@ async def update_ai_profile(
             logger.debug("Failed to publish ai_profile_changed event: %s", e)
 
     return profile
+
+
+class ProviderKeyBody(BaseModel):
+    api_key: str
+
+
+def _provider_store(request: Request) -> ProviderCredentialStore:
+    return request.app.state.provider_credential_store
+
+
+def _require_loopback(request: Request) -> None:
+    """Key writes are loopback-only, 404-cloaked (mirrors the secret endpoints).
+
+    A forwarded header means the request crossed a proxy, so it is not a genuine
+    local caller even when request.client.host looks local. 404 (not 403) so the
+    existence of these write routes isn't disclosed to a remote caller.
+
+    "testclient" is Starlette's TestClient sentinel host: the ASGI test
+    transport reports it for every in-process request and it can never appear
+    over the network (real ASGI servers populate request.client from the
+    actual socket peer), so trusting it here doesn't weaken the real check.
+    """
+    if request.headers.get("x-forwarded-for"):
+        raise HTTPException(status_code=404, detail="Not Found")
+    host = (request.client.host if request.client else "") or ""
+    if host not in ("127.0.0.1", "::1", "localhost", "testclient"):
+        raise HTTPException(status_code=404, detail="Not Found")
+
+
+@app.get("/ai/providers")
+async def list_provider_keys(
+    request: Request,
+    _auth=Depends(require_read_auth),
+):
+    """Non-secret status for every supported provider. Never returns a key."""
+    return {"providers": _provider_store(request).status()}
+
+
+@app.put("/ai/providers/{provider}/key")
+async def set_provider_key(
+    provider: str,
+    request: Request,
+    body: ProviderKeyBody = Body(...),
+):
+    """Store (or replace) a provider's API key. Loopback-only; see _require_loopback."""
+    _require_loopback(request)
+    store = _provider_store(request)
+    try:
+        store.set_key(provider, body.api_key)
+    except ValueError as e:
+        # ValueError text is about the provider name or emptiness - never the key.
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "stored", "provider": provider, "last4": store.status()[provider]["last4"]}
+
+
+@app.delete("/ai/providers/{provider}/key")
+async def delete_provider_key(provider: str, request: Request):
+    """Remove a provider's stored API key, if any. Loopback-only."""
+    _require_loopback(request)
+    if provider not in SUPPORTED_PROVIDERS:
+        raise HTTPException(status_code=400, detail=f"Unknown provider {provider!r}")
+    removed = _provider_store(request).delete_key(provider)
+    return {"status": "deleted" if removed else "not_found", "provider": provider}
 
 
 @app.post("/register", response_model=ServiceRecord, status_code=status.HTTP_201_CREATED)
