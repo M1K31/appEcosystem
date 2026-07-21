@@ -135,5 +135,9 @@ projects:
     health_endpoint: "/api/status"
     priority: 15
     stack: "python-aiohttp"
-    start_command: "python -m daemon.aegissiem_daemon"
+    # No start_command: launchd (com.smartindustries.cyber-harness) is the sole
+    # owner of this daemon. Two instances would share one SQLite state dir and
+    # double-fire auto-block actions. Install/enable it with:
+    #   CybersecurityTeam/cyber-claude-agents/scripts/install-local.sh --plist
+    start_command: ""
     description: "Cyber Claude Harness daemon — preferred security analysis backend"
