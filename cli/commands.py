@@ -484,6 +484,48 @@ def cmd_secret(action: str, value: str | None = None) -> int:
     return 1
 
 
+def cmd_provider(action: str, name: str | None = None, value: str | None = None) -> int:
+    """Manage cloud AI provider API keys (anthropic / openai / gemini)."""
+    from registry.credential_store import SUPPORTED_PROVIDERS, ProviderCredentialStore
+
+    store = ProviderCredentialStore()
+
+    if action == "list":
+        for prov, st in store.status().items():
+            state = f"configured (…{st['last4']})" if st["configured"] else "not configured"
+            print(f"  {prov:<10} {state}")
+        return 0
+
+    if not name:
+        print(f"Usage: ecosystem provider {action} <{'|'.join(SUPPORTED_PROVIDERS)}>")
+        return 2
+
+    if action == "set":
+        key = value
+        if not key:
+            # Prompt without echoing so the key never lands in shell history or the screen.
+            import getpass
+
+            key = getpass.getpass(f"Paste the {name} API key (input hidden): ")
+        try:
+            store.set_key(name, key)
+        except ValueError as e:
+            print(f"Error: {e}")
+            return 1
+        print(f"Stored {name} key (…{store.status()[name]['last4']}).")
+        return 0
+
+    if action == "delete":
+        if name not in SUPPORTED_PROVIDERS:
+            print(f"Error: unknown provider {name!r}")
+            return 1
+        print(f"Deleted {name} key." if store.delete_key(name) else f"No {name} key was stored.")
+        return 0
+
+    print(f"Unknown action {action!r}. Use: list | set | delete")
+    return 2
+
+
 def _device_apps() -> list[dict]:
     """Per-device enabled-apps record: which ecosystem apps are present here.
 

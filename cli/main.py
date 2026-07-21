@@ -4,9 +4,9 @@ import argparse
 import sys
 
 from .commands import (
-    cmd_apps, cmd_install, cmd_logs, cmd_monitor, cmd_partner, cmd_restart,
-    cmd_secret, cmd_start, cmd_start_all, cmd_status, cmd_stop, cmd_stop_all,
-    cmd_uninstall,
+    cmd_apps, cmd_install, cmd_logs, cmd_monitor, cmd_partner, cmd_provider,
+    cmd_restart, cmd_secret, cmd_start, cmd_start_all, cmd_status, cmd_stop,
+    cmd_stop_all, cmd_uninstall,
 )
 
 
@@ -49,6 +49,11 @@ def main():
     secret_parser.add_argument("value", nargs="?", default=None,
                                help="secret value (for 'import')")
 
+    provider_parser = sub.add_parser("provider", help="Manage cloud AI provider API keys")
+    provider_parser.add_argument("action", choices=["list", "set", "delete"])
+    provider_parser.add_argument("name", nargs="?", help="anthropic | openai | gemini")
+    provider_parser.add_argument("value", nargs="?", help="key (omit to be prompted without echo)")
+
     partner_parser = sub.add_parser("partner", help="Manage third-party partner app credentials")
     partner_parser.add_argument("action",
                                 choices=["add", "list", "show", "suspend", "resume", "remove"])
@@ -79,6 +84,8 @@ def main():
         sys.exit(cmd_secret(args.action, args.value))
     elif args.command == "apps":
         sys.exit(cmd_apps(args.as_json))
+    elif args.command == "provider":
+        sys.exit(cmd_provider(args.action, args.name, args.value))
     elif args.command == "partner":
         sys.exit(cmd_partner(args.action, args.app_id, args.name, args.owner, args.service_names))
     elif args.command in commands:
