@@ -144,7 +144,11 @@ source "@@VENV@@/bin/activate"
 and immediately after the closing `EOF` of that heredoc, add:
 
 ```bash
-/usr/bin/sed -i '' "s|@@VENV@@|$VENV|g" start.sh
+# Portable placeholder substitution. Do NOT use `sed -i`: BSD/macOS requires a
+# detached backup suffix (-i '') while GNU/Linux forbids it, and this installer
+# supports both. Redirect-and-move works identically everywhere.
+sed "s|@@VENV@@|$VENV|g" start.sh > start.sh.tmp && mv start.sh.tmp start.sh
+chmod +x start.sh
 ```
 
 Do the same for `stop.sh` if it references the venv.
