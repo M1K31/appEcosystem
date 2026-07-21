@@ -107,4 +107,21 @@ UNIT_EOF
   *)
     echo "Unsupported OS: $OS"; exit 1 ;;
 esac
+# The cyber-harness daemon (port 8088) is registered in ecosystem.yaml as the
+# preferred security-analysis backend. Prepare its runtime so it is available
+# when wanted, but do NOT start it — launchd owns that service and enabling it
+# stays an explicit, separate step. Never fatal: the registry runs without it.
+HARNESS="${CYBER_HARNESS_PATH:-${ECOSYSTEM_BASE_PATH:-$REPO/..}/CybersecurityTeam/cyber-claude-agents}"
+if [ -n "${ECOSYSTEM_SKIP_HARNESS:-}" ]; then
+    echo "==> ECOSYSTEM_SKIP_HARNESS=1 — skipping cyber-harness setup."
+elif [ -x "$HARNESS/scripts/install-local.sh" ]; then
+    echo "==> Preparing cyber-harness runtime (opt-in; enable with its --plist)"
+    ECOSYSTEM_BASE_PATH="${ECOSYSTEM_BASE_PATH:-$REPO/..}" \
+        "$HARNESS/scripts/install-local.sh" >/dev/null 2>&1 \
+        && echo "    cyber-harness runtime ready (not started)" \
+        || echo "    NOTE: cyber-harness setup skipped (non-fatal)."
+else
+    echo "==> cyber-harness not present at $HARNESS — skipping (optional component)."
+fi
+
 echo "==> Done."
