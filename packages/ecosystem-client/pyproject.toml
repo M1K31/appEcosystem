@@ -7,6 +7,14 @@ name = "ecosystem-client"
 version = "0.3.1"
 description = "Client library for appEcosystem inter-service communication"
 requires-python = ">=3.9"
+# NOTE: ecosystem-client ALSO requires the `ecosystem-auth` package at runtime for
+# HMAC request signing (see ecosystem_client/discovery.py::_require_auth). It is
+# intentionally NOT listed below: both packages are distributed as local paths
+# today, so a hard dependency would make
+#     pip install <appEcosystem>/packages/ecosystem-client
+# fail to resolve against a package index. Install both:
+#     pip install <appEcosystem>/auth/python <appEcosystem>/packages/ecosystem-client
+# Convert this into a real dependency once the packages are published.
 dependencies = [
     "httpx>=0.24.0",
 ]
