@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from .hardware import CapabilityTier
+from .hardware import CapabilityTier, detect
 from .profile import AIProfile
 from .providers.anthropic import AnthropicProvider
 from .providers.base import AIProvider
@@ -83,5 +83,21 @@ def build_router(
     tier: Optional[CapabilityTier] = None,
     providers: Optional[dict[str, AIProvider]] = None,
 ) -> ProviderRouter:
-    """Convenience: build a ready-to-use router from a profile."""
+    """Convenience: build a ready-to-use router from a profile.
+
+    When no tier is supplied, detect this machine's tier rather than leaving it
+    None. ProviderRouter.resolve_model() falls back to the tier's recommended
+    model for the default "auto" selection, and with tier=None that fallback
+    yields an EMPTY model name — so a stock profile (selected_model="auto",
+    task_models={"chat": "auto"}) produced `ProviderError: ollama chat requires
+    a model` for every caller. Detecting here makes build_router(profile) work
+    out of the box; an explicitly passed tier still wins.
+    """
+    if tier is None:
+        try:
+            _, tier = detect()
+        except Exception:
+            # Hardware probing is best-effort; leave tier unset rather than
+            # failing router construction outright.
+            tier = None
     return ProviderRouter(profile, providers or build_providers(profile), tier=tier)
