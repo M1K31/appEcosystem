@@ -111,7 +111,7 @@ esac
 # preferred security-analysis backend. Prepare its runtime so it is available
 # when wanted, but do NOT start it — launchd owns that service and enabling it
 # stays an explicit, separate step. Never fatal: the registry runs without it.
-HARNESS="${CYBER_HARNESS_PATH:-${ECOSYSTEM_BASE_PATH:-$REPO/..}/CybersecurityTeam/cyber-claude-agents}"
+HARNESS="${CYBER_HARNESS_PATH:-${ECOSYSTEM_BASE_PATH:-$REPO/..}/CybersecurityTeam/cyber-agents}"
 if [ -n "${ECOSYSTEM_SKIP_HARNESS:-}" ]; then
     echo "==> ECOSYSTEM_SKIP_HARNESS=1 — skipping cyber-harness setup."
 elif [ -x "$HARNESS/scripts/install-local.sh" ]; then

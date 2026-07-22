@@ -129,7 +129,7 @@ projects:
 
   aegissiem_daemon:
     name: "AegisSIEM_Daemon"
-    path: "CybersecurityTeam/cyber-claude-agents"
+    path: "CybersecurityTeam/cyber-agents"
     host: "localhost"
     port: 8088
     health_endpoint: "/api/status"
@@ -138,6 +138,6 @@ projects:
     # No start_command: launchd (com.smartindustries.cyber-harness) is the sole
     # owner of this daemon. Two instances would share one SQLite state dir and
     # double-fire auto-block actions. Install/enable it with:
-    #   CybersecurityTeam/cyber-claude-agents/scripts/install-local.sh --plist
+    #   CybersecurityTeam/cyber-agents/scripts/install-local.sh --plist
     start_command: ""
     description: "Cyber Claude Harness daemon — preferred security analysis backend"
