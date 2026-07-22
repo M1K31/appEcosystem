@@ -113,6 +113,62 @@ model with no manual reconciliation.
 
 ---
 
+# PART 1b — Cross-app AI request coordination (NEEDS DESIGN, not yet planned)
+
+**Stated intent (owner, 2026-07-21):** OpenEye, AI-for-Survival and AegisSIEM are
+all intended to have AI features. Each must install and run **standalone**, but
+when several are present on a network they cooperate through the shared harness
+and ecosystem. Example: a verbal request to MagicMirror — "summarise the events
+OpenEye recorded at 3AM" — is serviced by whichever of OpenEye / AFS / AegisSIEM
+is best placed, using the shared AI and harness routing. The ecosystem client
+should be installed in every project so any app on the network can join and add
+capability.
+
+**Why this is not just wiring.** The owner explicitly called out avoiding race
+conditions and duplicate requests, and that is the whole difficulty:
+
+- **Duplicate servicing.** If a request is broadcast and all three apps can
+  answer, all three call an LLM. That is 3x cost (metered, for cloud), 3x
+  latency, and three different answers with no defined winner. Needs
+  single-servicer arbitration.
+- **Capability-based routing.** "Events OpenEye recorded" implies the request
+  must reach whoever *owns the data*, which is not necessarily whoever is best at
+  *analysis*. Data ownership and analysis capability are different axes.
+- **Idempotency.** A retried or re-broadcast request must not produce a second
+  action — especially for anything with side effects (blocking an IP, recording).
+- **Standalone parity.** Each app must behave correctly alone, so coordination
+  has to be an enhancement, never a dependency.
+- **Partition behaviour.** Two apps that cannot see each other must not both
+  elect themselves servicer and then both act.
+
+**Foundations that already exist** (do not rebuild):
+- Service registration with `priority` and a `resources` capability report
+  (`ecosystem_client/discovery.py::register_self` -> `_detect_resources`).
+- An event bus with `EventEnvelope` publish (registry), already used for
+  `ecosystem.ai_profile_changed`.
+- Shared AI profile with per-task provider routing (`task_providers`), so once a
+  servicer is chosen, *where* it runs the model is already solved.
+- The harness daemon with a single-instance guard, already proven.
+
+**Open decisions before any implementation:**
+1. Arbitration mechanism — registry as coordinator (simple, single point of
+   failure) vs. capability-bid/claim among peers (resilient, more moving parts)?
+2. Does a request address a *capability* ("summarise events") or a *service*
+   ("openeye")? The former needs a capability registry; the latter is simpler but
+   pushes routing knowledge to the caller.
+3. Lease/claim semantics: how long is a claim valid, and what happens when the
+   claimant dies mid-request?
+4. Is at-most-once required, or is at-least-once with idempotency keys enough?
+   (Cheaper, and usually the right answer.)
+
+**Recommended next step:** a design pass (brainstorm -> spec -> plan) before any
+code. This is the kind of feature where inventing the interface first and
+discovering the semantics later produces exactly the class of defect this session
+has been full of. It is deliberately NOT planned here — the near-term settings
+UI work (Tasks 9-10) is independent and can proceed without it.
+
+---
+
 # PART 2 — Everything else flagged this session
 
 ## P1 — Correctness / trust
