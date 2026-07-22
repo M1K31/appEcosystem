@@ -10,11 +10,35 @@
 # launchctl setenv / per-plist secret is needed.
 set -euo pipefail
 
+# Distros disagree on which Python minor they ship, so honour the project
+# minimum (3.10) instead of one exact version: pinning python3.12 fails on
+# Debian bookworm (3.11), Ubuntu 22.04 (3.10), and anything newer.
+_resolve_python() {
+    local c
+    for c in python3.13 python3.12 python3.11 python3.10 python3; do
+        command -v "$c" >/dev/null 2>&1 || continue
+        "$c" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null \
+            && { echo "$c"; return 0; }
+    done
+    return 1
+}
+
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PREFIX="$HOME/.local/share/ecosystem"
+
+# The Linux install needs root to write the unit file, but the service itself
+# runs as the invoking user. Under sudo $HOME is root's, so anchoring the
+# runtime to it would install into /root/.local — which that user cannot read,
+# leaving a unit that installs cleanly and then fails on every start.
+RUN_USER="${SUDO_USER:-${USER:-$(id -un)}}"
+if [ -n "${SUDO_USER:-}" ] && command -v getent >/dev/null 2>&1; then
+    RUN_HOME="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
+fi
+RUN_HOME="${RUN_HOME:-$HOME}"
+
+PREFIX="$RUN_HOME/.local/share/ecosystem"
 VENV="$PREFIX/venv"
 DATA="$PREFIX/data"
-PY="${PYTHON_BIN:-python3.12}"
+PY="${PYTHON_BIN:-$(_resolve_python || true)}"
 OS="$(uname -s)"
 PORT="${ECOSYSTEM_REGISTRY_PORT:-8500}"
 MODE="${ECOSYSTEM_MODE:-local}"
@@ -31,7 +55,9 @@ fi
 CONFIG="${ECOSYSTEM_CONFIG:-$REPO/ecosystem.yaml}"
 LABEL="com.ecosystem.registry"
 
-command -v "$PY" >/dev/null 2>&1 || { echo "ERROR: $PY not found on PATH"; exit 1; }
+if [ -z "$PY" ] || ! command -v "$PY" >/dev/null 2>&1; then
+    echo "ERROR: no Python >= 3.10 found (set PYTHON_BIN to override)"; exit 1
+fi
 
 echo "==> Installing ecosystem registry runtime to $PREFIX ($OS)"
 mkdir -p "$PREFIX" "$DATA"
@@ -42,8 +68,17 @@ mkdir -p "$PREFIX" "$DATA"
                         "$REPO/packages/ecosystem-ai" "$REPO/packages/ecosystem-client"
 
 # Provision the shared secret (file-backed; reused if it already exists).
-"$VENV/bin/python" -c "from ecosystem_auth.tokens import ensure_ecosystem_secret; ensure_ecosystem_secret()" \
-    && echo "==> Shared secret ready (~/.config/ecosystem/secret.env)"
+# HOME is pinned to the service account's home so a sudo install does not write
+# the secret into /root/.config, where the running service could not read it.
+HOME="$RUN_HOME" "$VENV/bin/python" \
+    -c "from ecosystem_auth.tokens import ensure_ecosystem_secret; ensure_ecosystem_secret()" \
+    && echo "==> Shared secret ready ($RUN_HOME/.config/ecosystem/secret.env)"
+
+# Anything root just created inside the user's home is root-owned; hand it back
+# or the service (running as $RUN_USER) hits permission errors on first write.
+if [ "$OS" = "Linux" ] && [ "${EUID:-$(id -u)}" -eq 0 ] && [ "$RUN_USER" != "root" ]; then
+    chown -R "$RUN_USER" "$PREFIX" "$RUN_HOME/.config/ecosystem" 2>/dev/null || true
+fi
 
 case "$OS" in
   Darwin)
@@ -79,9 +114,24 @@ PLIST_EOF
     echo "    Logs: $LOGDIR/registry.{stdout,stderr}.log"
     ;;
   Linux)
-    if [ "$EUID" -ne 0 ]; then echo "Linux install needs sudo: sudo $0"; exit 1; fi
-    USER_NAME="${SUDO_USER:-$USER}"
+    if [ "${EUID:-$(id -u)}" -ne 0 ]; then echo "Linux install needs sudo: sudo $0"; exit 1; fi
+    USER_NAME="$RUN_USER"
     UNIT="/etc/systemd/system/ecosystem-registry.service"
+    manual_start() {
+        echo "    Run it directly with:"
+        echo "      ECOSYSTEM_REGISTRY_FILE=$DATA/registry.json \\"
+        echo "      ECOSYSTEM_AI_PROFILE_FILE=$DATA/ai_profile.json \\"
+        echo "      $VENV/bin/python -m uvicorn registry.app:app --host $BIND --port $PORT"
+    }
+    # Not every Linux runs systemd: Alpine uses OpenRC and has no
+    # /etc/systemd/system at all, so writing the unit unconditionally fails the
+    # install on a machine where the runtime itself is perfectly good.
+    if ! command -v systemctl >/dev/null 2>&1 && [ ! -d /etc/systemd/system ]; then
+        echo "==> No systemd on this host — skipping service unit."
+        echo "    The runtime is installed and ready."
+        manual_start
+    else
+    mkdir -p "$(dirname "$UNIT")"
     cat > "$UNIT" <<UNIT_EOF
 [Unit]
 Description=appEcosystem Service Registry
@@ -100,9 +150,17 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 UNIT_EOF
-    systemctl daemon-reload
-    systemctl enable ecosystem-registry.service
-    echo "==> Registry installed (systemd). Start: sudo systemctl start ecosystem-registry"
+    # Containers, WSL1 and chroots have systemd installed but not running as
+    # PID 1. The runtime above is complete and usable there, so a missing
+    # service manager downgrades to instructions rather than failing the install.
+    if systemctl daemon-reload 2>/dev/null && systemctl enable ecosystem-registry.service 2>/dev/null; then
+        echo "==> Registry installed (systemd). Start: sudo systemctl start ecosystem-registry"
+    else
+        # systemd is installed but not PID 1 — containers, WSL1, chroots.
+        echo "==> Unit written to $UNIT, but systemd is not running here."
+        manual_start
+    fi
+    fi
     ;;
   *)
     echo "Unsupported OS: $OS"; exit 1 ;;
