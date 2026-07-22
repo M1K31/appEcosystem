@@ -31,6 +31,9 @@ class ModelInfo:
     name: str
     family: str = ""
     size_bytes: Optional[int] = None
+    # Ollama reports this ("1.1B", "7.2B"); used to judge whether a model is
+    # strong enough for judgement-heavy tasks like security analysis.
+    parameter_size: Optional[str] = None
     capabilities: set[Capability] = field(default_factory=set)
 
 

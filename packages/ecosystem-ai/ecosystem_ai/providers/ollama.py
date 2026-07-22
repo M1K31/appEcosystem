@@ -82,6 +82,7 @@ class OllamaProvider:
                     name=m.get("name", ""),
                     family=(m.get("details", {}) or {}).get("family", ""),
                     size_bytes=m.get("size"),
+                    parameter_size=(m.get("details", {}) or {}).get("parameter_size"),
                     capabilities={Capability.CHAT},
                 )
             )

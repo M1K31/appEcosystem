@@ -28,6 +28,9 @@ class ProviderRouter:
         self.profile = profile
         self.providers = providers
         self.tier = tier
+        self._last_listed: list = []
+        # Most recent capability verdict, for callers that surface it.
+        self.last_capability: Optional[dict] = None
 
     def resolve_model(self, task: str = "chat") -> str:
         """Resolve the model for a task: explicit task model → selected_model →
@@ -64,7 +67,37 @@ class ProviderRouter:
         order = [default] + cloud
         return order
 
-    async def _ensure_local_model(self, provider: AIProvider, wanted: str) -> str:
+    # Tasks whose output a user is likely to act on as if it were expert
+    # judgement. A too-small model still answers these, which is the hazard.
+    _JUDGEMENT_TASKS = ("security",)
+
+    def _warn_if_weak(self, model: str, task: str) -> str:
+        """Log loudly when a fallback lands on a model too small for the task.
+
+        The fallback is silent by design — it keeps the system working — but for
+        security analysis "working" on a 1B model means confident, wrong findings.
+        The user who chose a model in one app never sees that this daemon quietly
+        picked something else, so the warning has to happen here.
+        """
+        if task not in self._JUDGEMENT_TASKS:
+            return model
+        try:
+            from .capability import assess_for_security
+
+            size = None
+            for m in self._last_listed or []:
+                if getattr(m, "name", None) == model:
+                    size = getattr(m, "parameter_size", None)
+                    break
+            verdict = assess_for_security(model, size)
+            if verdict.get("warning"):
+                logger.warning("Security-analysis model check: %s", verdict["warning"])
+            self.last_capability = verdict
+        except Exception as e:  # never let a warning break routing
+            logger.debug("Capability check skipped: %s", e.__class__.__name__)
+        return model
+
+    async def _ensure_local_model(self, provider: AIProvider, wanted: str, task: str = "chat") -> str:
         """Return a model that is actually usable on the local provider.
 
         resolve_model() yields the tier's *recommended* model, which may not be
@@ -83,7 +116,9 @@ class ProviderRouter:
         exactly as it was.
         """
         try:
-            installed = [m.name for m in await provider.list_models() if m.name]
+            listed = await provider.list_models()
+            self._last_listed = listed
+            installed = [m.name for m in listed if m.name]
         except Exception as e:
             # Can't enumerate: don't second-guess, let the call proceed/fail.
             logger.debug("Could not list local models: %s", e.__class__.__name__)
@@ -99,14 +134,14 @@ class ProviderRouter:
                     "Recommended model %r is not installed; using the selected model %r.",
                     wanted, selected,
                 )
-                return selected
+                return self._warn_if_weak(selected, task)
             chosen = installed[0]
             logger.info(
                 "Recommended model %r is not installed; using installed model %r "
                 "(pull %r to use the recommendation).",
                 wanted, chosen, wanted,
             )
-            return chosen
+            return self._warn_if_weak(chosen, task)
 
         # Nothing installed: a genuine first run. Only download when the provider
         # actually supports pulling and we have a model to pull. Otherwise return
@@ -151,7 +186,7 @@ class ProviderRouter:
                     return provider, model
                 # Local provider: the tier's recommended model may not actually
                 # be installed, which would 404 on every call.
-                model = await self._ensure_local_model(provider, model)
+                model = await self._ensure_local_model(provider, model, task)
                 return provider, model
 
         raise ProviderError(

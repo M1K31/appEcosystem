@@ -16,6 +16,11 @@ from .hardware import (
     tier_for,
 )
 from .features import CapabilityManager, FeatureRequirement, FeatureStatus
+from .capability import (
+    assess_for_security,
+    annotate_models,
+    parse_parameter_size,
+)
 from .router import ProviderRouter
 from .factory import build_providers, build_router
 from .sync import AIProfileClient
