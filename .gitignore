@@ -63,3 +63,16 @@ INSTALL_REMEDIATION_PLAN.md
 AUDIT_REPORT.md
 ECOSYSTEM_AI_PLAN.md
 ECOSYSTEM_AUDIT.md
+
+# --- Documentation policy ---------------------------------------------------
+# Only user-facing docs are tracked: README, usage guides, API/user references,
+# and changelogs. Agent-generated planning artifacts (plans, specs, findings,
+# audits, walkthroughs) stay local and are added only after an explicit
+# document review.
+docs/superpowers/
+*_PLAN.md
+*_FINDINGS.md
+*_AUDIT.md
+AUDIT_*.md
+walkthrough.md
+WALKTHROUGH.md
