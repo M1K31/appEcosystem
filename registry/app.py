@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -424,6 +425,63 @@ async def check_service_health(
         raise HTTPException(status_code=404, detail=f"Service '{name}' not found")
     result = await health_monitor.check_one(name)
     return result
+
+
+@app.post("/events/publish")
+async def publish_event(request: Request, envelope: dict = Body(...)):
+    """
+    Accept a signed event from an ecosystem service and fan it out to subscribers.
+
+    This is the registry-side counterpart of ecosystem-client's registry-mode
+    publisher (`event_publisher.py::_publish_via_registry`), which POSTs here. The
+    client had no fallback, so before this route existed every cross-app event 404'd
+    and was silently dropped (see todos_changelog.md, 2026-07-25).
+
+    Auth: the event is HMAC-signed by the publisher (the envelope's `signature`
+    field). We verify it against the shared ecosystem secret — no separate
+    Authorization credential — then delegate to the existing EventBus, which
+    re-signs and delivers to each subscriber's webhook by subscription.
+    """
+    event_bus = getattr(request.app.state, "event_bus", None)
+    if event_bus is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="event bus not configured",
+        )
+
+    from events.schemas import EventEnvelope
+    from ecosystem_auth.tokens import verify_signature
+
+    try:
+        event = EventEnvelope(**envelope)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="invalid event envelope",
+        )
+
+    if not event.signature or not verify_signature(
+        event.signable_dict(), event.signature, event_bus.hmac_secret
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid or missing event signature",
+        )
+
+    # Accept-and-ack: fan out to subscribers in the BACKGROUND. A publish to the
+    # bus must never block on subscriber delivery — awaiting it here meant a slow
+    # or unreachable subscriber (its own retries: 3 x 5s) made every publish
+    # exceed the client's 5s request_timeout, so the publisher logged a
+    # ReadTimeout warning per event (log spam) even though the event was valid.
+    # The bus already has per-subscriber retries + logging; we only ack acceptance.
+    task = asyncio.create_task(event_bus.publish(event))
+    _pending = getattr(request.app.state, "_event_delivery_tasks", None)
+    if _pending is None:
+        _pending = set()
+        request.app.state._event_delivery_tasks = _pending
+    _pending.add(task)
+    task.add_done_callback(_pending.discard)
+    return {"queued": True}
 
 
 def _register_static_projects(reg: ServiceRegistry) -> None:

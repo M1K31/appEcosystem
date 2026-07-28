@@ -78,7 +78,17 @@ class EventPublisher:
                 resp.raise_for_status()
                 return resp.json()
         except Exception as e:
-            logger.warning(f"Failed to publish via registry: {e}")
+            # Throttle: a persistently slow/unreachable registry would otherwise
+            # log one warning PER event (motion can fire many per second). Warn at
+            # most once per 60s and demote the rest to debug so logs don't flood.
+            # Use {e!r} — some exceptions (e.g. httpx.ReadTimeout('')) have an
+            # EMPTY str(), which previously logged a blank, unhelpful reason.
+            now = time.monotonic()
+            if now - getattr(self, "_last_publish_warn", 0.0) >= 60.0:
+                self._last_publish_warn = now
+                logger.warning(f"Failed to publish via registry: {e!r}")
+            else:
+                logger.debug(f"Failed to publish via registry: {e!r}")
             return {"delivered": 0, "failed": 1, "error": str(e)}
 
     async def _publish_direct(self, envelope: dict) -> dict:
