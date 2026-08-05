@@ -12,11 +12,16 @@ JS_CLIENT="$REPO_ROOT/ecosystem_client_js"
 PY_AUTH="$REPO_ROOT/auth/python/ecosystem_auth"
 JS_AUTH="$REPO_ROOT/auth/js/src"
 
-# Target projects — update these paths for your environment
-OPENEYE="${ECOSYSTEM_OPENEYE_PATH:-/Volumes/Locker2/GitHub/OpenEye-OpenCV_Home_Security}"
-LOGANALYSIS="${ECOSYSTEM_LOGANALYSIS_PATH:-/Volumes/Locker2/GitHub/LogAnalysis}"
-AI_SURVIVAL="${ECOSYSTEM_AI_SURVIVAL_PATH:-/Volumes/Locker2/GitHub/AI-for-Survival}"
-MAGICMIRROR="${ECOSYSTEM_MAGICMIRROR_PATH:-/Volumes/Locker2/GitHub/MagicMirror-Custom}"
+# Target projects. Default to this repo's own parent directory so the script
+# follows the checkout wherever it lives — the ecosystem moved off an external
+# volume to ~/GitHub, and hardcoded absolute defaults silently SKIP every
+# project once that path stops resolving (the skip is not an error, so a sync
+# could report success having copied nothing).
+ECOSYSTEM_BASE_PATH="${ECOSYSTEM_BASE_PATH:-$(dirname "$REPO_ROOT")}"
+OPENEYE="${ECOSYSTEM_OPENEYE_PATH:-$ECOSYSTEM_BASE_PATH/OpenEye-OpenCV_Home_Security}"
+LOGANALYSIS="${ECOSYSTEM_LOGANALYSIS_PATH:-$ECOSYSTEM_BASE_PATH/LogAnalysis}"
+AI_SURVIVAL="${ECOSYSTEM_AI_SURVIVAL_PATH:-$ECOSYSTEM_BASE_PATH/AI-for-Survival}"
+MAGICMIRROR="${ECOSYSTEM_MAGICMIRROR_PATH:-$ECOSYSTEM_BASE_PATH/MagicMirror-Custom}"
 
 sync_python() {
     local target="$1"
