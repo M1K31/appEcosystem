@@ -1,28 +1,55 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+# >=77 for the PEP 639 `license`/`license-files` fields used below.
+requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ecosystem-client"
+# Prefixed to group the family under the reserved `appEcosystem` PyPI name.
+# Import name is unchanged: `pip install appecosystem-client` -> `import ecosystem_client`.
+name = "appecosystem-client"
 version = "0.3.1"
-description = "Client library for appEcosystem inter-service communication"
+description = "Service registration, peer discovery and event bus client for appEcosystem"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.9"
-# NOTE: ecosystem-client ALSO requires the `ecosystem-auth` package at runtime for
-# HMAC request signing (see ecosystem_client/discovery.py::_require_auth). It is
-# intentionally NOT listed below: both packages are distributed as local paths
-# today, so a hard dependency would make
-#     pip install <appEcosystem>/packages/ecosystem-client
-# fail to resolve against a package index. Install both:
-#     pip install <appEcosystem>/auth/python <appEcosystem>/packages/ecosystem-client
-# Convert this into a real dependency once the packages are published.
+authors = [{ name = "Mikel Smart" }]
+keywords = ["service-discovery", "events", "microservices", "mdns", "appecosystem"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Distributed Computing",
+]
+
+# ecosystem_auth is imported at runtime for HMAC request signing
+# (ecosystem_client/discovery.py::_require_auth). This was carried as a comment
+# while both packages were installed from local paths, where a hard dependency
+# could not resolve against an index. Publishing is the condition that comment
+# named, so it is now a real dependency.
 dependencies = [
     "httpx>=0.24.0",
+    "appecosystem-auth>=0.4.0",
 ]
 
 [project.optional-dependencies]
 mdns = ["zeroconf>=0.80.0"]
 yaml = ["pyyaml>=6.0"]
 dev = ["pytest>=7.0", "pytest-asyncio>=0.21"]
+
+# Keep table headers last: any bare key after a [table] belongs to that table,
+# so a `dependencies` placed below [project.urls] silently becomes a URL entry
+# and the build fails with "project.urls.dependencies must be string".
+[project.urls]
+Homepage = "https://github.com/M1K31/appEcosystem"
+Source = "https://github.com/M1K31/appEcosystem"
+Issues = "https://github.com/M1K31/appEcosystem/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]

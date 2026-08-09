@@ -1,15 +1,40 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+# >=77 for the PEP 639 `license`/`license-files` fields used below.
+requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ecosystem-ai"
+# Prefixed to group the family under the reserved `appEcosystem` PyPI name.
+# Import name is unchanged: `pip install appecosystem-ai` -> `import ecosystem_ai`.
+name = "appecosystem-ai"
 version = "0.1.0"
-description = "Shared, hardware-adaptive, provider-pluggable AI layer for the app ecosystem"
+description = "Hardware-adaptive, provider-pluggable AI routing layer for appEcosystem"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.9"
+authors = [{ name = "Mikel Smart" }]
+keywords = ["llm", "ollama", "ai", "local-first", "provider-routing", "appecosystem"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = [
     "httpx>=0.24.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/M1K31/appEcosystem"
+Source = "https://github.com/M1K31/appEcosystem"
+Issues = "https://github.com/M1K31/appEcosystem/issues"
 
 [project.optional-dependencies]
 # Optional cloud providers — installed only when used.

@@ -1,13 +1,39 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+# >=77 for the PEP 639 `license`/`license-files` fields used below.
+requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ecosystem-auth"
+# Prefixed to group the family under the reserved `appEcosystem` PyPI name;
+# PyPI organizations/namespaces are not available to this project yet. The
+# import name is unchanged: `pip install appecosystem-auth` -> `import ecosystem_auth`.
+name = "appecosystem-auth"
 version = "0.4.0"
-description = "Shared HMAC-SHA256 authentication for the app ecosystem"
+description = "Shared HMAC-SHA256 request signing and verification for the appEcosystem service mesh"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.9"
+authors = [{ name = "Mikel Smart" }]
+keywords = ["hmac", "authentication", "request-signing", "microservices", "appecosystem"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = ["fastapi>=0.100.0"]
+
+[project.urls]
+Homepage = "https://github.com/M1K31/appEcosystem"
+Source = "https://github.com/M1K31/appEcosystem"
+Issues = "https://github.com/M1K31/appEcosystem/issues"
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "httpx>=0.24"]

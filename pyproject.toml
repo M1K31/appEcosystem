@@ -1,12 +1,35 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+# >=77 for the PEP 639 `license`/`license-files` fields used below.
+requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "app-ecosystem"
+# The umbrella distribution: the registry service, event bus and `ecosystem` CLI.
+# Renamed from `app-ecosystem` to match the reserved PyPI project `appEcosystem`
+# — PEP 503 normalizes that to `appecosystem`, which is NOT the same project as
+# `app-ecosystem`, so the old name would have published somewhere else entirely.
+name = "appecosystem"
 version = "0.3.0"
-description = "Lightweight coordination layer for the app ecosystem"
+description = "Service registry, event bus and coordination layer for the appEcosystem service mesh"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
+authors = [{ name = "Mikel Smart" }]
+keywords = ["service-registry", "event-bus", "microservices", "home-automation", "appecosystem"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Distributed Computing",
+]
+
 dependencies = [
     "fastapi>=0.100.0",
     "uvicorn>=0.23.0",
@@ -21,6 +44,14 @@ dev = ["pytest>=7.0", "pytest-asyncio>=0.21", "httpx>=0.24"]
 
 [project.scripts]
 ecosystem = "cli.main:main"
+
+# Keep table headers last: any bare key after a [table] belongs to that table,
+# so a `dependencies` placed below [project.urls] silently becomes a URL entry
+# and the build fails with "project.urls.dependencies must be string".
+[project.urls]
+Homepage = "https://github.com/M1K31/appEcosystem"
+Source = "https://github.com/M1K31/appEcosystem"
+Issues = "https://github.com/M1K31/appEcosystem/issues"
 
 [tool.setuptools.packages.find]
 include = ["cli*", "ecosystem_client*", "events*", "llm*", "registry*"]

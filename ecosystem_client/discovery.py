@@ -16,12 +16,11 @@ logger = logging.getLogger(__name__)
 def _require_auth():
     """Import ecosystem_auth.tokens, or explain how to install it.
 
-    ecosystem-auth is a peer requirement rather than a declared dependency: both
-    packages ship as local paths today, so declaring it would break
-    `pip install <path>/packages/ecosystem-client` until they are published. A
-    third party installing only this package used to hit a bare
-    ModuleNotFoundError deep inside a request; this turns that into an
-    actionable message.
+    appecosystem-auth is now a declared dependency, so pip installs it with this
+    package and this branch should not fire. It remains for the cases that
+    bypass the resolver — a path/editable install of just this package, or the
+    auth package being uninstalled underneath a live environment — where the
+    alternative is a bare ModuleNotFoundError deep inside a signed request.
     """
     try:
         from ecosystem_auth import tokens
@@ -29,9 +28,9 @@ def _require_auth():
         return tokens
     except ImportError as e:
         raise ImportError(
-            "ecosystem-client requires the ecosystem-auth package for HMAC "
-            "request signing, but it is not installed. Install it alongside "
-            "this package:  pip install <appEcosystem>/auth/python"
+            "appecosystem-client requires the appecosystem-auth package for HMAC "
+            "request signing, but it is not installed. Install it with:  "
+            "pip install appecosystem-auth"
         ) from e
 
 
