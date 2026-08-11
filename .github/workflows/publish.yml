@@ -33,17 +33,25 @@ jobs:
           python -m pip install --upgrade pip pytest
           python -m pytest tests/test_packaging.py -v
 
-      - name: Build all four distributions
+      - name: Build each distribution into its own directory
+        # Kept separate because each package uploads under its own trusted
+        # publisher: pypa/gh-action-pypi-publish publishes everything in the
+        # directory it is given, so one shared dist/ would make every job try to
+        # upload all four and fail on the three it is not authorized for.
         run: |
           python -m pip install --upgrade build twine
           rm -rf dist && mkdir -p dist
-          for d in auth/python packages/ecosystem-client packages/ecosystem-ai .; do
-            echo "::group::build $d"
-            python -m build --outdir dist "$d"
+          build_one() {
+            echo "::group::build $2 ($1)"
+            python -m build --outdir "dist/$2" "$1"
             echo "::endgroup::"
-          done
-          twine check dist/*
-          ls -la dist/
+          }
+          build_one auth/python               auth
+          build_one packages/ecosystem-client client
+          build_one packages/ecosystem-ai     ai
+          build_one .                         umbrella
+          twine check dist/*/*
+          ls -laR dist/
 
       - uses: actions/upload-artifact@v4
         with:
@@ -51,13 +59,20 @@ jobs:
           path: dist/
 
   testpypi:
-    name: Publish to TestPyPI
+    name: "TestPyPI: ${{ matrix.package }}"
     needs: build
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
-    environment: testpypi
+    strategy:
+      fail-fast: false        # report every package's outcome, not just the first failure
+      matrix:
+        include:
+          - { package: auth,   environment: testpypi-auth }
+          - { package: client, environment: testpypi-client }
+          - { package: ai,     environment: testpypi-ai }
+    environment: ${{ matrix.environment }}
     permissions:
-      id-token: write          # REQUIRED: mints the OIDC token PyPI trusts
+      id-token: write         # REQUIRED: mints the OIDC token PyPI trusts
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -65,17 +80,31 @@ jobs:
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
+          packages-dir: dist/${{ matrix.package }}
           repository-url: https://test.pypi.org/legacy/
           # TestPyPI accumulates rehearsals; don't fail a dry run on a version
           # that was already uploaded there.
           skip-existing: true
 
   pypi:
-    name: Publish to PyPI
+    name: "PyPI: ${{ matrix.package }}"
     needs: build
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
-    environment: pypi          # add a required reviewer here: the release gate
+    strategy:
+      fail-fast: false
+      matrix:
+        # PyPI allows only THREE pending trusted publishers per account at once.
+        # The three libraries are what third parties actually import, so they go
+        # first. Publishing converts each pending publisher into a regular one
+        # and frees its slot — after this succeeds, register a fourth pending
+        # publisher for `appecosystem` (environment pypi-umbrella) and add:
+        #   - { package: umbrella, environment: pypi-umbrella }
+        include:
+          - { package: auth,   environment: pypi-auth }
+          - { package: client, environment: pypi-client }
+          - { package: ai,     environment: pypi-ai }
+    environment: ${{ matrix.environment }}
     permissions:
       id-token: write
     steps:
@@ -84,3 +113,5 @@ jobs:
           name: distributions
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/${{ matrix.package }}
