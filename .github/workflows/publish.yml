@@ -65,16 +65,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # PyPI allows only THREE pending trusted publishers per account at once.
-        # The three libraries are what third parties actually import, so they go
-        # first. Publishing converts each pending publisher into a regular one
-        # and frees its slot — after this succeeds, register a fourth pending
-        # publisher for `appecosystem` (environment pypi-umbrella) and add:
-        #   - { package: umbrella, environment: pypi-umbrella }
+        # The three libraries published first (v0.4.0): PyPI caps pending
+        # trusted publishers at three per account, and these are what third
+        # parties import. Publishing converted them to regular publishers and
+        # freed the slots, so the umbrella could then be registered.
         include:
-          - { package: auth,   environment: pypi-auth }
-          - { package: client, environment: pypi-client }
-          - { package: ai,     environment: pypi-ai }
+          - { package: auth,     environment: pypi-auth }
+          - { package: client,   environment: pypi-client }
+          - { package: ai,       environment: pypi-ai }
+          - { package: umbrella, environment: pypi-umbrella }
     environment: ${{ matrix.environment }}
     permissions:
       id-token: write
