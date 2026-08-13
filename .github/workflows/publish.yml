@@ -3,17 +3,17 @@ name: Publish
 # Tag-driven. PyPI versions are immutable — a bad upload can only be yanked,
 # never replaced — so this must never fire on an ordinary push to main.
 # Use the manual dispatch against TestPyPI to rehearse.
+# There is deliberately no TestPyPI path. It would need a separate account on
+# test.pypi.org plus three more pending publishers, and the one risk it uniquely
+# covered — that appecosystem-client resolves appecosystem-auth from an index —
+# is verified against the built wheels instead (see tests/test_packaging.py for
+# the metadata, and the local find-links install documented in the release
+# checklist). To add it back: create testpypi-* environments, register the
+# publishers there, and add a job passing repository-url plus skip-existing.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
-    inputs:
-      target:
-        description: "Where to upload"
-        required: true
-        default: testpypi
-        type: choice
-        options: [testpypi, pypi]
 
 jobs:
   build:
@@ -58,39 +58,10 @@ jobs:
           name: distributions
           path: dist/
 
-  testpypi:
-    name: "TestPyPI: ${{ matrix.package }}"
-    needs: build
-    runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
-    strategy:
-      fail-fast: false        # report every package's outcome, not just the first failure
-      matrix:
-        include:
-          - { package: auth,   environment: testpypi-auth }
-          - { package: client, environment: testpypi-client }
-          - { package: ai,     environment: testpypi-ai }
-    environment: ${{ matrix.environment }}
-    permissions:
-      id-token: write         # REQUIRED: mints the OIDC token PyPI trusts
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: distributions
-          path: dist/
-      - uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist/${{ matrix.package }}
-          repository-url: https://test.pypi.org/legacy/
-          # TestPyPI accumulates rehearsals; don't fail a dry run on a version
-          # that was already uploaded there.
-          skip-existing: true
-
   pypi:
     name: "PyPI: ${{ matrix.package }}"
     needs: build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
     strategy:
       fail-fast: false
       matrix:
