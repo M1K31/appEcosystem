@@ -85,3 +85,9 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/${{ matrix.package }}
+          # These four version independently, so most tags bump only some of
+          # them. Without this, every release fails on the packages whose
+          # version has not changed. Note the trade-off: a package you MEANT to
+          # bump but forgot will now skip silently rather than fail loudly, so
+          # check the job summaries against what you intended to ship.
+          skip-existing: true

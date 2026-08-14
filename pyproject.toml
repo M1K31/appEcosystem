@@ -37,6 +37,12 @@ dependencies = [
     "pyyaml>=6.0",
     "httpx>=0.24.0",
     "zeroconf>=0.80.0",
+    # Depend on the separately published libraries rather than bundling copies.
+    # This package used to ship its own ecosystem_client/ (see the exclusion in
+    # tool.setuptools.packages.find below): registry/app.py imports it, and
+    # ecosystem_auth is imported throughout the registry and CLI.
+    "appecosystem-client>=0.3.1",
+    "appecosystem-auth>=0.4.0",
 ]
 
 [project.optional-dependencies]
@@ -54,4 +60,10 @@ Source = "https://github.com/M1K31/appEcosystem"
 Issues = "https://github.com/M1K31/appEcosystem/issues"
 
 [tool.setuptools.packages.find]
-include = ["cli*", "ecosystem_client*", "events*", "llm*", "registry*"]
+# ecosystem_client is deliberately NOT included: it is published separately as
+# appecosystem-client and is a declared dependency above. Shipping it here too
+# made both distributions claim ownership of the same 18 files, so installing
+# this package could silently overwrite a NEWER appecosystem-client with the
+# copy bundled at this package's build time — while pip still reported the newer
+# version as installed. An invisible downgrade is worse than a missing module.
+include = ["cli*", "events*", "llm*", "registry*"]
