@@ -1,0 +1,62 @@
+name: Publish npm
+
+# Separate from publish.yml (PyPI) and separately tagged: the JS and Python
+# packages version independently, so a Python release must not force a JS one.
+#   js-v0.1.1  -> publishes the npm packages
+#   v0.4.2     -> publishes the PyPI packages
+on:
+  push:
+    tags: ["js-v*"]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    name: "npm: ${{ matrix.name }}"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false        # report both packages' outcomes, not just the first failure
+      matrix:
+        include:
+          # auth first only for readability; npm has no ordering requirement
+          # once both exist, and each job publishes independently.
+          - { dir: auth/js,             name: ecosystem-auth }
+          - { dir: ecosystem_client_js, name: ecosystem-client }
+    permissions:
+      id-token: write         # REQUIRED: mints the OIDC token npm exchanges
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"                        # ships npm 11+
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Verify npm supports trusted publishing
+        # Trusted publishing needs npm >= 11. Failing here is far clearer than
+        # the auth error a v10 CLI produces when it falls back to token auth.
+        run: |
+          npm --version
+          node -e "const m=+require('child_process').execSync('npm --version').toString().split('.')[0];
+                   if (m < 11) { console.error('npm 11+ required, got '+m); process.exit(1); }"
+
+      - name: Install and test
+        working-directory: ${{ matrix.dir }}
+        # The client's tests import @smartindustriesllc/ecosystem-auth, so they
+        # only pass with dependencies installed — which is also the check that
+        # the published dependency actually resolves.
+        run: |
+          npm install
+          npm test
+
+      - name: Publish
+        working-directory: ${{ matrix.dir }}
+        # No NODE_AUTH_TOKEN. The npm CLI detects the OIDC environment and
+        # exchanges the token itself. npm also attaches provenance attestations
+        # automatically for trusted-publisher builds.
+        #
+        # No `environment:` on this job: the trusted publishers were registered
+        # without an environment name, and the OIDC `sub` claim must match that
+        # exactly. If you later add environment names on npmjs.com, add the
+        # matching `environment:` here or the exchange will fail.
+        run: npm publish --access public
