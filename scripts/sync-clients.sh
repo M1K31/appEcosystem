@@ -8,9 +8,7 @@ REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # Source directories
 PY_CLIENT="$REPO_ROOT/ecosystem_client"
-JS_CLIENT="$REPO_ROOT/ecosystem_client_js"
 PY_AUTH="$REPO_ROOT/auth/python/ecosystem_auth"
-JS_AUTH="$REPO_ROOT/auth/js/src"
 
 # Target projects. Default to this repo's own parent directory so the script
 # follows the checkout wherever it lives — the ecosystem moved off an external
@@ -21,7 +19,6 @@ ECOSYSTEM_BASE_PATH="${ECOSYSTEM_BASE_PATH:-$(dirname "$REPO_ROOT")}"
 OPENEYE="${ECOSYSTEM_OPENEYE_PATH:-$ECOSYSTEM_BASE_PATH/OpenEye-OpenCV_Home_Security}"
 LOGANALYSIS="${ECOSYSTEM_LOGANALYSIS_PATH:-$ECOSYSTEM_BASE_PATH/LogAnalysis}"
 AI_SURVIVAL="${ECOSYSTEM_AI_SURVIVAL_PATH:-$ECOSYSTEM_BASE_PATH/AI-for-Survival}"
-MAGICMIRROR="${ECOSYSTEM_MAGICMIRROR_PATH:-$ECOSYSTEM_BASE_PATH/MagicMirror-Custom}"
 
 sync_python() {
     local target="$1"
@@ -55,28 +52,12 @@ sync_python() {
     cp -r "$PY_AUTH" "$auth_dest"
 }
 
-sync_js() {
-    if [ ! -d "$JS_CLIENT" ]; then
-        echo "SKIP JS client — not yet created: $JS_CLIENT"
-        return
-    fi
-    if [ ! -d "$MAGICMIRROR" ]; then
-        echo "SKIP MagicMirror — directory not found: $MAGICMIRROR"
-        return
-    fi
-
-    local dest="$MAGICMIRROR/js/ecosystem-client"
-    echo "SYNC MagicMirror (JS) → $dest"
-    rm -rf "$dest"
-    cp -r "$JS_CLIENT/src" "$dest"
-
-    # Also sync auth library
-    local auth_dest="$MAGICMIRROR/js/ecosystem-auth"
-    echo "SYNC MagicMirror (Auth) → $auth_dest"
-    rm -rf "$auth_dest"
-    mkdir -p "$auth_dest"
-    cp "$JS_AUTH"/*.js "$auth_dest/"
-}
+# The JS half of this script is gone. MagicMirror used to receive copies of the
+# JS client and auth libraries here; it now depends on the published packages
+# @smartindustriesllc/ecosystem-client and @smartindustriesllc/ecosystem-auth,
+# so npm handles distribution and versioning. scripts/check-js-client-parity.sh,
+# which existed only to detect drift between source and those copies, is gone
+# for the same reason.
 
 echo "=== Ecosystem Client Sync ==="
 echo ""
@@ -84,7 +65,6 @@ echo ""
 sync_python "$OPENEYE" "openeye"
 sync_python "$LOGANALYSIS" "loganalysis"
 sync_python "$AI_SURVIVAL" "ai_survival"
-sync_js
 
 echo ""
 echo "=== Sync complete ==="

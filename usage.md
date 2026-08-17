@@ -91,7 +91,8 @@ httpx.post(url, json=payload, headers=headers)
 
 ### Node / JS
 ```js
-const { signRequest } = require('./js/ecosystem-client/tokens') // shipped into each app
+// npm install @smartindustriesllc/ecosystem-auth
+const { signRequest } = require('@smartindustriesllc/ecosystem-auth')
 const url = 'http://127.0.0.1:8500/register'
 const payload = { name: 'mm', host: '127.0.0.1', port: 8080, health_endpoint: '/health' }
 const headers = signRequest('POST', url, secret, payload)
