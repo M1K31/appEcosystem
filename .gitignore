@@ -87,3 +87,6 @@ WALKTHROUGH.md
 progress-log.md
 PROGRESS.md
 STATUS.md
+
+# npm pack artifacts — regenerable, never commit
+*.tgz

@@ -1,6 +1,6 @@
 const http = require("http");
 const https = require("https");
-const { createEcosystemToken } = require("../../auth/js/src/tokens");
+const { createEcosystemToken } = require("@smartindustriesllc/ecosystem-auth");
 
 class Peer {
     constructor(name, baseUrl, hmacSecret, timeout = 5000) {

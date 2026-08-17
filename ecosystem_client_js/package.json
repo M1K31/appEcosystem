@@ -1,9 +1,47 @@
 {
-  "name": "ecosystem-client",
+  "name": "@smartindustriesllc/ecosystem-client",
   "version": "0.1.0",
-  "private": true,
-  "description": "Ecosystem client library for Node.js (MagicMirror)",
+  "description": "Service registration, peer discovery and event bus client for the appEcosystem service mesh",
   "main": "src/index.js",
-  "dependencies": {},
-  "devDependencies": {}
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "keywords": [
+    "service-discovery",
+    "events",
+    "microservices",
+    "mdns",
+    "appecosystem"
+  ],
+  "author": "Mikel Smart",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/M1K31/appEcosystem.git",
+    "directory": "ecosystem_client_js"
+  },
+  "bugs": {
+    "url": "https://github.com/M1K31/appEcosystem/issues"
+  },
+  "homepage": "https://github.com/M1K31/appEcosystem#readme",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@smartindustriesllc/ecosystem-auth": "^0.1.0"
+  },
+  "optionalDependencies": {
+    "bonjour-service": "^1.4.4"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }

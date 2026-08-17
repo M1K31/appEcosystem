@@ -1,15 +1,42 @@
 {
-  "name": "ecosystem-auth",
+  "name": "@smartindustriesllc/ecosystem-auth",
   "version": "0.1.0",
-  "description": "Shared HMAC-SHA256 authentication for the app ecosystem (Node.js)",
+  "description": "Shared HMAC-SHA256 request signing and verification for the appEcosystem service mesh",
   "main": "src/tokens.js",
   "exports": {
     ".": "./src/tokens.js",
     "./middleware": "./src/middleware.js"
   },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "test": "node --test"
   },
-  "keywords": ["ecosystem", "auth", "hmac"],
-  "license": "UNLICENSED"
+  "keywords": [
+    "hmac",
+    "authentication",
+    "request-signing",
+    "microservices",
+    "appecosystem"
+  ],
+  "author": "Mikel Smart",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/M1K31/appEcosystem.git",
+    "directory": "auth/js"
+  },
+  "bugs": {
+    "url": "https://github.com/M1K31/appEcosystem/issues"
+  },
+  "homepage": "https://github.com/M1K31/appEcosystem#readme",
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }

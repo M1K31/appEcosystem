@@ -66,7 +66,7 @@ class DiscoveryManager {
                 subscriptions: subscriptions || [],
             };
             const payload = JSON.stringify(dataObj);
-            const { signRequest } = require("../../auth/js/src/tokens");
+            const { signRequest } = require("@smartindustriesllc/ecosystem-auth");
             const registerUrl = `${this.config.registryUrl}/register`;
             const headers = signRequest("POST", registerUrl, this.config.hmacSecret, dataObj);
             await this._post(registerUrl, payload, headers);
@@ -80,7 +80,7 @@ class DiscoveryManager {
         if (this.mode !== DiscoveryMode.REGISTRY) return false;
         try {
             const url = `${this.config.registryUrl}/deregister/${name}`;
-            const { signRequest } = require("../../auth/js/src/tokens");
+            const { signRequest } = require("@smartindustriesllc/ecosystem-auth");
             const headers = signRequest("DELETE", url, this.config.hmacSecret);
             await this._delete(url, headers);
             return true;
