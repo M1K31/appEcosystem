@@ -585,6 +585,18 @@ async def create_approval(
     # from the authenticated caller; approval_id/policy_version/mode are left to
     # the server to assign.
     requester = str((auth or {}).get("app_id") or "operator").strip()
+    # The containment lifecycle fields (async_containment / on_deny / revert_plan)
+    # are NOT accepted from the client here: a caller-supplied revert_plan rides
+    # into the containment.reverted event, and async_containment/on_deny change the
+    # approval's auto-revert semantics. Those are derived server-side from a
+    # PolicyEngine decision on the /policy/evaluate enqueue path; a manual approval
+    # created here is a plain one (no async containment, abort-on-deny). ttl_seconds
+    # is clamped to a sane positive range.
+    try:
+        ttl = int(payload.get("ttl_seconds", 3600))
+    except (TypeError, ValueError):
+        ttl = 3600
+    ttl = max(60, min(ttl, 86400))
     sanitized = {
         "requester_service": requester,
         "actor": requester,
@@ -592,10 +604,7 @@ async def create_approval(
         "action_class": payload["action_class"],
         "target": payload.get("target") or {},
         "summary": payload.get("summary") or "",
-        "ttl_seconds": payload.get("ttl_seconds", 3600),
-        "async_containment": bool(payload.get("async_containment", False)),
-        "on_deny": payload.get("on_deny"),
-        "revert_plan": payload.get("revert_plan"),
+        "ttl_seconds": ttl,
     }
     return await approvals.create_request(sanitized)
 
