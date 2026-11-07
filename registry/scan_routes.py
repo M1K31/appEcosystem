@@ -9,7 +9,26 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, sta
 
 logger = logging.getLogger("ecosystem.scan_routes")
 
-router = APIRouter(prefix="/scans", tags=["scans"])
+
+async def _require_scan_auth(request: Request) -> dict | None:
+    """Gate every scan route: allow HMAC-authenticated service callers or
+    loopback operator-UI sessions, reject remote unauthenticated callers.
+
+    Scan data (device inventories, forensic reports, scan triggering) is
+    sensitive, so reuse the same gate the policy routes apply.
+    """
+    from .policy_routes import _optional_auth, _require_loopback_or_auth
+
+    auth = await _optional_auth(request)
+    _require_loopback_or_auth(request, auth)
+    return auth
+
+
+router = APIRouter(
+    prefix="/scans",
+    tags=["scans"],
+    dependencies=[Depends(_require_scan_auth)],
+)
 
 
 def get_scan_runner(request: Request):
@@ -52,7 +71,6 @@ def _require_step_up(
     token = (
         b.get("step_up_token")
         or request.headers.get("X-Ecosystem-Step-Up")
-        or request.query_params.get("step_up_token")
         or ""
     ).strip()
     if token and step_up_svc is not None:
@@ -64,13 +82,11 @@ def _require_step_up(
     totp_code = (
         request.headers.get("X-Ecosystem-TOTP")
         or b.get("totp_code")
-        or request.query_params.get("totp_code")
         or ""
     ).strip()
     operator_id = str(
         request.headers.get("X-Ecosystem-Operator")
         or b.get("operator_id")
-        or request.query_params.get("operator_id")
         or "admin"
     ).strip()
     if totp_code and len(totp_code) == 6 and totp_code.isdigit() and step_up_svc is not None:
@@ -91,6 +107,7 @@ async def run_scan(
     request: Request,
     body: dict[str, Any] = Body(default_factory=dict),
     runner=Depends(get_scan_runner),
+    auth: dict | None = Depends(_require_scan_auth),
 ):
     """Initiate an on-demand scan with PolicyEngine gating."""
     from agents.scan_agent import ScanRequest
@@ -98,7 +115,9 @@ async def run_scan(
     device_id = str(body.get("device_id") or "local").strip()
     profile = str(body.get("profile") or "quick").strip().lower()
     offline = bool(body.get("offline", False))
-    initiator = str(body.get("initiator") or "operator").strip()
+    # Initiator is the authenticated service identity, never taken from the
+    # request body (which a caller could forge). Loopback operator UI → "operator".
+    initiator = str((auth or {}).get("app_id") or "operator").strip()
     phone_folder = body.get("phone_folder")
     fp = body.get("public_key_fingerprint")
 
@@ -158,15 +177,14 @@ async def get_scan_summary(
 async def get_scan_full_report(
     scan_id: str,
     request: Request,
-    step_up_token: Optional[str] = Query(None),
-    totp_code: Optional[str] = Query(None),
     runner=Depends(get_scan_runner),
     step_up=Depends(get_step_up),
 ):
-    """Decrypt and return the full forensic report. Requires step-up TOTP / passkey auth."""
+    """Decrypt and return the full forensic report. Requires step-up auth via the
+    X-Ecosystem-Step-Up / X-Ecosystem-TOTP headers (or POST body) — never URL query
+    params, which leak into access logs and browser history."""
     _require_step_up(
         request,
-        body={"step_up_token": step_up_token, "totp_code": totp_code},
         step_up_svc=step_up,
         required_scope="data_release",
     )

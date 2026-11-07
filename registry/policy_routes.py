@@ -510,6 +510,12 @@ async def register_passkey(
     pub_key = str(payload.get("public_key") or "").strip()
     if not cred_id or not pub_key:
         raise HTTPException(status_code=400, detail="credential_id and public_key are required")
+    # Registering (or rotating) a passkey when the operator already has ANY
+    # enrolled factor requires proving current step-up — mirrors enroll_totp and
+    # closes the "register your own passkey without authentication" bypass.
+    existing = step_up.has_enrolled_factors(operator_id)
+    if any(existing.values()):
+        _resolve_step_up_claims(step_up, payload, request)
     return step_up.register_passkey(
         operator_id,
         cred_id,

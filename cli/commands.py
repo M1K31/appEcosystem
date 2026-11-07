@@ -17,8 +17,10 @@ import yaml
 def _resolve_config_path() -> Path:
     if "ECOSYSTEM_CONFIG" in os.environ and Path(os.environ["ECOSYSTEM_CONFIG"]).exists():
         return Path(os.environ["ECOSYSTEM_CONFIG"])
+    # Do NOT search the current working directory: a CLI run from an untrusted
+    # directory could load an attacker-planted ecosystem.yaml. Only an explicit
+    # ECOSYSTEM_CONFIG, the user config dir, or the install/repo config are trusted.
     for candidate in [
-        Path.cwd() / "ecosystem.yaml",
         Path.home() / ".config" / "ecosystem" / "ecosystem.yaml",
         Path(__file__).resolve().parent.parent / "ecosystem.yaml",
     ]:
