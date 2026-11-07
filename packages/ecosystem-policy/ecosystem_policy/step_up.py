@@ -68,13 +68,22 @@ class StepUpAuthenticator:
         *,
         signing_secret: str | None = None,
         token_ttl_seconds: int = 300,
+        max_totp_failures: int = 5,
+        totp_lockout_seconds: int = 900,
     ):
         default_dir = Path(os.environ.get("ECOSYSTEM_POLICY_KEY_DIR") or (Path.home() / ".config" / "ecosystem"))
         self.store_path = Path(store_path) if store_path else (default_dir / "step_up_credentials.json")
         self._signing_secret = signing_secret
         self.token_ttl_seconds = max(30, int(token_ttl_seconds))
+        # TOTP brute-force throttle: a 6-digit code is only ~1e6 combinations and
+        # the drift window widens that, so unlimited attempts are brute-forceable.
+        # Track recent failures per operator (in-memory, like _used_totp_windows)
+        # and refuse once the threshold is hit within the lockout window.
+        self.max_totp_failures = max(1, int(max_totp_failures))
+        self.totp_lockout_seconds = max(1, int(totp_lockout_seconds))
         self._lock = threading.RLock()
         self._used_totp_windows: dict[str, int] = {}
+        self._totp_failures: dict[str, list[float]] = {}
         self._challenges: dict[str, dict[str, Any]] = {}
 
     def _secret(self) -> str:
@@ -145,10 +154,25 @@ class StepUpAuthenticator:
             return None
 
         with self._lock:
+            # Enforce the per-operator lockout before touching the secret.
+            recent_failures = [
+                t for t in self._totp_failures.get(operator_id, [])
+                if t > ts - self.totp_lockout_seconds
+            ]
+            if len(recent_failures) >= self.max_totp_failures:
+                self._totp_failures[operator_id] = recent_failures
+                return None
+
             op = self._load()["operators"].get(operator_id, {})
             secret = op.get("totp_secret")
             if not secret:
+                # No enrolled secret: nothing to brute-force, so don't accrue a
+                # lockout (which would otherwise aid account enumeration/DoS).
                 return None
+
+            def _record_failure() -> None:
+                recent_failures.append(ts)
+                self._totp_failures[operator_id] = recent_failures
 
             base_window = int(ts) // 30
             matched_window: int | None = None
@@ -159,12 +183,16 @@ class StepUpAuthenticator:
                     break
 
             if matched_window is None:
+                _record_failure()
                 return None
 
             replay_key = f"{operator_id}:{matched_window}"
             if self._used_totp_windows.get(replay_key):
+                _record_failure()
                 return None
             self._used_totp_windows[replay_key] = matched_window
+            # Successful verification clears the failure counter.
+            self._totp_failures.pop(operator_id, None)
 
         return self.issue_step_up_token(operator_id, auth_method="totp", scope=scope, now=ts)
 

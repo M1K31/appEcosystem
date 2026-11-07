@@ -388,7 +388,17 @@ class PolicyEngine:
             enrolled = self._enrolled_devices.get(device_id)
             if enrolled is None or enrolled.revoked:
                 return False, f"Device '{device_id}' is not enrolled or AUP consent was revoked"
-            if public_key_fingerprint and public_key_fingerprint != enrolled.public_key_fingerprint:
+            # Fail closed on the cryptographic binding: a device-key fingerprint
+            # MUST be presented and match the enrolled key. Omitting it previously
+            # skipped this check entirely, so a caller could claim an auto_scan
+            # grant by device_id alone — which is spoofable via DHCP / IP reuse,
+            # exactly what the binding exists to prevent. No fingerprint → no grant.
+            if not public_key_fingerprint:
+                return False, (
+                    f"Device '{device_id}' auto_scan requires a cryptographic device-key "
+                    "fingerprint; none was supplied"
+                )
+            if public_key_fingerprint != enrolled.public_key_fingerprint:
                 return False, "Device cryptographic key mismatch (DHCP/IP reuse cannot transfer scan permission)"
             grant = self._auto_scan_grants.get(device_id)
             if grant is None:

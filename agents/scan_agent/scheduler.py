@@ -60,6 +60,7 @@ class ScanScheduler:
             results.append({
                 "device_id": dev_id,
                 "hostname": dev.get("hostname"),
+                "public_key_fingerprint": fp,
                 "auto_scan_authorized": valid,
                 "reachable": reachable,
                 "status": status,
@@ -77,6 +78,7 @@ class ScanScheduler:
                 logger.info("Triggering scheduled quick scan for enrolled device: %s", dev_id)
                 req = ScanRequest(
                     device_id=dev_id,
+                    public_key_fingerprint=target.get("public_key_fingerprint"),
                     profile="quick",
                     trigger="schedule",
                     initiator="ecosystem-scan-scheduler",

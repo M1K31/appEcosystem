@@ -10,7 +10,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, sta
 logger = logging.getLogger("ecosystem.scan_routes")
 
 
-async def _require_scan_auth(request: Request) -> dict | None:
+async def _require_scan_auth(request: Request) -> Optional[dict]:
     """Gate every scan route: allow HMAC-authenticated service callers or
     loopback operator-UI sessions, reject remote unauthenticated callers.
 
@@ -107,7 +107,7 @@ async def run_scan(
     request: Request,
     body: dict[str, Any] = Body(default_factory=dict),
     runner=Depends(get_scan_runner),
-    auth: dict | None = Depends(_require_scan_auth),
+    auth: Optional[dict] = Depends(_require_scan_auth),
 ):
     """Initiate an on-demand scan with PolicyEngine gating."""
     from agents.scan_agent import ScanRequest

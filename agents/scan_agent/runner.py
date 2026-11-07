@@ -41,6 +41,45 @@ def _generate_scan_id() -> str:
         return uuid.uuid4().hex
 
 
+def _validate_phone_folder(raw: str) -> tuple[str | None, str | None]:
+    """Confine a requested `--phone` folder to an operator-configured allowlist.
+
+    `phone_folder` flows straight to the ZBT subprocess, so an unconstrained
+    value lets an authenticated caller point a scan at any directory on the
+    host (``/``, another user's home, mounted volumes). We fail closed:
+
+    - scanning is disabled unless ``ECOSYSTEM_PHONE_SCAN_BASE`` lists one or
+      more allowed base directories (``os.pathsep``-separated);
+    - the requested path is resolved with symlinks followed and existence
+      required, then must sit inside one of those bases.
+
+    Returns ``(resolved_path, None)`` when allowed, or ``(None, error)``.
+    """
+    bases_env = os.environ.get("ECOSYSTEM_PHONE_SCAN_BASE", "").strip()
+    if not bases_env:
+        return None, (
+            "phone_folder scanning is disabled: set ECOSYSTEM_PHONE_SCAN_BASE to one or "
+            "more allowed base directories (os.pathsep-separated) to enable it"
+        )
+    try:
+        target = Path(raw).expanduser().resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        return None, f"phone_folder path could not be resolved: {exc!r}"
+    if not target.is_dir():
+        return None, f"phone_folder '{raw}' is not a directory"
+    for base in bases_env.split(os.pathsep):
+        base = base.strip()
+        if not base:
+            continue
+        try:
+            base_resolved = Path(base).expanduser().resolve(strict=True)
+        except (OSError, RuntimeError):
+            continue
+        if target == base_resolved or base_resolved in target.parents:
+            return str(target), None
+    return None, f"phone_folder '{raw}' is outside the allowed ECOSYSTEM_PHONE_SCAN_BASE roots"
+
+
 @dataclass
 class ZbtMetadata:
     schema_version: str = "unknown"
@@ -279,14 +318,21 @@ class ScanRunner:
                     authenticated=True,
                 )
                 decision = self.policy_engine.decide(act_req)
-                if decision.result == "deny":
+                # Only an affirmative allow may execute. "deny" and
+                # "require_approval" are both blocking: a scan the engine says
+                # needs operator approval must NOT run unattended. Previously
+                # only "deny" was honored, so every require_approval decision
+                # (unenrolled device, missing/omitted device-key grant, blue-team
+                # default) silently ran the scan anyway, defeating the gate.
+                if decision.result not in ("allow", "allow_and_notify"):
+                    blocked_status = "denied" if decision.result == "deny" else "needs_approval"
                     res = ScanResult(
                         scan_id=req.scan_id,
                         device_id=req.device_id,
-                        status="denied",
+                        status=blocked_status,
                         exit_code=4,
                         exit_description=decision.reason,
-                        share={"verdict": "denied", "reason": decision.reason},
+                        share={"verdict": blocked_status, "reason": decision.reason},
                         report_ref="",
                         started_at=started_at,
                         completed_at=_iso_utc(),
@@ -298,6 +344,28 @@ class ScanRunner:
                     return res
             except Exception as exc:
                 logger.error("Policy check failed: %r", exc)
+
+        # 1b. Confine any requested phone_folder to the configured allowlist
+        phone_path: str | None = None
+        if req.phone_folder:
+            phone_path, pf_err = _validate_phone_folder(req.phone_folder)
+            if pf_err:
+                res = ScanResult(
+                    scan_id=req.scan_id,
+                    device_id=req.device_id,
+                    status="denied",
+                    exit_code=4,
+                    exit_description=pf_err,
+                    share={"verdict": "denied", "reason": pf_err},
+                    report_ref="",
+                    started_at=started_at,
+                    completed_at=_iso_utc(),
+                    duration_seconds=round(time.time() - start_ts, 2),
+                    error_message=pf_err,
+                )
+                self._results_history[req.scan_id] = res
+                self._persist_history()
+                return res
 
         # 2. Acquire single-flight lock per device
         lock = self._get_device_lock(req.device_id)
@@ -363,8 +431,8 @@ class ScanRunner:
                 args.append("--no-feeds")
             if req.profile == "quick":
                 args.append("--quick")
-            if req.phone_folder:
-                args.extend(["--phone", str(req.phone_folder)])
+            if phone_path:
+                args.extend(["--phone", phone_path])
 
             logger.info("Executing ZBT scan %s for device %s...", req.scan_id, req.device_id)
             try:

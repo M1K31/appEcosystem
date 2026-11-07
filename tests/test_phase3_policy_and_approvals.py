@@ -332,7 +332,13 @@ def test_hub_control_plane_routes_and_ui(monkeypatch, tmp_path):
 
         assert client.post("/policy/resume", json={}).status_code == 401
         code = compute_totp(totp_secret)
-        resumed = client.post("/policy/resume", json={"totp_code": code})
+        # Exchange the TOTP code for a reusable step-up token once (consuming a
+        # single TOTP window) and reuse it for both resume and the later passkey
+        # registration — registering a 2nd factor now requires proven step-up.
+        step_up_token = client.post(
+            "/auth/step-up/totp/verify", json={"operator_id": "admin", "code": code}
+        ).json()["step_up_token"]
+        resumed = client.post("/policy/resume", json={"step_up_token": step_up_token})
         assert resumed.status_code == 200
         assert resumed.json()["frozen"] is False
 
@@ -358,7 +364,7 @@ def test_hub_control_plane_routes_and_ui(monkeypatch, tmp_path):
         ed_pub_b64 = base64.urlsafe_b64encode(
             ed_priv.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
         ).decode("ascii").rstrip("=")
-        client.post(
+        reg_r = client.post(
             "/auth/step-up/passkey/register",
             json={
                 "operator_id": "admin",
@@ -366,8 +372,10 @@ def test_hub_control_plane_routes_and_ui(monkeypatch, tmp_path):
                 "public_key": ed_pub_b64,
                 "algorithm": "ED25519",
                 "label": "iOS Shortcut Key",
+                "step_up_token": step_up_token,
             },
         )
+        assert reg_r.status_code == 200
         ch = client.post("/auth/step-up/passkey/challenge", json={"operator_id": "admin"}).json()["challenge"]
         sig_b64 = base64.urlsafe_b64encode(ed_priv.sign(ch.encode("ascii"))).decode("ascii").rstrip("=")
         verify_r = client.post(

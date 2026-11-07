@@ -148,7 +148,13 @@ sys.exit(0)
         keystore_dir=tmp_path / "keys",
     )
 
-    req = ScanRequest(device_id="local", profile="quick")
+    # The device must be enrolled with a cryptographic device-key grant and the
+    # matching fingerprint supplied, or the PolicyEngine returns require_approval
+    # and the runner refuses to execute (unattended scans are gated).
+    policy.enroll_device(device_id="local", public_key_fingerprint="fp-local", owner="admin")
+    policy.designate_auto_scan(device_id="local", profiles=["quick"], authorization_ref="test-local")
+
+    req = ScanRequest(device_id="local", profile="quick", public_key_fingerprint="fp-local")
     result = await runner.run_scan(req)
 
     assert result.status == "clean"
@@ -297,11 +303,12 @@ def test_scan_routes_and_step_up_decrypt(tmp_path: Path):
     r = client.get(f"/scans/{scan_id}/full")
     assert r.status_code == 401
 
-    # 4. GET /scans/{id}/full with valid TOTP code
+    # 4. GET /scans/{id}/full with valid TOTP code. The operator id travels in a
+    # header, not a URL query param (secrets/identifiers must not leak into access
+    # logs or browser history).
     r = client.get(
         f"/scans/{scan_id}/full",
-        headers={"X-Ecosystem-TOTP": valid_totp},
-        params={"operator_id": "operator1"},
+        headers={"X-Ecosystem-TOTP": valid_totp, "X-Ecosystem-Operator": "operator1"},
     )
     assert r.status_code == 200
     full_report = r.json()

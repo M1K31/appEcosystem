@@ -578,7 +578,26 @@ async def create_approval(
     for req_field in ("action", "action_class"):
         if not payload.get(req_field):
             raise HTTPException(status_code=400, detail=f"Missing required field '{req_field}'")
-    return await approvals.create_request(payload)
+    # Whitelist client-supplied fields. The raw body previously flowed straight
+    # into create_request, letting a caller set the requester identity
+    # (forged attribution), a chosen approval_id (collide with / block an
+    # existing record), or the recorded policy_version/mode. Identity is derived
+    # from the authenticated caller; approval_id/policy_version/mode are left to
+    # the server to assign.
+    requester = str((auth or {}).get("app_id") or "operator").strip()
+    sanitized = {
+        "requester_service": requester,
+        "actor": requester,
+        "action": payload["action"],
+        "action_class": payload["action_class"],
+        "target": payload.get("target") or {},
+        "summary": payload.get("summary") or "",
+        "ttl_seconds": payload.get("ttl_seconds", 3600),
+        "async_containment": bool(payload.get("async_containment", False)),
+        "on_deny": payload.get("on_deny"),
+        "revert_plan": payload.get("revert_plan"),
+    }
+    return await approvals.create_request(sanitized)
 
 
 @router.post("/approvals/{approval_id}/approve")
