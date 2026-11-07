@@ -1,5 +1,7 @@
 """CLI command implementations for ecosystem management."""
 
+from __future__ import annotations
+
 import json
 import os
 import shlex
@@ -12,20 +14,44 @@ from pathlib import Path
 import httpx
 import yaml
 
+def _resolve_config_path() -> Path:
+    if "ECOSYSTEM_CONFIG" in os.environ and Path(os.environ["ECOSYSTEM_CONFIG"]).exists():
+        return Path(os.environ["ECOSYSTEM_CONFIG"])
+    for candidate in [
+        Path.cwd() / "ecosystem.yaml",
+        Path.home() / ".config" / "ecosystem" / "ecosystem.yaml",
+        Path(__file__).resolve().parent.parent / "ecosystem.yaml",
+    ]:
+        if candidate.exists():
+            return candidate
+    return Path(__file__).resolve().parent.parent / "ecosystem.yaml"
+
+
+def _resolve_data_dir() -> Path:
+    if "ECOSYSTEM_DATA" in os.environ:
+        return Path(os.environ["ECOSYSTEM_DATA"])
+    share_data = Path.home() / ".local" / "share" / "ecosystem" / "data"
+    if share_data.exists():
+        return share_data
+    repo_data = Path(__file__).resolve().parent.parent / "data"
+    return repo_data
+
+
 ECOSYSTEM_DIR = Path(__file__).resolve().parent.parent
-CONFIG_PATH = ECOSYSTEM_DIR / "ecosystem.yaml"
-PID_FILE = ECOSYSTEM_DIR / "data" / "registry.pid"
-DATA_DIR = ECOSYSTEM_DIR / "data"
+CONFIG_PATH = _resolve_config_path()
+DATA_DIR = _resolve_data_dir()
+PID_FILE = DATA_DIR / "registry.pid"
 PLIST_NAME = "com.ecosystem.registry"
 PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{PLIST_NAME}.plist"
 
 
 def _load_config() -> dict:
     """Load ecosystem.yaml config."""
-    if not CONFIG_PATH.exists():
-        print(f"Error: {CONFIG_PATH} not found")
+    cfg_path = _resolve_config_path()
+    if not cfg_path.exists():
+        print(f"Error: {cfg_path} not found")
         sys.exit(1)
-    with open(CONFIG_PATH) as f:
+    with open(cfg_path) as f:
         return yaml.safe_load(f)
 
 
@@ -149,6 +175,13 @@ def _registry_host(config: dict) -> str:
 
 def cmd_start() -> int:
     """Start the ecosystem registry."""
+    try:
+        from ecosystem_auth.tokens import get_ecosystem_secret
+        get_ecosystem_secret()
+    except RuntimeError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
     config = _load_config()
     port = config.get("registry", {}).get("port", 8500)
     host = _registry_host(config)
@@ -243,8 +276,9 @@ def cmd_status() -> int:
 
 def cmd_start_all() -> int:
     """Start the registry and all configured projects."""
-    # Start registry first
-    cmd_start()
+    # Start registry first (fail closed if registry refuses to start)
+    if cmd_start() != 0:
+        return 1
 
     config = _load_config()
     projects = _resolve_projects(config)
@@ -632,4 +666,210 @@ def cmd_partner(action: str, app_id: str | None = None, name: str | None = None,
         return 0
 
     print(f"Unknown partner action: {action} (use add|list|show|suspend|resume|remove)")
+    return 1
+
+
+def cmd_scan(
+    action: str | None,
+    device_id: str | None = None,
+    profile: str = "quick",
+    no_feeds: bool = False,
+    scan_id: str | None = None,
+) -> int:
+    """CLI handler for `ecosystem scan [run|status|list|targets]`."""
+    import asyncio
+    import json
+    import os
+    import sys
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parent.parent
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+
+    action = action or "list"
+
+    # Prefer querying live registry if running, fallback to direct ScanRunner
+    import httpx
+    from ecosystem_auth.tokens import sign_request
+
+    registry_url = os.environ.get("ECOSYSTEM_REGISTRY_URL", "http://127.0.0.1:8500")
+
+    def _call_api(method: str, path: str, json_body: dict | None = None):
+        try:
+            url = f"{registry_url}{path}"
+            headers = {}
+            body_bytes = json.dumps(json_body).encode("utf-8") if json_body else None
+            try:
+                from ecosystem_auth.tokens import get_ecosystem_secret
+                secret = get_ecosystem_secret()
+                headers = sign_request(secret, method=method, path=path, body=body_bytes)
+            except Exception:
+                pass
+            with httpx.Client(timeout=30.0) as client:
+                resp = client.request(method, url, json=json_body, headers=headers)
+                if resp.status_code < 400:
+                    return resp.json()
+        except Exception:
+            return None
+        return None
+
+    if action == "run":
+        print(f"Initiating {profile} scan for device '{device_id or 'local'}' (offline: {no_feeds})...")
+        api_res = _call_api("POST", "/scans/run", {
+            "device_id": device_id or "local",
+            "profile": profile,
+            "offline": no_feeds,
+            "initiator": "cli",
+        })
+        if api_res is None:
+            # Standalone runner fallback
+            from agents.scan_agent import ScanRequest, ScanRunner
+            runner = ScanRunner()
+            req = ScanRequest(
+                device_id=device_id or "local",
+                profile=profile,
+                offline=no_feeds,
+                initiator="cli",
+            )
+            res = asyncio.run(runner.run_scan(req))
+            api_res = res.to_dict()
+
+        print(f"Scan ID:     {api_res.get('scan_id')}")
+        print(f"Device:      {api_res.get('device_id')}")
+        print(f"Status:      {api_res.get('status').upper()}")
+        print(f"Exit Code:   {api_res.get('exit_code')} ({api_res.get('exit_description')})")
+        print(f"Duration:    {api_res.get('duration_seconds')}s")
+        if api_res.get("report_ref"):
+            print(f"Report:      {api_res.get('report_ref')} (encrypted)")
+        return 0 if api_res.get("status") in ("clean", "deferred") else 1
+
+    if action == "status":
+        sid = scan_id
+        if not sid:
+            # Find latest
+            all_scans = _call_api("GET", "/scans")
+            if all_scans is None:
+                from agents.scan_agent import ScanRunner
+                runner = ScanRunner()
+                all_scans = [s.to_dict() for s in runner.list_scans()]
+            if not all_scans:
+                print("No scans found.")
+                return 0
+            sid = all_scans[0]["scan_id"]
+
+        detail = _call_api("GET", f"/scans/{sid}")
+        if detail is None:
+            from agents.scan_agent import ScanRunner
+            runner = ScanRunner()
+            sc = runner.get_scan(sid)
+            if not sc:
+                print(f"Scan {sid} not found.")
+                return 1
+            detail = sc.to_dict()
+
+        print(f"Scan ID:     {detail.get('scan_id')}")
+        print(f"Device:      {detail.get('device_id')}")
+        print(f"Status:      {detail.get('status')}")
+        print(f"Exit Code:   {detail.get('exit_code')} ({detail.get('exit_description')})")
+        print(f"Started:     {detail.get('started_at')}")
+        print(f"Completed:   {detail.get('completed_at')}")
+        print(f"Duration:    {detail.get('duration_seconds')}s")
+        if detail.get("report_ref"):
+            print(f"Report Ref:  {detail.get('report_ref')} (encrypted at rest)")
+        share = detail.get("share") or {}
+        if "verdict" in share:
+            print(f"Share Verdict: {share.get('verdict')}")
+        return 0
+
+    if action == "list":
+        scans = _call_api("GET", f"/scans{'?device_id=' + device_id if device_id else ''}")
+        if scans is None:
+            from agents.scan_agent import ScanRunner
+            runner = ScanRunner()
+            scans = [s.to_dict() for s in runner.list_scans(device_id=device_id)]
+
+        if not scans:
+            print("No scans recorded.")
+            return 0
+        print(f"{'SCAN ID':<30} {'DEVICE':<15} {'STATUS':<12} {'CODE':<6} {'DURATION':<10} {'STARTED':<25}")
+        print("-" * 100)
+        for s in scans:
+            print(
+                f"{s.get('scan_id', ''):<30} "
+                f"{s.get('device_id', ''):<15} "
+                f"{s.get('status', '').upper():<12} "
+                f"{s.get('exit_code', 0):<6} "
+                f"{str(s.get('duration_seconds', 0.0)) + 's':<10} "
+                f"{s.get('started_at', ''):<25}"
+            )
+        return 0
+
+    if action == "targets":
+        targets = _call_api("GET", "/scans/targets")
+        if targets is None:
+            from agents.scan_agent import ScanRunner, ScanScheduler
+            from registry.app import _create_policy_and_approvals
+            policy_engine, _, _ = _create_policy_and_approvals(data_dir="data", notification_router=None, event_bus=None)
+            sched = ScanScheduler(runner=ScanRunner(), policy_engine=policy_engine)
+            targets = asyncio.run(sched.check_enrolled_targets())
+
+        if not targets:
+            print("No enrolled scan targets found.")
+            return 0
+        print(f"{'DEVICE ID':<20} {'HOSTNAME':<20} {'AUTO-SCAN':<12} {'REACHABLE':<12} {'STATUS':<12}")
+        print("-" * 80)
+        for t in targets:
+            print(
+                f"{t.get('device_id', ''):<20} "
+                f"{str(t.get('hostname') or '-'):<20} "
+                f"{str(t.get('auto_scan_authorized')):<12} "
+                f"{str(t.get('reachable')):<12} "
+                f"{t.get('status', '').upper():<12}"
+            )
+        return 0
+
+    print(f"Unknown scan action: {action} (use run|status|list|targets)")
+    return 1
+
+
+def cmd_doctor(component: str = "gpu") -> int:
+    """CLI handler for `ecosystem doctor [gpu]`."""
+    import sys
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parent.parent
+    compute_pkg = repo_root / "packages" / "ecosystem-compute"
+    if compute_pkg.is_dir() and str(compute_pkg) not in sys.path:
+        sys.path.insert(0, str(compute_pkg))
+
+    from ecosystem_compute import diagnose_gpu
+
+    if component == "gpu":
+        diag = diagnose_gpu()
+        print("=" * 60)
+        print("  Ecosystem Hardware & GPU Doctor")
+        print("=" * 60)
+        print(f"Platform:       {diag.os_name} ({diag.arch})")
+        print(f"Containerized:  {diag.in_container}")
+        print(f"Accelerator:    {diag.hardware_accelerator.upper()}")
+        if diag.gpu_devices_found:
+            print(f"Devices:        {', '.join(diag.gpu_devices_found)}")
+        if diag.vram_gb > 0:
+            print(f"VRAM / Unified: {diag.vram_gb} GB")
+        print(f"Status:         {diag.status.upper()}")
+
+        if diag.warnings:
+            print("\nWarnings:")
+            for w in diag.warnings:
+                print(f"  [!] {w}")
+
+        if diag.recommendations:
+            print("\nRecommendations:")
+            for r in diag.recommendations:
+                print(f"  [*] {r}")
+        print("=" * 60)
+        return 0 if diag.status == "ok" else 1
+
+    print(f"Unknown doctor component: {component} (available: gpu)")
     return 1

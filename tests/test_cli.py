@@ -241,3 +241,15 @@ def test_partner_suspend(monkeypatch, tmp_path, capsys):
     assert rc == 0
     cmd_partner("show", app_id="org.acme")
     assert "suspended" in capsys.readouterr().out.lower()
+
+
+def test_cmd_start_refuses_without_secret(monkeypatch, tmp_path, capsys):
+    from cli import commands
+
+    monkeypatch.delenv("ECOSYSTEM_HMAC_SECRET", raising=False)
+    monkeypatch.setenv("ECOSYSTEM_SECRET_FILE", str(tmp_path / "missing_secret.env"))
+    with patch("cli.commands.subprocess.Popen") as mock_popen:
+        rc = commands.cmd_start()
+        assert rc == 1
+        mock_popen.assert_not_called()
+    assert "No ecosystem secret found" in capsys.readouterr().err

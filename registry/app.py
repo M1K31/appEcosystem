@@ -30,15 +30,103 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _create_capability_registry(persistence_path: str):
+    import sys
+    from pathlib import Path
+
+    hub_pkg = Path(__file__).resolve().parent.parent / "packages" / "ecosystem-hub"
+    if hub_pkg.is_dir() and str(hub_pkg) not in sys.path:
+        sys.path.insert(0, str(hub_pkg))
+    from ecosystem_hub.capabilities import CapabilityRegistry
+
+    return CapabilityRegistry(persistence_path=persistence_path)
+
+
+def _create_policy_and_approvals(data_dir: str, notification_router, event_bus):
+    import sys
+    from pathlib import Path
+
+    policy_pkg = Path(__file__).resolve().parent.parent / "packages" / "ecosystem-policy"
+    if policy_pkg.is_dir() and str(policy_pkg) not in sys.path:
+        sys.path.insert(0, str(policy_pkg))
+    from ecosystem_policy.crypto import Ed25519PolicySigner
+    from ecosystem_policy.engine import PolicyEngine
+    from ecosystem_policy.step_up import StepUpAuthenticator
+    from .approvals import ApprovalService
+
+    key_dir = os.environ.get("ECOSYSTEM_POLICY_KEY_DIR") or os.path.join(data_dir, "policy_keys")
+    signer = Ed25519PolicySigner.load_or_create(key_dir=key_dir)
+    policy_state_path = os.environ.get("ECOSYSTEM_POLICY_STATE_FILE") or os.path.join(data_dir, "policy_state.json")
+    policy_yaml_path = os.environ.get("ECOSYSTEM_POLICY_FILE")
+    policy_engine = PolicyEngine.load(
+        policy_yaml_path,
+        signer=signer,
+        authority="hub_synced",
+        state_path=policy_state_path,
+    )
+
+    step_up_path = os.environ.get("ECOSYSTEM_STEP_UP_FILE") or os.path.join(data_dir, "step_up_credentials.json")
+    step_up_auth = StepUpAuthenticator(store_path=step_up_path)
+
+    approvals_db = os.environ.get("ECOSYSTEM_APPROVALS_DB") or os.path.join(data_dir, "approvals.db")
+    approval_service = ApprovalService(
+        db_path=approvals_db,
+        step_up=step_up_auth,
+        policy_engine=policy_engine,
+        notification_router=notification_router,
+        event_bus=event_bus,
+    )
+    return policy_engine, step_up_auth, approval_service
+
+
+def _create_scan_service(data_dir: str, policy_engine, event_bus):
+    import sys
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parent.parent
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+    from agents.scan_agent import ScanRunner, ScanScheduler
+
+    scan_runner = ScanRunner(
+        data_dir=data_dir,
+        policy_engine=policy_engine,
+        event_bus=event_bus,
+    )
+    scan_scheduler = ScanScheduler(
+        runner=scan_runner,
+        policy_engine=policy_engine,
+    )
+    return scan_runner, scan_scheduler
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from .logging_config import configure_logging
+    from .notifications import NotificationRouter
+    from ecosystem_auth.tokens import get_ecosystem_secret
+
     configure_logging()
+    # Fail closed at startup if no valid shared secret is provisioned (or if set
+    # to the rejected development placeholder).
+    get_ecosystem_secret()
 
     persistence_path = os.environ.get(
         "ECOSYSTEM_REGISTRY_FILE", "data/registry.json"
     )
     registry = ServiceRegistry(persistence_path=persistence_path)
+
+    cap_path = os.environ.get(
+        "ECOSYSTEM_CAPABILITIES_FILE",
+        str(os.path.join(os.path.dirname(persistence_path) or "data", "capabilities.json")),
+    )
+    capability_registry = _create_capability_registry(cap_path)
+
+    notify_db_path = os.environ.get(
+        "ECOSYSTEM_NOTIFICATIONS_DB",
+        str(os.path.join(os.path.dirname(persistence_path) or "data", "notifications.db")),
+    )
+    notification_router = NotificationRouter(persistence_path=notify_db_path)
 
     # Pre-register projects from ecosystem.yaml if available
     _register_static_projects(registry)
@@ -57,6 +145,7 @@ async def lifespan(app: FastAPI):
         interval_seconds=interval,
         max_failures=max_failures,
         event_bus=event_bus,
+        capability_registry=capability_registry,
     )
     await health_monitor.start()
 
@@ -74,6 +163,20 @@ async def lifespan(app: FastAPI):
     # /ai/providers routes below, which gate writes to loopback callers.
     provider_credential_store = ProviderCredentialStore()
 
+    data_dir = os.path.dirname(persistence_path) or "data"
+    policy_engine, step_up_auth, approval_service = _create_policy_and_approvals(
+        data_dir,
+        notification_router=notification_router,
+        event_bus=event_bus,
+    )
+    await approval_service.start()
+
+    scan_runner, scan_scheduler = _create_scan_service(
+        data_dir,
+        policy_engine=policy_engine,
+        event_bus=event_bus,
+    )
+
     # Stash on app.state so request handlers resolve them via dependencies
     # rather than module globals (which could be None before startup).
     app.state.registry = registry
@@ -82,10 +185,19 @@ async def lifespan(app: FastAPI):
     app.state.ai_profile_store = ai_profile_store
     app.state.app_store = app_store
     app.state.provider_credential_store = provider_credential_store
+    app.state.capability_registry = capability_registry
+    app.state.notification_router = notification_router
+    app.state.policy_engine = policy_engine
+    app.state.step_up_auth = step_up_auth
+    app.state.approval_service = approval_service
+    app.state.scan_runner = scan_runner
+    app.state.scan_scheduler = scan_scheduler
 
     logger.info("Ecosystem registry started")
     yield
 
+    await scan_scheduler.stop()
+    await approval_service.stop()
     await health_monitor.stop()
     if event_bus:
         await event_bus.close()
@@ -123,6 +235,28 @@ def get_profile_store(request: Request):
             detail="AI profile store not initialized",
         )
     return store
+
+
+def get_capability_registry(request: Request):
+    """Dependency: resolve the capability registry, 503 before startup completes."""
+    cap_reg = getattr(request.app.state, "capability_registry", None)
+    if cap_reg is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Capability registry not initialized",
+        )
+    return cap_reg
+
+
+def get_notification_router(request: Request):
+    """Dependency: resolve the notification router, 503 before startup completes."""
+    router = getattr(request.app.state, "notification_router", None)
+    if router is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Notification router not initialized",
+        )
+    return router
 
 
 def _read_auth_required() -> bool:
@@ -206,8 +340,46 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins(),
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Ecosystem-Signature"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "X-Ecosystem-Signature",
+        "X-Ecosystem-Timestamp",
+        "X-Ecosystem-Nonce",
+        "X-Ecosystem-Step-Up",
+    ],
 )
+
+from .policy_routes import router as policy_router
+from .scan_routes import router as scan_router
+
+
+def _ensure_voice_pkg():
+    import sys
+    from pathlib import Path
+    voice_pkg = Path(__file__).resolve().parent.parent / "packages" / "ecosystem-voice"
+    if voice_pkg.is_dir() and str(voice_pkg) not in sys.path:
+        sys.path.insert(0, str(voice_pkg))
+
+
+_ensure_voice_pkg()
+from ecosystem_voice import router as voice_router
+
+app.include_router(policy_router)
+app.include_router(scan_router)
+app.include_router(voice_router)
+
+
+@app.get("/", include_in_schema=False)
+async def root_redirect():
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/ui")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    from fastapi import Response
+    return Response(status_code=204)
 
 
 @app.get("/health")
@@ -371,13 +543,33 @@ async def register_service(
 @app.delete("/deregister/{name}")
 async def deregister_service(
     name: str,
+    request: Request,
     auth: dict = Depends(require_registry_auth),
     registry: ServiceRegistry = Depends(get_registry),
 ):
-    """Remove a service from the registry."""
+    """Remove a service from the registry and withdraw its advertised capabilities."""
     require_name_owner(name, auth)
     if not registry.deregister(name):
         raise HTTPException(status_code=404, detail=f"Service '{name}' not found")
+
+    cap_reg = getattr(request.app.state, "capability_registry", None)
+    if cap_reg is not None:
+        withdrawn = cap_reg.withdraw_provider(
+            name,
+            reason=f"Provider '{name}' deregistered",
+        )
+        event_bus = getattr(request.app.state, "event_bus", None)
+        if withdrawn and event_bus:
+            _schedule_bus_event(
+                request,
+                event_type="capability.withdrawn",
+                source="registry",
+                data={
+                    "app": name,
+                    "capabilities": [r["capability"] for r in withdrawn],
+                    "reason": f"Provider '{name}' deregistered",
+                },
+            )
     return {"status": "deregistered", "name": name}
 
 
@@ -482,6 +674,231 @@ async def publish_event(request: Request, envelope: dict = Body(...)):
     _pending.add(task)
     task.add_done_callback(_pending.discard)
     return {"queued": True}
+
+
+def _schedule_bus_event(
+    request: Request,
+    *,
+    event_type: str,
+    source: str | dict,
+    data: dict,
+) -> None:
+    """Queue an internal EventBus fan-out task without blocking the HTTP response."""
+    event_bus = getattr(request.app.state, "event_bus", None)
+    if event_bus is None:
+        return
+    try:
+        from events.schemas import EventEnvelope
+
+        event = EventEnvelope(type=event_type, source=source, data=data)
+        task = asyncio.create_task(event_bus.publish(event))
+        pending = getattr(request.app.state, "_event_delivery_tasks", None)
+        if pending is None:
+            pending = set()
+            request.app.state._event_delivery_tasks = pending
+        pending.add(task)
+        task.add_done_callback(pending.discard)
+    except Exception as exc:
+        logger.debug("Failed to schedule internal bus event %s: %r", event_type, exc)
+
+
+# ---- Phase 2: Capability Registry Endpoints ------------------------------
+
+
+@app.post("/capabilities/register", status_code=status.HTTP_201_CREATED)
+async def register_capabilities(
+    request: Request,
+    payload: dict = Body(...),
+    auth: dict = Depends(require_registry_auth),
+    cap_reg=Depends(get_capability_registry),
+):
+    """Register one or more project-contributed capability manifests."""
+    from ecosystem_client.contracts import SchemaValidationError
+
+    raw_items = payload.get("capabilities") if "capabilities" in payload else [payload]
+    if not isinstance(raw_items, list) or not raw_items:
+        raise HTTPException(status_code=400, detail="capabilities must be a non-empty list or manifest")
+
+    records = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            raise HTTPException(status_code=422, detail="Each capability manifest must be an object")
+        provider = item.get("provider") or {}
+        provider_app = provider.get("app", "") if isinstance(provider, dict) else ""
+        if not provider_app:
+            raise HTTPException(status_code=422, detail="provider.app is required")
+        require_name_owner(provider_app, auth)
+        try:
+            rec = cap_reg.register(item)
+        except SchemaValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        records.append(rec)
+        _schedule_bus_event(
+            request,
+            event_type="capability.registered",
+            source={"app": provider_app, "device_id": provider.get("device_id", "local-device")},
+            data={"capability": rec["capability"], "manifest": rec["manifest"]},
+        )
+
+    return {"registered": records}
+
+
+@app.get("/capabilities")
+async def list_or_resolve_capabilities(
+    action_class: Optional[str] = None,
+    app_name: Optional[str] = None,
+    capability: Optional[str] = None,
+    active_only: bool = True,
+    resolve: bool = False,
+    cap_reg=Depends(get_capability_registry),
+    _auth=Depends(require_read_auth),
+):
+    """List registered capabilities or resolve availability/unavailability reason for one capability."""
+    if resolve and capability:
+        return cap_reg.resolve(capability).to_dict()
+    return {
+        "capabilities": cap_reg.list_capabilities(
+            action_class=action_class,
+            app=app_name,
+            capability=capability,
+            active_only=active_only,
+        )
+    }
+
+
+@app.delete("/capabilities/{service_name}")
+async def withdraw_service_capabilities(
+    service_name: str,
+    request: Request,
+    auth: dict = Depends(require_registry_auth),
+    cap_reg=Depends(get_capability_registry),
+):
+    """Withdraw all active capabilities owned by `service_name`."""
+    require_name_owner(service_name, auth)
+    affected = cap_reg.withdraw_provider(
+        service_name,
+        reason=f"Capabilities withdrawn by provider '{service_name}'",
+    )
+    if affected:
+        _schedule_bus_event(
+            request,
+            event_type="capability.withdrawn",
+            source=service_name,
+            data={"app": service_name, "capabilities": [r["capability"] for r in affected]},
+        )
+    return {"status": "withdrawn", "app": service_name, "count": len(affected)}
+
+
+@app.delete("/capabilities/{service_name}/{capability_name}")
+async def withdraw_single_capability(
+    service_name: str,
+    capability_name: str,
+    request: Request,
+    auth: dict = Depends(require_registry_auth),
+    cap_reg=Depends(get_capability_registry),
+):
+    """Withdraw a specific capability owned by `service_name`."""
+    require_name_owner(service_name, auth)
+    count = cap_reg.withdraw(capability_name, service_name)
+    if count:
+        _schedule_bus_event(
+            request,
+            event_type="capability.withdrawn",
+            source=service_name,
+            data={"app": service_name, "capabilities": [capability_name]},
+        )
+    return {"status": "withdrawn", "app": service_name, "capability": capability_name, "count": count}
+
+
+# ---- Phase 2: Cross-Device Notification Router Endpoints -----------------
+
+
+@app.post("/notifications/publish")
+async def publish_notification(
+    request: Request,
+    envelope: dict = Body(...),
+    auth: dict = Depends(require_registry_auth),
+    router=Depends(get_notification_router),
+):
+    """Deduplicate, redact, apply quiet hours, and fan out a `notify.*` envelope across devices."""
+    from ecosystem_client.contracts import SchemaValidationError
+
+    src = envelope.get("source") or {}
+    src_app = src.get("app", "") if isinstance(src, dict) else ""
+    if src_app:
+        require_name_owner(src_app, auth)
+
+    try:
+        result = await router.route(envelope)
+    except SchemaValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    if result["status"] == "routed" and envelope.get("privacy") != "local_only":
+        _schedule_bus_event(
+            request,
+            event_type=envelope["type"],
+            source=envelope["source"],
+            data={k: v for k, v in envelope.items() if k != "signature"},
+        )
+
+    return result
+
+
+@app.post("/notifications/subscriptions", status_code=status.HTTP_201_CREATED)
+async def upsert_notification_subscription(
+    sub: dict = Body(...),
+    auth: dict = Depends(require_registry_auth),
+    router=Depends(get_notification_router),
+):
+    """Register or update a user/device notification subscription or federated mobile push sink."""
+    sub_id = str(sub.get("subscriber_id") or sub.get("device") or "").strip()
+    if auth.get("owned_names") != ["*"]:
+        require_name_owner(sub_id, auth)
+    try:
+        record = router.upsert_subscription(sub)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return record
+
+
+@app.get("/notifications/subscriptions")
+async def list_notification_subscriptions(
+    _auth: dict = Depends(require_registry_auth),
+    router=Depends(get_notification_router),
+):
+    """List configured notification subscriptions (with tokens redacted)."""
+    return {"subscriptions": router.list_subscriptions(include_secrets=False)}
+
+
+@app.delete("/notifications/subscriptions/{subscriber_id}")
+async def delete_notification_subscription(
+    subscriber_id: str,
+    auth: dict = Depends(require_registry_auth),
+    router=Depends(get_notification_router),
+):
+    if auth.get("owned_names") != ["*"]:
+        require_name_owner(subscriber_id, auth)
+    removed = router.delete_subscription(subscriber_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"Subscription {subscriber_id!r} not found")
+    return {"status": "deleted", "subscriber_id": subscriber_id}
+
+
+@app.get("/notifications/recent")
+async def list_recent_notifications(
+    limit: int = 50,
+    min_severity: Optional[str] = None,
+    _auth=Depends(require_read_auth),
+    router=Depends(get_notification_router),
+):
+    """Return recent non-local-only notifications for dashboards and companion mobile apps."""
+    return {
+        "notifications": router.recent_notifications(
+            limit=limit,
+            include_local_only=False,
+            min_severity=min_severity,
+        )
+    }
 
 
 def _register_static_projects(reg: ServiceRegistry) -> None:

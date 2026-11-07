@@ -54,3 +54,6 @@ Issues = "https://github.com/M1K31/appEcosystem/issues"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["ecosystem_client*"]
+
+[tool.setuptools.package-data]
+"ecosystem_client" = ["schemas/*.json"]

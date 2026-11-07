@@ -66,4 +66,16 @@ Issues = "https://github.com/M1K31/appEcosystem/issues"
 # this package could silently overwrite a NEWER appecosystem-client with the
 # copy bundled at this package's build time — while pip still reported the newer
 # version as installed. An invisible downgrade is worse than a missing module.
-include = ["cli*", "events*", "llm*", "registry*"]
+include = ["agents*", "cli*", "events*", "llm*", "registry*"]
+
+[tool.pytest.ini_options]
+pythonpath = [
+    ".",
+    "packages/ecosystem-policy",
+    "packages/ecosystem-hub",
+    "packages/ecosystem-schemas",
+    "packages/ecosystem-auth",
+    "packages/ecosystem-ai",
+    "packages/ecosystem-voice",
+    "packages/ecosystem-compute",
+]

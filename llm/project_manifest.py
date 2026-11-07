@@ -109,7 +109,7 @@ KNOWN_MANIFESTS: dict[str, ProjectManifest] = {
     "aegissiem": ProjectManifest(
         name="AegisSIEM",
         description="Router log analysis and network security monitoring",
-        base_url="http://localhost:8088",
+        base_url="http://localhost:8089",
         capabilities=[
             ProjectCapability(
                 name="log_analysis",

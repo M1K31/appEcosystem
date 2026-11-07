@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "appecosystem-policy"
+version = "0.3.0"
+description = "Signed blue-team policy engine, Freeze preemption, Ed25519 scoped overrides, TOTP/Passkey step-up auth, and unified SQLite approval queue for appEcosystem."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+  {name = "Smart Industries LLC (Mikel Smart)"}
+]
+dependencies = [
+  "PyYAML>=6.0",
+  "cryptography>=41.0.0",
+  "appecosystem-auth>=0.1.0",
+  "appecosystem-client>=0.1.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ecosystem_policy*"]
+

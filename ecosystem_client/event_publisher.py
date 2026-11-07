@@ -41,26 +41,30 @@ class EventPublisher:
 
         return await self._publish_direct(envelope)
 
-    def _build_envelope(self, event_type: str, data: dict[str, Any]) -> dict:
-        """Build a signed event envelope."""
-        from ecosystem_auth.tokens import sign_payload
+    def _build_envelope(
+        self,
+        event_type: str,
+        data: dict[str, Any],
+        *,
+        correlation_id: str | None = None,
+    ) -> dict:
+        """Build a signed v2 event envelope (with ULID id and source.device_id)."""
+        from .contracts import build_event_envelope_v2
 
-        envelope = {
-            "id": str(uuid.uuid4()),
-            "type": event_type,
-            "source": self._service_name,
-            "timestamp": time.time(),
-            "data": data,
-        }
-        signable = {
-            "id": envelope["id"],
-            "type": envelope["type"],
-            "source": envelope["source"],
-            "timestamp": envelope["timestamp"],
-            "data": envelope["data"],
-        }
-        envelope["signature"] = sign_payload(signable, self.config.hmac_secret)
-        return envelope
+        return build_event_envelope_v2(
+            event_type=event_type,
+            source_app=self._service_name,
+            data=data,
+            secret=self.config.hmac_secret,
+            correlation_id=correlation_id,
+        )
+
+    @staticmethod
+    def _source_header(envelope: dict) -> str:
+        src = envelope.get("source", "")
+        if isinstance(src, dict):
+            return str(src.get("app", ""))
+        return str(src)
 
     async def _publish_via_registry(self, envelope: dict) -> dict:
         """Publish by POSTing to the registry's event bus endpoint."""
@@ -72,7 +76,7 @@ class EventPublisher:
                     headers={
                         "X-Ecosystem-Signature": envelope.get("signature", ""),
                         "X-Ecosystem-Event": envelope["type"],
-                        "X-Ecosystem-Source": envelope["source"],
+                        "X-Ecosystem-Source": self._source_header(envelope),
                     },
                 )
                 resp.raise_for_status()
@@ -117,7 +121,7 @@ class EventPublisher:
             "Content-Type": "application/json",
             "X-Ecosystem-Signature": envelope.get("signature", ""),
             "X-Ecosystem-Event": envelope["type"],
-            "X-Ecosystem-Source": envelope["source"],
+            "X-Ecosystem-Source": self._source_header(envelope),
         }
         for attempt in range(1, self.config.event_retry_attempts + 1):
             try:

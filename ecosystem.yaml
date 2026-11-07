@@ -10,9 +10,9 @@ ecosystem:
   base_path: ""
 
 # Shared HMAC secret for inter-service authentication
-# In production, use environment variable ECOSYSTEM_HMAC_SECRET
+# Required; registry fails closed at startup if unset or left at a dev placeholder
 auth:
-  hmac_secret: "${ECOSYSTEM_HMAC_SECRET:-dev-ecosystem-secret-change-in-production}"
+  hmac_secret: "${ECOSYSTEM_HMAC_SECRET}"
   token_validity_hours: 24
   token_rotation_hours: 12
 
@@ -69,7 +69,7 @@ ai:
     openai: { enabled: false, model: "" }
     gemini: { enabled: false, model: "" }
   prefer: local             # local | cloud | quality
-  allow_cloud_fallback: true
+  allow_cloud_fallback: false
 
 # Cyber Claude Harness integration
 cyber_harness:
@@ -117,7 +117,7 @@ projects:
 
   aegissiem:
     name: "AegisSIEM"
-    path: "LogAnalysis"
+    path: "AegisSIEM"
     host: "localhost"
     # Dashboard runs on 8089. 8088 is the cyber-harness daemon (aegissiem_daemon).
     port: 8089
@@ -129,7 +129,7 @@ projects:
 
   aegissiem_daemon:
     name: "AegisSIEM_Daemon"
-    path: "CybersecurityTeam/cyber-agents"
+    path: "cyber-agents"
     host: "localhost"
     port: 8088
     health_endpoint: "/api/status"
@@ -138,6 +138,6 @@ projects:
     # No start_command: launchd (com.smartindustries.cyber-harness) is the sole
     # owner of this daemon. Two instances would share one SQLite state dir and
     # double-fire auto-block actions. Install/enable it with:
-    #   CybersecurityTeam/cyber-agents/scripts/install-local.sh --plist
+    #   cyber-agents/scripts/install-local.sh --plist
     start_command: ""
     description: "Cyber Claude Harness daemon — preferred security analysis backend"

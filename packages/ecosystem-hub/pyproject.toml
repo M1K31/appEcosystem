@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=77.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "appecosystem-hub"
+version = "0.1.0"
+description = "Embedded/sidecar Hub runtime, single-host lock, capability registry, and durable offline outbox for appEcosystem"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "Mikel Smart" }]
+keywords = ["appecosystem", "service-mesh", "capabilities", "notifications", "embedded-hub"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "httpx>=0.24.0",
+    "appecosystem-auth>=0.4.0",
+    "appecosystem-client>=0.3.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "pytest-asyncio>=0.21"]
+
+[project.urls]
+Homepage = "https://github.com/M1K31/appEcosystem"
+Source = "https://github.com/M1K31/appEcosystem"
+Issues = "https://github.com/M1K31/appEcosystem/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ecosystem_hub*"]
+

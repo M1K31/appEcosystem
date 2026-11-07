@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=77.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "appecosystem-compute"
+version = "0.1.0"
+description = "Multi-provider GPU broker and cloud compute failover for appEcosystem"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "Mikel Smart" }]
+dependencies = [
+    "pyyaml>=6.0",
+    "httpx>=0.24.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["ecosystem_compute*"]
+

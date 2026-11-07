@@ -35,7 +35,7 @@ def _embedded_default() -> dict[str, Any]:
             "gemini": {"enabled": False, "model": ""},
         },
         "prefer": "local",
-        "allow_cloud_fallback": True,
+        "allow_cloud_fallback": False,
         "version": 1,
         "updated_at": time.time(),
         "updated_by": "",

@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://smartindustries.dev/schemas/appecosystem/capability-manifest.v1.schema.json",
+  "title": "EcosystemCapabilityManifestV1",
+  "description": "Project-contributed capability contract advertised to the ecosystem hub or evaluated standalone.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "capability",
+    "version",
+    "provider",
+    "action_class",
+    "required_grant",
+    "idempotent",
+    "cancellable",
+    "timeout_seconds",
+    "offline_behavior"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "capability": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "description": {
+      "type": "string"
+    },
+    "provider": {
+      "type": "object",
+      "required": ["app", "device_id"],
+      "additionalProperties": false,
+      "properties": {
+        "app": {
+          "type": "string",
+          "minLength": 1
+        },
+        "device_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "action_class": {
+      "type": "string",
+      "enum": [
+        "observe",
+        "investigate",
+        "contain",
+        "remediate",
+        "data_release",
+        "system_change"
+      ]
+    },
+    "required_grant": {
+      "type": "string",
+      "minLength": 1
+    },
+    "inputs_schema": {
+      "type": "object"
+    },
+    "result_schema": {
+      "type": "object"
+    },
+    "requirements": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "os": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "min_tier": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "needs_gpu": {
+          "type": "boolean"
+        }
+      }
+    },
+    "side_effects": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "timeout_seconds": {
+      "type": "number",
+      "minimum": 1
+    },
+    "cancellable": {
+      "type": "boolean"
+    },
+    "idempotent": {
+      "type": "boolean"
+    },
+    "offline_behavior": {
+      "type": "string",
+      "enum": [
+        "run_local",
+        "freeze_local_and_queue_notice",
+        "queue_until_online",
+        "unavailable"
+      ]
+    }
+  }
+}
