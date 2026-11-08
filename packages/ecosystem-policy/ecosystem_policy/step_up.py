@@ -139,6 +139,17 @@ class StepUpAuthenticator:
                 "device_key": bool(op.get("device_keys")),
             }
 
+    def has_any_enrolled_operator(self) -> bool:
+        """True if ANY operator has ANY enrolled factor (i.e. the store is
+        bootstrapped). Lets callers gate step-up enrollment so that only the very
+        first factor on an empty store is a loopback-only bootstrap, without having
+        to assume a canonical operator id such as ``admin``."""
+        with self._lock:
+            for op in self._load()["operators"].values():
+                if op.get("totp_secret") or op.get("passkeys") or op.get("device_keys"):
+                    return True
+            return False
+
     def verify_totp_and_issue_token(
         self,
         operator_id: str,
