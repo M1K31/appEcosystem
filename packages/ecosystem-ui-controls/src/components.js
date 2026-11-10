@@ -37,14 +37,27 @@ function createComponentClasses(BaseElement) {
             this._armed = false;
             this._armTimer = null;
             this.attachShadow({ mode: "open" });
+            this._onTriggerKeyDown = this._onTriggerKeyDown.bind(this);
         }
 
         connectedCallback() {
+            // The shadow root outlives each render(), so one listener covers
+            // every re-rendered trigger.
+            this.shadowRoot.addEventListener("keydown", this._onTriggerKeyDown);
             this.render();
         }
 
         disconnectedCallback() {
+            this.shadowRoot.removeEventListener("keydown", this._onTriggerKeyDown);
             this._clearArmTimer();
+        }
+
+        // A held Enter/Space auto-repeats: the first keydown arms and a repeat
+        // would confirm. Swallow repeats so Freeze needs two distinct presses.
+        _onTriggerKeyDown(ev) {
+            if (ev.repeat === true && (ev.key === "Enter" || ev.key === " ")) {
+                ev.preventDefault();
+            }
         }
 
         attributeChangedCallback() {
@@ -85,10 +98,18 @@ function createComponentClasses(BaseElement) {
                 this._clearArmTimer();
                 this._armTimer = setTimeout(() => {
                     this._armed = false;
+                    // The expiry re-render removes the trigger. Keep a keyboard
+                    // user on it only if it still had focus; never pull focus
+                    // back from wherever the operator has moved to since.
+                    const root = this.shadowRoot;
+                    const active = root.activeElement;
+                    const hadFocus =
+                        Boolean(active) &&
+                        active === root.querySelector('[data-action="freeze-trigger"]');
                     this.render();
-                    // The expiry re-render also removes the focused trigger; keep a
-                    // keyboard user on it so they can re-arm without hunting for focus.
-                    this.shadowRoot.querySelector('[data-action="freeze-trigger"]')?.focus();
+                    if (hadFocus) {
+                        root.querySelector('[data-action="freeze-trigger"]')?.focus();
+                    }
                 }, 3000);
                 this.render();
                 // render() replaces the focused trigger; restore focus so a

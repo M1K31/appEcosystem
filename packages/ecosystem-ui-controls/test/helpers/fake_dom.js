@@ -57,7 +57,11 @@ function makeShadowRoot() {
             return Array.from(stubs.values()).includes(el);
         },
         addEventListener(type, fn) {
-            (root.listeners[type] = root.listeners[type] || []).push(fn);
+            const list = (root.listeners[type] = root.listeners[type] || []);
+            // Like the real DOM, registering the same listener twice is a no-op.
+            if (!list.includes(fn)) {
+                list.push(fn);
+            }
         },
         removeEventListener(type, fn) {
             root.listeners[type] = (root.listeners[type] || []).filter((f) => f !== fn);
