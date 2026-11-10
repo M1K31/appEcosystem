@@ -1,6 +1,6 @@
 {
   "name": "@smartindustriesllc/ecosystem-client",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Service registration, peer discovery and event bus client for the appEcosystem service mesh",
   "main": "src/index.js",
   "exports": {
