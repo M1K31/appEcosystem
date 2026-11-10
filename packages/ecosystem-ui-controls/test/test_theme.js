@@ -36,6 +36,17 @@ test("primary button hover keeps an accent background", () => {
     assert.ok(rule.includes("var(--_accent)"));
 });
 
+test("filled-button hover darkens rather than lightens the fill", () => {
+    // Lightening a fill under a white label lowers its contrast; darkening is
+    // safe for white-on-fill and costs nothing for dark-on-yellow (cyberpunk).
+    for (const variant of ["primary", "critical"]) {
+        const rule = block(SHARED_STYLES, new RegExp(`button\\.hig-btn\\[data-variant="${variant}"\\]:hover:not\\(:disabled\\)\\s*\\{[^}]*\\}`, "s"));
+        const m = rule.match(/brightness\(([\d.]+)\)/);
+        assert.ok(m, `${variant} hover has no brightness filter`);
+        assert.ok(Number(m[1]) < 1, `${variant} hover brightness ${m[1]} lightens the fill`);
+    }
+});
+
 test("critical (armed Freeze) button hover keeps its error background", () => {
     const rule = block(SHARED_STYLES, /button\.hig-btn\[data-variant="critical"\]:hover:not\(:disabled\)\s*\{[^}]*\}/s);
     assert.ok(rule, "critical hover rule missing");

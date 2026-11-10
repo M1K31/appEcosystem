@@ -35,6 +35,10 @@
     "frozen": {
       "type": "boolean"
     },
+    "freeze_confirmed": {
+      "type": "boolean",
+      "description": "Optional. Emitted as false only by a surface that froze itself locally and could not confirm delivery to the mesh; hub-originated state omits it. Renderers show such a freeze as local-only and keep Freeze available as a retry."
+    },
     "freeze_info": {
       "type": ["object", "null"],
       "required": ["initiated_by", "reason", "since"],

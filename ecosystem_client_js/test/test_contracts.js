@@ -134,3 +134,34 @@ test("NotificationEnvelope validates against notification-envelope.v1 schema", (
     assert.deepStrictEqual(validateAgainstSchema(note, "notification-envelope.v1"), []);
 });
 
+
+test("policy-state.v1 accepts freeze_confirmed and the schema copies stay identical", () => {
+    const fs = require("fs");
+    const path = require("path");
+    const localOnlyFreeze = {
+        schema_version: 1,
+        policy_version: 1,
+        mode: "freeze",
+        restrictions: "on",
+        frozen: true,
+        freeze_confirmed: false,
+        freeze_info: { initiated_by: "magicmirror_display", channel: "touch", reason: "hub offline", since: "2026-11-10T00:00:00Z" },
+        always_enforced: ["audit_log"],
+        authority: "standalone_local",
+        updated_at: "2026-11-10T00:00:00Z",
+    };
+    assertValidSchema(localOnlyFreeze, "policy-state.v1");
+    assert.throws(() => assertValidSchema({ ...localOnlyFreeze, freeze_confirmed: "no" }, "policy-state.v1"));
+    const { freeze_confirmed: _omit, ...hubState } = localOnlyFreeze;
+    assertValidSchema(hubState, "policy-state.v1");   // the field is optional
+
+    const root = path.resolve(__dirname, "../..");
+    const canonical = fs.readFileSync(path.join(root, "contracts/schemas/policy-state.v1.schema.json"), "utf8");
+    for (const copy of ["ecosystem_client_js/schemas", "ecosystem_client/schemas"]) {
+        assert.strictEqual(
+            fs.readFileSync(path.join(root, copy, "policy-state.v1.schema.json"), "utf8"),
+            canonical,
+            `${copy} copy differs from contracts/schemas`
+        );
+    }
+});

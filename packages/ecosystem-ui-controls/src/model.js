@@ -218,14 +218,20 @@ function computeEffectivePolicyBanner(rawState, opts = {}) {
         );
         const initiator = fi.initiated_by ? `by ${fi.initiated_by}` : "by operator";
         const reason = fi.reason ? ` — ${fi.reason}` : "";
-        const suspendedNote = overrideActive
-            ? " · Scoped override suspended while frozen"
-            : "";
         // A surface that froze itself but could not confirm delivery to the
         // mesh reports freeze_confirmed: false. Only an explicit false counts;
         // hub-originated state never carries the field. Do not claim the
         // ecosystem is halted, and keep Freeze available as a retry.
         const freezeUnconfirmed = state.freeze_confirmed === false;
+        // "Suspended" is only true if the mesh actually froze. With an
+        // unconfirmed local freeze the override may still be in force
+        // everywhere else, so say that instead.
+        const overrideSuspended = overrideActive && !freezeUnconfirmed;
+        const suspendedNote = !overrideActive
+            ? ""
+            : freezeUnconfirmed
+                ? " · Scoped override may still be active on other devices"
+                : " · Scoped override suspended while frozen";
 
         return {
             effectiveState: "frozen",
@@ -243,7 +249,7 @@ function computeEffectivePolicyBanner(rawState, opts = {}) {
             remainingMs: null,
             scopeText: ov ? summarizeScope(ov.scope) : null,
             deviceSync: sync,
-            overrideSuspended: overrideActive,
+            overrideSuspended,
             overrideExpired,
             freezeUnconfirmed,
             viewMode,

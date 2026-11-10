@@ -324,3 +324,36 @@ test("Unconfirmed freeze renders a Retry Freeze control that re-sends the freeze
     btn._handleClick();
     assert.strictEqual(btn.events.filter((e) => e.type === "ecosystem-freeze-request").length, 1);
 });
+
+test("An unconfirmed local freeze does not claim a scoped override is suspended", () => {
+    const state = {
+        mode: "freeze", frozen: true, authority: "standalone_local", freeze_confirmed: false,
+        restrictions: "off_scoped",
+        freeze_info: { initiated_by: "magicmirror_display", reason: "hub offline" },
+        active_override: { grant_id: "g-1", expires_at: new Date(Date.now() + 600_000).toISOString(),
+            issued_by: "admin", reason: "maint", scope: { apps: ["a"], devices: ["d"], action_classes: ["investigate"] } },
+    };
+    const local = computeEffectivePolicyBanner(state, { viewMode: "admin" });
+    // The mesh may never have received this freeze, so the override may well
+    // still be in force elsewhere: do not say it is suspended.
+    assert.ok(!local.detailText.includes("suspended"));
+    assert.ok(local.detailText.includes("Scoped override may still be active on other devices"));
+    assert.strictEqual(local.overrideSuspended, false);
+
+    const confirmed = computeEffectivePolicyBanner({ ...state, freeze_confirmed: true }, { viewMode: "admin" });
+    assert.ok(confirmed.detailText.includes("Scoped override suspended while frozen"));
+    assert.strictEqual(confirmed.overrideSuspended, true);
+});
+
+test("Restore action disappears once a suspended override has expired under a freeze", () => {
+    const frozenWith = (expiresAt) => ({
+        mode: "freeze", frozen: true, authority: "hub_synced", restrictions: "off_scoped",
+        freeze_info: { initiated_by: "operator", reason: "drill" },
+        active_override: { grant_id: "g-2", expires_at: expiresAt, issued_by: "admin", reason: "maint", scope: {} },
+    });
+    const live = computeEffectivePolicyBanner(frozenWith(new Date(Date.now() + 60_000).toISOString()), { viewMode: "admin" });
+    assert.strictEqual(live.actions.canRestoreRestrictions, true);
+    const expired = computeEffectivePolicyBanner(frozenWith(new Date(Date.now() - 1000).toISOString()), { viewMode: "admin" });
+    assert.strictEqual(expired.actions.canRestoreRestrictions, false);
+    assert.strictEqual(expired.overrideSuspended, false);
+});
