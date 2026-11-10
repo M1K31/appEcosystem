@@ -337,7 +337,9 @@ function createComponentClasses(BaseElement) {
             // keydown composes out of the shadow DOM, so this window-level
             // listener sees Escape and Tab while focus is inside the sheet.
             this._onKeyDown = (ev) => {
-                if (!this.hasAttribute("open")) {
+                // Must agree with render(): open="false" is a closed modal, and a
+                // closed modal must never swallow Tab for the whole page.
+                if (!this._isOpen()) {
                     return;
                 }
                 if (ev.key === "Escape") {
@@ -348,6 +350,33 @@ function createComponentClasses(BaseElement) {
                     this._trapTab(ev);
                 }
             };
+        }
+
+        // Single definition of "open", shared by render() and the key handler.
+        _isOpen() {
+            return this.hasAttribute("open") && this.getAttribute("open") !== "false";
+        }
+
+        // Forget the step-up credential and method, and start the next render
+        // from a fresh form.
+        _resetStepUp() {
+            this._passkeyAssertion = "";
+            this._stepUpMethod = "totp";
+            this._skipDraftRestore = true;
+        }
+
+        // Return focus to whatever opened the modal so a keyboard user is not
+        // stranded. Best-effort: the opener may be gone or not focusable.
+        _returnFocus() {
+            const target = this._restoreFocusTo;
+            this._restoreFocusTo = null;
+            if (target && target.isConnected && typeof target.focus === "function") {
+                try {
+                    target.focus();
+                } catch (_e) {
+                    /* element no longer focusable; ignore */
+                }
+            }
         }
 
         // Focusable controls inside the sheet, in DOM/tab order. Conditionally
@@ -440,16 +469,7 @@ function createComponentClasses(BaseElement) {
             this._skipDraftRestore = true;
             this._focusOnOpen = false;
             this.removeAttribute("open");
-            // Return focus to the trigger so a keyboard user is not stranded.
-            const target = this._restoreFocusTo;
-            this._restoreFocusTo = null;
-            if (target && target.isConnected && typeof target.focus === "function") {
-                try {
-                    target.focus();
-                } catch (_e) {
-                    /* element no longer focusable; ignore */
-                }
-            }
+            this._returnFocus();
             this.dispatchEvent(
                 new CustomEvent("ecosystem-override-cancel", { bubbles: true, composed: true })
             );
@@ -516,6 +536,9 @@ function createComponentClasses(BaseElement) {
             }
 
             this._errors = [];
+            // The credential has been handed to the payload; drop it so a reopened
+            // modal cannot show "Passkey Ready" or re-emit a one-shot assertion.
+            this._resetStepUp();
             this.removeAttribute("open");
             this.dispatchEvent(
                 new CustomEvent("ecosystem-override-submit", {
@@ -524,6 +547,7 @@ function createComponentClasses(BaseElement) {
                     detail: result.payload,
                 })
             );
+            this._returnFocus();
         }
 
         _captureDraft() {
@@ -571,7 +595,7 @@ function createComponentClasses(BaseElement) {
             // submit, so a fresh form is shown and no TOTP/consent is carried over.
             const _draft = this._skipDraftRestore ? null : this._captureDraft();
             this._skipDraftRestore = false;
-            const isOpen = this.hasAttribute("open") && this.getAttribute("open") !== "false";
+            const isOpen = this._isOpen();
             const bypassedItems = BYPASSED_GATES_DEFAULT.map(
                 (item) => `<li>${escapeHtml(item)}</li>`
             ).join("");
