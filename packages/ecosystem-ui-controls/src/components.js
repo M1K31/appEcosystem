@@ -174,6 +174,7 @@ function createComponentClasses(BaseElement) {
             super();
             this._policyState = null;
             this._tickTimer = null;
+            this._expiryTimer = null;
             this._notifiedExpiryForGrant = null;
             this.attachShadow({ mode: "open" });
         }
@@ -219,19 +220,39 @@ function createComponentClasses(BaseElement) {
                 clearInterval(this._tickTimer);
                 this._tickTimer = null;
             }
+            if (this._expiryTimer) {
+                clearTimeout(this._expiryTimer);
+                this._expiryTimer = null;
+            }
         }
 
         _syncCountdownTimer() {
             this._stopCountdownTimer();
             const st = this.policyState;
             if (
-                st &&
-                !st.frozen &&
-                st.restrictions === "off_scoped" &&
-                st.active_override &&
-                st.active_override.expires_at
+                !st ||
+                st.restrictions !== "off_scoped" ||
+                !st.active_override ||
+                !st.active_override.expires_at
             ) {
+                return;
+            }
+            if (!st.frozen) {
                 this._tickTimer = setInterval(() => this.render(), 1000);
+                return;
+            }
+            // Frozen: no countdown is shown, so no per-second re-render. But the
+            // override can still expire underneath the freeze; wake once at that
+            // moment so the "suspended" note and Restore action do not outlive it.
+            const expMs = Date.parse(st.active_override.expires_at);
+            const remaining = expMs - Date.now();
+            if (Number.isFinite(expMs) && remaining > 0) {
+                this._expiryTimer = setTimeout(() => {
+                    this._expiryTimer = null;
+                    // Re-arms when the delay was capped below the real expiry.
+                    this._syncCountdownTimer();
+                    this.render();
+                }, Math.min(remaining + 50, 2147483647));
             }
         }
 
@@ -240,18 +261,16 @@ function createComponentClasses(BaseElement) {
             const raw = this.policyState;
             const vm = computeEffectivePolicyBanner(raw, { viewMode });
 
+            // Decide now, announce at the very end: a listener may synchronously
+            // assign a new policyState, and that nested render must not be
+            // overwritten by the rest of this one.
+            let expiredGrantId = null;
             if (vm.overrideExpired && raw && raw.active_override) {
                 const grantId = raw.active_override.grant_id || "expired";
                 if (this._notifiedExpiryForGrant !== grantId) {
                     this._notifiedExpiryForGrant = grantId;
                     this._stopCountdownTimer();
-                    this.dispatchEvent(
-                        new CustomEvent("ecosystem-override-expired", {
-                            bubbles: true,
-                            composed: true,
-                            detail: { grantId },
-                        })
-                    );
+                    expiredGrantId = grantId;
                 }
             }
 
@@ -327,6 +346,16 @@ function createComponentClasses(BaseElement) {
             onBtn('[data-action="restore"]', "ecosystem-restore-restrictions");
             onBtn('[data-action="manage"]', "ecosystem-manage-restrictions");
             onBtn('[data-action="resume"]', "ecosystem-resume-request");
+
+            if (expiredGrantId !== null) {
+                this.dispatchEvent(
+                    new CustomEvent("ecosystem-override-expired", {
+                        bubbles: true,
+                        composed: true,
+                        detail: { grantId: expiredGrantId },
+                    })
+                );
+            }
         }
     }
 
