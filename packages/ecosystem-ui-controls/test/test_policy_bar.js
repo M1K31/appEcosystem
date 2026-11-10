@@ -71,3 +71,57 @@ test("a listener that sets a frozen state from the expiry event is not overwritt
     assert.ok(!bar.shadowRoot.innerHTML.includes("RESTRICTIONS: ON"));
     bar.disconnectedCallback();
 });
+
+// ── The bar must not destroy its Freeze control on every update ──
+// A rebuild replaces <ecosystem-freeze-button> with a fresh, un-armed one. In
+// ambient/confirm-tap mode that made the second tap arm again instead of
+// confirming whenever a tick or a hub poll landed between the two taps.
+
+const activeOverride = (expiresAt) => ({
+    mode: "normal", frozen: false, restrictions: "off_scoped", authority: "hub_synced",
+    active_override: { grant_id: "g-9", expires_at: expiresAt, issued_by: "admin", reason: "maint",
+        scope: { apps: ["a"], devices: ["d"], action_classes: ["investigate"] } },
+});
+
+test("re-assigning an identical policy state does not rebuild the bar", () => {
+    const bar = makeHarness().create("ecosystem-policy-bar");
+    bar.setAttribute("view-mode", "ambient");
+    const state = () => ({ mode: "normal", restrictions: "on", frozen: false, authority: "hub_synced" });
+    bar.policyState = state();
+    const freezeBtn = bar.shadowRoot.querySelector("ecosystem-freeze-button");
+
+    bar.policyState = state();          // e.g. the next hub poll, nothing changed
+
+    assert.strictEqual(bar.shadowRoot.querySelector("ecosystem-freeze-button"), freezeBtn);
+    bar.disconnectedCallback();
+});
+
+test("the countdown ticks in place without rebuilding the bar", (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout", "setInterval", "Date"], now: 1_000_000 });
+    const bar = makeHarness().create("ecosystem-policy-bar");
+    bar.setAttribute("view-mode", "ambient");
+    bar.policyState = activeOverride(new Date(1_000_000 + 10 * 60_000).toISOString());
+    assert.ok(bar.shadowRoot.innerHTML.includes('data-role="countdown"'));
+    const freezeBtn = bar.shadowRoot.querySelector("ecosystem-freeze-button");
+    const countdown = bar.shadowRoot.querySelector('[data-role="countdown"]');
+
+    t.mock.timers.tick(3000);
+
+    assert.strictEqual(bar.shadowRoot.querySelector("ecosystem-freeze-button"), freezeBtn);
+    assert.match(countdown.textContent, /remaining$/);
+    const first = countdown.textContent;
+    t.mock.timers.tick(60_000);
+    assert.notStrictEqual(countdown.textContent, first);
+    bar.disconnectedCallback();
+});
+
+test("a real state change still rebuilds the bar", () => {
+    const bar = makeHarness().create("ecosystem-policy-bar");
+    bar.policyState = { mode: "normal", restrictions: "on", frozen: false, authority: "hub_synced" };
+    const before = bar.shadowRoot.querySelector("ecosystem-freeze-button");
+    bar.policyState = { mode: "freeze", frozen: true, authority: "hub_synced",
+        freeze_info: { initiated_by: "operator", reason: "drill" } };
+    assert.notStrictEqual(bar.shadowRoot.querySelector("ecosystem-freeze-button"), before);
+    assert.ok(bar.shadowRoot.innerHTML.includes("FROZEN"));
+    bar.disconnectedCallback();
+});
