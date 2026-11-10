@@ -125,3 +125,33 @@ test("a real state change still rebuilds the bar", () => {
     assert.ok(bar.shadowRoot.innerHTML.includes("FROZEN"));
     bar.disconnectedCallback();
 });
+
+test("an expiry further out than a timer can hold is re-armed, not fired early", (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout", "setInterval", "Date"], now: 1_000_000 });
+    const MAX = 2147483647;
+    const thirtyDays = 30 * 24 * 3600 * 1000;      // > MAX
+    const bar = makeHarness().create("ecosystem-policy-bar");
+    bar.policyState = frozenWithOverride(new Date(1_000_000 + thirtyDays).toISOString());
+    const expired = () => bar.events.filter((e) => e.type === "ecosystem-override-expired").length;
+
+    t.mock.timers.tick(MAX);
+    assert.strictEqual(expired(), 0);
+    assert.ok(bar.shadowRoot.innerHTML.includes("Scoped override suspended while frozen"));
+    assert.notStrictEqual(bar._expiryTimer, null);
+
+    t.mock.timers.tick(thirtyDays - MAX + 100);
+    assert.strictEqual(expired(), 1);
+    assert.ok(!bar.shadowRoot.innerHTML.includes("Scoped override suspended while frozen"));
+    bar.disconnectedCallback();
+});
+
+test("the expiry event fires once per grant however often the bar renders", () => {
+    const bar = makeHarness().create("ecosystem-policy-bar");
+    bar.policyState = expiredOverride("g-7");
+    bar.render();
+    bar.policyState = expiredOverride("g-7");
+    assert.strictEqual(bar.events.filter((e) => e.type === "ecosystem-override-expired").length, 1);
+    bar.policyState = expiredOverride("g-8");
+    assert.strictEqual(bar.events.filter((e) => e.type === "ecosystem-override-expired").length, 2);
+    bar.disconnectedCallback();
+});

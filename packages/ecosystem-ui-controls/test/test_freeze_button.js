@@ -49,3 +49,23 @@ test("key-repeat guard is attached while connected and removed on disconnect", (
     btn.disconnectedCallback();
     assert.deepStrictEqual(btn.shadowRoot.listeners.keydown, []);
 });
+
+test("an armed button disarms when the ecosystem becomes frozen, and on disconnect", (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const h = makeHarness();
+    const btn = h.create("ecosystem-freeze-button");
+    btn.setAttribute("confirm-tap", "");
+    btn._handleClick();
+    assert.strictEqual(btn._armed, true);
+
+    btn.setAttribute("frozen", "true");     // state arrived: nothing left to confirm
+    assert.strictEqual(btn._armed, false);
+    assert.strictEqual(btn._armTimer, null);
+
+    const other = h.create("ecosystem-freeze-button");
+    other.setAttribute("confirm-tap", "");
+    other._handleClick();
+    assert.notStrictEqual(other._armTimer, null);
+    other.disconnectedCallback();
+    assert.strictEqual(other._armTimer, null);
+});
