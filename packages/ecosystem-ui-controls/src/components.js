@@ -86,8 +86,14 @@ function createComponentClasses(BaseElement) {
                 this._armTimer = setTimeout(() => {
                     this._armed = false;
                     this.render();
+                    // The expiry re-render also removes the focused trigger; keep a
+                    // keyboard user on it so they can re-arm without hunting for focus.
+                    this.shadowRoot.querySelector('[data-action="freeze-trigger"]')?.focus();
                 }, 3000);
                 this.render();
+                // render() replaces the focused trigger; restore focus so a
+                // keyboard user's second Enter/Space confirms Freeze.
+                this.shadowRoot.querySelector('[data-action="freeze-trigger"]')?.focus();
                 return;
             }
 
@@ -316,16 +322,75 @@ function createComponentClasses(BaseElement) {
             this._stepUpMethod = "totp";
             this._passkeyAssertion = "";
             this._selectedDuration = "30m";
+            // When true, the next render() starts from a fresh form instead of
+            // restoring captured input. Set on every open/close transition and
+            // after a submit so a single-use TOTP code or an "until revoked"
+            // consent never carries across a modal session.
+            this._skipDraftRestore = true;
+            // Pull focus into the sheet on the next render after an open
+            // transition only (not on every re-render, which would steal focus
+            // while the operator is typing or changing the duration).
+            this._focusOnOpen = false;
+            // Best-effort element to return focus to when the modal closes.
+            this._restoreFocusTo = null;
             this.attachShadow({ mode: "open" });
+            // keydown composes out of the shadow DOM, so this window-level
+            // listener sees Escape and Tab while focus is inside the sheet.
             this._onKeyDown = (ev) => {
-                if (ev.key === "Escape" && this.hasAttribute("open")) {
+                if (!this.hasAttribute("open")) {
+                    return;
+                }
+                if (ev.key === "Escape") {
                     this.close();
+                    return;
+                }
+                if (ev.key === "Tab") {
+                    this._trapTab(ev);
                 }
             };
         }
 
+        // Focusable controls inside the sheet, in DOM/tab order. Conditionally
+        // rendered fields (until-revoked consent, error box) are simply absent
+        // from the tree when not shown, so no visibility filtering is needed.
+        _focusable() {
+            const root = this.shadowRoot;
+            if (!root) {
+                return [];
+            }
+            return Array.from(
+                root.querySelectorAll(
+                    'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+                )
+            );
+        }
+
+        // Keep Tab / Shift+Tab cycling within the modal so keyboard focus cannot
+        // land on the backdrop or page behind this aria-modal step-up dialog.
+        _trapTab(ev) {
+            const focusable = this._focusable();
+            if (focusable.length === 0) {
+                return;
+            }
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            const active = this.shadowRoot.activeElement;
+            const inside = active && this.shadowRoot.contains(active);
+            if (ev.shiftKey) {
+                if (!inside || active === first) {
+                    ev.preventDefault();
+                    last.focus();
+                }
+            } else if (!inside || active === last) {
+                ev.preventDefault();
+                first.focus();
+            }
+        }
+
         set availableApps(list) {
-            if (Array.isArray(list) && list.length) {
+            // Accept an empty array so clearing the inventory (discovery returned
+            // no targets) actually clears the modal instead of keeping stale items.
+            if (Array.isArray(list)) {
                 this._availableApps = list.map(String);
                 this.render();
             }
@@ -336,7 +401,7 @@ function createComponentClasses(BaseElement) {
         }
 
         set availableDevices(list) {
-            if (Array.isArray(list) && list.length) {
+            if (Array.isArray(list)) {
                 this._availableDevices = list.map(String);
                 this.render();
             }
@@ -355,11 +420,36 @@ function createComponentClasses(BaseElement) {
 
         open() {
             this._errors = [];
+            // Remember who opened us so focus can return there on close. In a
+            // nested shadow tree document.activeElement resolves to the outer
+            // host; focusing it is a best-effort no-op when it is not focusable.
+            try {
+                this._restoreFocusTo =
+                    typeof document !== "undefined" ? document.activeElement : null;
+            } catch (_e) {
+                this._restoreFocusTo = null;
+            }
+            this._focusOnOpen = true;
             this.setAttribute("open", "true");
         }
 
         close() {
+            // Drop sensitive session state so it cannot be restored on reopen.
+            this._passkeyAssertion = "";
+            this._selectedDuration = "30m";
+            this._skipDraftRestore = true;
+            this._focusOnOpen = false;
             this.removeAttribute("open");
+            // Return focus to the trigger so a keyboard user is not stranded.
+            const target = this._restoreFocusTo;
+            this._restoreFocusTo = null;
+            if (target && target.isConnected && typeof target.focus === "function") {
+                try {
+                    target.focus();
+                } catch (_e) {
+                    /* element no longer focusable; ignore */
+                }
+            }
             this.dispatchEvent(
                 new CustomEvent("ecosystem-override-cancel", { bubbles: true, composed: true })
             );
@@ -379,6 +469,9 @@ function createComponentClasses(BaseElement) {
         }
 
         attributeChangedCallback() {
+            // The only observed attribute is "open"; an open/close transition must
+            // present a fresh form, not restore the previous session's input.
+            this._skipDraftRestore = true;
             this.render();
         }
 
@@ -413,6 +506,11 @@ function createComponentClasses(BaseElement) {
 
             if (!result.valid) {
                 this._errors = result.errors;
+                // Clear the step-up credential after every submit attempt: a TOTP is
+                // single-use/time-boxed and a passkey assertion is one-shot, so the
+                // operator should re-enter one rather than reuse a stale value.
+                if (totpEl) totpEl.value = "";
+                this._passkeyAssertion = "";
                 this.render();
                 return;
             }
@@ -428,7 +526,51 @@ function createComponentClasses(BaseElement) {
             );
         }
 
+        _captureDraft() {
+            // Snapshot in-progress form input so a re-render (duration change,
+            // passkey verification, validation failure) does not wipe it.
+            const root = this.shadowRoot;
+            if (!root) return null;
+            if (!root.querySelector('input[name="reason"], input[name="totp_code"], input[name="apps"]')) {
+                return null; // nothing rendered yet (first render)
+            }
+            const checked = (name) =>
+                Array.from(root.querySelectorAll(`input[name="${name}"]:checked`)).map((el) => el.value);
+            const confEl = root.querySelector('input[name="confirm_until_revoked"]');
+            const reasonEl = root.querySelector('input[name="reason"]');
+            const totpEl = root.querySelector('input[name="totp_code"]');
+            return {
+                apps: checked("apps"),
+                devices: checked("devices"),
+                action_classes: checked("action_classes"),
+                reason: reasonEl ? reasonEl.value : undefined,
+                totp_code: totpEl ? totpEl.value : undefined,
+                confirm: confEl ? confEl.checked : undefined,
+            };
+        }
+
+        _restoreDraft(draft) {
+            if (!draft) return;
+            const root = this.shadowRoot;
+            ["apps", "devices", "action_classes"].forEach((name) => {
+                const want = new Set(draft[name] || []);
+                root.querySelectorAll(`input[name="${name}"]`).forEach((el) => {
+                    el.checked = want.has(el.value);
+                });
+            });
+            const reasonEl = root.querySelector('input[name="reason"]');
+            if (reasonEl && draft.reason !== undefined) reasonEl.value = draft.reason;
+            const totpEl = root.querySelector('input[name="totp_code"]');
+            if (totpEl && draft.totp_code !== undefined) totpEl.value = draft.totp_code;
+            const confEl = root.querySelector('input[name="confirm_until_revoked"]');
+            if (confEl && draft.confirm !== undefined) confEl.checked = draft.confirm;
+        }
+
         render() {
+            // Skip the capture/restore on an open/close transition or just after a
+            // submit, so a fresh form is shown and no TOTP/consent is carried over.
+            const _draft = this._skipDraftRestore ? null : this._captureDraft();
+            this._skipDraftRestore = false;
             const isOpen = this.hasAttribute("open") && this.getAttribute("open") !== "false";
             const bypassedItems = BYPASSED_GATES_DEFAULT.map(
                 (item) => `<li>${escapeHtml(item)}</li>`
@@ -610,6 +752,18 @@ function createComponentClasses(BaseElement) {
             if (submitBtn) {
                 submitBtn.addEventListener("click", () => this._collectAndSubmit());
             }
+
+            // Restore any in-progress input captured before this re-render.
+            this._restoreDraft(_draft);
+
+            // On the open transition only, move focus to the first interactive
+            // control so a keyboard user starts inside the dialog and the trap is
+            // airtight at both Tab boundaries. The dialog name is conveyed via
+            // aria-modal + aria-labelledby rather than by focusing the title.
+            if (this._focusOnOpen && isOpen) {
+                this._focusOnOpen = false;
+                this._focusable()[0]?.focus();
+            }
         }
     }
 
@@ -729,15 +883,21 @@ function registerEcosystemControls(env = {}) {
 
     const classes = createComponentClasses(BaseEl);
     const definitions = [
-        ["ecosystem-freeze-button", classes.EcosystemFreezeButton],
-        ["ecosystem-policy-bar", classes.EcosystemPolicyBar],
-        ["ecosystem-override-modal", classes.EcosystemOverrideModal],
-        ["ecosystem-mic-pill", classes.EcosystemMicPill],
+        ["ecosystem-freeze-button", "EcosystemFreezeButton"],
+        ["ecosystem-policy-bar", "EcosystemPolicyBar"],
+        ["ecosystem-override-modal", "EcosystemOverrideModal"],
+        ["ecosystem-mic-pill", "EcosystemMicPill"],
     ];
 
-    for (const [tag, ctor] of definitions) {
-        if (!registry.get(tag)) {
-            registry.define(tag, ctor);
+    for (const [tag, key] of definitions) {
+        const existing = registry.get(tag);
+        if (existing) {
+            // Already registered (e.g. the browser auto-registered on load). Return
+            // the REGISTERED constructor — the freshly-created one is unregistered
+            // and constructing it would throw a TypeError.
+            classes[key] = existing;
+        } else {
+            registry.define(tag, classes[key]);
         }
     }
     return classes;

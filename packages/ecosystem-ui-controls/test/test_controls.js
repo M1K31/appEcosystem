@@ -5,6 +5,7 @@ const assert = require("node:assert");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const { makeHarness } = require("./helpers/fake_dom");
 
 const {
     ALWAYS_ENFORCED_INVARIANTS,
@@ -216,32 +217,7 @@ test("Freeze button and Mic pill view-models enforce two-tap safety and zero-aud
 });
 
 test("Custom elements register and render Shadow DOM HTML cleanly (including browser bundle)", () => {
-    class FakeElement {
-        constructor() {
-            this._attrs = new Map();
-            this.events = [];
-            this.shadowRoot = null;
-        }
-        attachShadow() {
-            this.shadowRoot = {
-                innerHTML: "",
-                querySelector: () => null,
-                querySelectorAll: () => [],
-            };
-            return this.shadowRoot;
-        }
-        getAttribute(k) { return this._attrs.has(k) ? this._attrs.get(k) : null; }
-        setAttribute(k, v) { this._attrs.set(k, String(v)); if (this.attributeChangedCallback) this.attributeChangedCallback(k); }
-        hasAttribute(k) { return this._attrs.has(k); }
-        removeAttribute(k) { this._attrs.delete(k); if (this.attributeChangedCallback) this.attributeChangedCallback(k); }
-        dispatchEvent(ev) { this.events.push(ev); return true; }
-    }
-
-    const defined = new Map();
-    const fakeRegistry = {
-        get: (name) => defined.get(name),
-        define: (name, ctor) => defined.set(name, ctor),
-    };
+    const { FakeElement, defined, registry: fakeRegistry } = makeHarness();
 
     registerEcosystemControls({ customElements: fakeRegistry, HTMLElement: FakeElement });
     assert.strictEqual(defined.size, 4);
