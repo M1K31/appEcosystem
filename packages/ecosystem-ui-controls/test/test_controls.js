@@ -276,3 +276,51 @@ test("Policy bar with no state, or unparseable state, shows UNKNOWN and keeps Fr
     assert.ok(bar.shadowRoot.innerHTML.includes("STATUS: UNKNOWN"));
     bar.disconnectedCallback();
 });
+
+test("Unconfirmed local freeze is labelled and keeps a retry", () => {
+    const base = { mode: "freeze", frozen: true, authority: "standalone_local",
+        freeze_info: { initiated_by: "magicmirror_display", reason: "x" } };
+    const unconfirmed = computeEffectivePolicyBanner({ ...base, freeze_confirmed: false }, { viewMode: "ambient" });
+    assert.strictEqual(unconfirmed.effectiveState, "frozen");
+    assert.strictEqual(unconfirmed.badgeText, "FROZEN (LOCAL ONLY)");
+    assert.strictEqual(unconfirmed.severity, "critical");
+    assert.strictEqual(unconfirmed.headline, "Freeze held on this display — mesh delivery not confirmed");
+    assert.strictEqual(unconfirmed.freezeUnconfirmed, true);
+    assert.strictEqual(unconfirmed.actions.canFreeze, true);
+    assert.strictEqual(unconfirmed.actions.canResume, false);
+    const confirmed = computeEffectivePolicyBanner(base, { viewMode: "ambient" });
+    assert.strictEqual(confirmed.badgeText, "FROZEN");
+    assert.strictEqual(confirmed.freezeUnconfirmed, false);
+    assert.strictEqual(confirmed.actions.canFreeze, false);
+    // Only an explicit `false` means unconfirmed; `true` is a normal freeze.
+    const explicit = computeEffectivePolicyBanner({ ...base, freeze_confirmed: true }, { viewMode: "ambient" });
+    assert.deepStrictEqual(explicit, confirmed);
+    // The flag means nothing when not frozen.
+    const notFrozen = computeEffectivePolicyBanner({ mode: "normal", restrictions: "on", freeze_confirmed: false }, {});
+    assert.strictEqual(notFrozen.effectiveState, "restrictions_on");
+    assert.strictEqual(notFrozen.freezeUnconfirmed, false);
+});
+
+test("Unconfirmed freeze renders a Retry Freeze control that re-sends the freeze request", () => {
+    const retryVm = computeFreezeButtonState({ frozen: false, viewMode: "ambient", confirmTap: true, retry: true });
+    assert.strictEqual(retryVm.label, "Retry Freeze");
+    assert.strictEqual(retryVm.disabled, false);
+    assert.strictEqual(computeFreezeButtonState({ retry: true, confirmTap: true, armed: true }).label, "Tap Again to Freeze");
+    assert.strictEqual(computeFreezeButtonState({}).label, "Freeze");
+
+    const h = makeHarness();
+    const bar = h.create("ecosystem-policy-bar");
+    bar.setAttribute("view-mode", "ambient");
+    bar.policyState = { mode: "freeze", frozen: true, authority: "standalone_local", freeze_confirmed: false,
+        freeze_info: { initiated_by: "magicmirror_display", reason: "x" } };
+    assert.ok(bar.shadowRoot.innerHTML.includes("FROZEN (LOCAL ONLY)"));
+    assert.ok(/<ecosystem-freeze-button[^>]*retry="true"/.test(bar.shadowRoot.innerHTML));
+    assert.ok(!/<ecosystem-freeze-button[^>]*frozen="true"/.test(bar.shadowRoot.innerHTML));
+    bar.disconnectedCallback();
+
+    const btn = h.create("ecosystem-freeze-button");
+    btn.setAttribute("retry", "true");
+    assert.ok(btn.shadowRoot.innerHTML.includes("Retry Freeze"));
+    btn._handleClick();
+    assert.strictEqual(btn.events.filter((e) => e.type === "ecosystem-freeze-request").length, 1);
+});

@@ -157,6 +157,7 @@ function computeEffectivePolicyBanner(rawState, opts = {}) {
             deviceSync: summarizeDeviceSync([], [], []),
             overrideSuspended: false,
             overrideExpired: false,
+            freezeUnconfirmed: false,
             viewMode,
             actions: {
                 canFreeze: true,
@@ -220,13 +221,20 @@ function computeEffectivePolicyBanner(rawState, opts = {}) {
         const suspendedNote = overrideActive
             ? " · Scoped override suspended while frozen"
             : "";
+        // A surface that froze itself but could not confirm delivery to the
+        // mesh reports freeze_confirmed: false. Only an explicit false counts;
+        // hub-originated state never carries the field. Do not claim the
+        // ecosystem is halted, and keep Freeze available as a retry.
+        const freezeUnconfirmed = state.freeze_confirmed === false;
 
         return {
             effectiveState: "frozen",
             severity: "critical",
             icon: "shield-octagon",
-            badgeText: "FROZEN",
-            headline: "Emergency Freeze Active — Mutating automations & commands halted",
+            badgeText: freezeUnconfirmed ? "FROZEN (LOCAL ONLY)" : "FROZEN",
+            headline: freezeUnconfirmed
+                ? "Freeze held on this display — mesh delivery not confirmed"
+                : "Emergency Freeze Active — Mutating automations & commands halted",
             detailText: `Initiated ${initiator}${reason}${suspendedNote}`,
             modeLabel: MODE_LABELS.freeze,
             authorityKey,
@@ -237,9 +245,10 @@ function computeEffectivePolicyBanner(rawState, opts = {}) {
             deviceSync: sync,
             overrideSuspended: overrideActive,
             overrideExpired,
+            freezeUnconfirmed,
             viewMode,
             actions: {
-                canFreeze: false,
+                canFreeze: freezeUnconfirmed,
                 canResume: isAdmin,
                 canManageRestrictions: false,
                 canRestoreRestrictions: isAdmin && overrideActive,
@@ -272,6 +281,7 @@ function computeEffectivePolicyBanner(rawState, opts = {}) {
             deviceSync: sync,
             overrideSuspended: false,
             overrideExpired: false,
+            freezeUnconfirmed: false,
             viewMode,
             actions: {
                 canFreeze: true,
@@ -305,6 +315,7 @@ function computeEffectivePolicyBanner(rawState, opts = {}) {
         deviceSync: summarizeDeviceSync([], [], []),
         overrideSuspended: false,
         overrideExpired,
+        freezeUnconfirmed: false,
         viewMode,
         actions: {
             canFreeze: true,
@@ -439,6 +450,17 @@ function computeFreezeButtonState(opts = {}) {
             ariaLabel: "Confirm Emergency Freeze: activate within 3 seconds to halt mutating actions.",
             disabled: false,
             severity: "critical",
+        };
+    }
+
+    if (opts.retry) {
+        return {
+            mode: "retry",
+            icon: "octagon-pause",
+            label: "Retry Freeze",
+            ariaLabel: "Retry Emergency Freeze: this display is frozen but the ecosystem did not confirm. Activate to send the freeze again.",
+            disabled: false,
+            severity: "danger",
         };
     }
 

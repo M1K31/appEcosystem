@@ -29,7 +29,7 @@ function escapeHtml(value) {
 function createComponentClasses(BaseElement) {
     class EcosystemFreezeButton extends BaseElement {
         static get observedAttributes() {
-            return ["frozen", "view-mode", "confirm-tap"];
+            return ["frozen", "view-mode", "confirm-tap", "retry"];
         }
 
         constructor() {
@@ -142,6 +142,7 @@ function createComponentClasses(BaseElement) {
                 viewMode,
                 confirmTap,
                 armed: this._armed,
+                retry: this.hasAttribute("retry") && this.getAttribute("retry") !== "false",
             });
 
             this.shadowRoot.innerHTML = `
@@ -300,8 +301,12 @@ function createComponentClasses(BaseElement) {
                     ? 'confirm-tap="true"'
                     : "";
 
+            // An unconfirmed local freeze keeps a live Freeze control, labelled
+            // as a retry, instead of the disabled "Ecosystem Frozen" state.
+            const retryAttr = vm.freezeUnconfirmed ? 'retry="true"' : "";
+
             const freezeBtn = vm.actions.canFreeze
-                ? `<ecosystem-freeze-button view-mode="${escapeHtml(viewMode)}" ${confirmTapAttr}></ecosystem-freeze-button>`
+                ? `<ecosystem-freeze-button view-mode="${escapeHtml(viewMode)}" ${confirmTapAttr} ${retryAttr}></ecosystem-freeze-button>`
                 : viewMode === "ambient" && vm.effectiveState === "frozen"
                     ? `<ecosystem-freeze-button frozen="true" view-mode="ambient"></ecosystem-freeze-button>`
                     : "";
