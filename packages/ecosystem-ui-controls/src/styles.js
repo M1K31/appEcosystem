@@ -223,6 +223,20 @@ button.hig-btn[data-variant="critical"] {
   color: #ffffff;
 }
 
+/* Filled variants keep their fill on hover. The generic hover rule above would
+   swap in --_bg-hover while the label keeps its on-fill colour, which drops
+   contrast to ~1.4:1 (dark label on dark purple in cyberpunk; white label on
+   light grey in the light theme). */
+button.hig-btn[data-variant="primary"]:hover:not(:disabled) {
+  background: var(--_accent);
+  filter: brightness(1.08);
+}
+
+button.hig-btn[data-variant="critical"]:hover:not(:disabled) {
+  background: var(--_error);
+  filter: brightness(1.08);
+}
+
 /* Modal Backdrop & HIG Sheet */
 .modal-backdrop {
   position: fixed;
