@@ -129,12 +129,45 @@ function summarizeScope(scope) {
  *    while preserving status visibility and Freeze request capability.
  * 4. Unreachable devices are explicitly surfaced and never merged into applied/acknowledged counts.
  *
- * @param {object|null} rawState
+ * @param {object|null} rawState  null/non-object yields the "unknown" view-model
  * @param {{viewMode?: "admin"|"ambient", nowMs?: number}} [opts]
  */
 function computeEffectivePolicyBanner(rawState, opts = {}) {
-    const state = rawState && typeof rawState === "object" ? rawState : {};
     const viewMode = opts.viewMode === "ambient" ? "ambient" : "admin";
+
+    // No usable snapshot yet (first paint, or an unparseable payload). Do NOT
+    // claim "RESTRICTIONS: ON": the ecosystem may be frozen or running a scoped
+    // override that this surface simply has not heard about. Say so, keep
+    // Freeze available, and offer nothing that depends on knowing the state.
+    if (!rawState || typeof rawState !== "object" || Array.isArray(rawState)) {
+        return {
+            effectiveState: "unknown",
+            severity: "warning",
+            icon: "lock-shield",
+            badgeText: "STATUS: UNKNOWN",
+            headline: "Waiting for policy state",
+            detailText:
+                "No policy state received yet — treat restrictions as enforced. Freeze remains available.",
+            modeLabel: null,
+            authorityKey: "standalone_local",
+            authorityLabel: AUTHORITY_LABELS.standalone_local,
+            countdownText: null,
+            remainingMs: null,
+            scopeText: null,
+            deviceSync: summarizeDeviceSync([], [], []),
+            overrideSuspended: false,
+            overrideExpired: false,
+            viewMode,
+            actions: {
+                canFreeze: true,
+                canResume: false,
+                canManageRestrictions: false,
+                canRestoreRestrictions: false,
+            },
+        };
+    }
+
+    const state = rawState;
     const nowMs = opts.nowMs == null ? Date.now() : Number(opts.nowMs);
     const isAdmin = viewMode === "admin";
 

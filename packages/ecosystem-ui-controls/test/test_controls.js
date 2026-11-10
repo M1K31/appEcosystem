@@ -246,3 +246,33 @@ test("Custom elements register and render Shadow DOM HTML cleanly (including bro
     assert.strictEqual(typeof sandbox.EcosystemUIControls.computeEffectivePolicyBanner, "function");
 });
 
+
+test("Missing policy state renders STATUS: UNKNOWN with Freeze still available", () => {
+    for (const raw of [null, undefined, "frozen", 42, []]) {
+        const vm = computeEffectivePolicyBanner(raw, { viewMode: "admin" });
+        assert.strictEqual(vm.effectiveState, "unknown");
+        assert.strictEqual(vm.badgeText, "STATUS: UNKNOWN");
+        assert.strictEqual(vm.severity, "warning");
+        assert.strictEqual(vm.headline, "Waiting for policy state");
+        assert.strictEqual(vm.overrideExpired, false);
+        assert.strictEqual(vm.deviceSync.hasUnreachable, false);
+        assert.deepStrictEqual(vm.actions, {
+            canFreeze: true, canResume: false, canManageRestrictions: false, canRestoreRestrictions: false,
+        });
+    }
+    assert.strictEqual(computeEffectivePolicyBanner(null, { viewMode: "ambient" }).viewMode, "ambient");
+    assert.strictEqual(computeEffectivePolicyBanner({}, {}).effectiveState, "restrictions_on");
+});
+
+test("Policy bar with no state, or unparseable state, shows UNKNOWN and keeps Freeze", () => {
+    const bar = makeHarness().create("ecosystem-policy-bar");
+    bar.connectedCallback();
+    assert.ok(bar.shadowRoot.innerHTML.includes("STATUS: UNKNOWN"));
+    assert.ok(!bar.shadowRoot.innerHTML.includes("RESTRICTIONS: ON"));
+    assert.ok(bar.shadowRoot.innerHTML.includes("<ecosystem-freeze-button"));
+    assert.ok(!bar.shadowRoot.innerHTML.includes("Manage Restrictions"));
+
+    bar.setAttribute("policy-state", "{not json");
+    assert.ok(bar.shadowRoot.innerHTML.includes("STATUS: UNKNOWN"));
+    bar.disconnectedCallback();
+});
