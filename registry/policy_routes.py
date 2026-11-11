@@ -932,17 +932,36 @@ CONTROL_PLANE_HTML = """<!DOCTYPE html>
     }
 
     bar.addEventListener("ecosystem-manage-restrictions", () => modal.open());
+    // Report success only once the hub has accepted the request: a refused
+    // Freeze or Restore must never read as done.
+    async function failureDetail(r, fallback) {
+      try {
+        const data = await r.json();
+        return data.detail || fallback;
+      } catch (_err) {
+        return fallback;
+      }
+    }
+
     bar.addEventListener("ecosystem-restore-restrictions", async () => {
-      await fetch("/policy/restrictions/on", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      const r = await fetch("/policy/restrictions/on", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      if (!r.ok) {
+        showToast(await failureDetail(r, "Restrictions were NOT restored (HTTP " + r.status + ")"));
+        return;
+      }
       showToast("Conservative Restrictions: On restored");
       refreshAll();
     });
     bar.addEventListener("ecosystem-freeze-request", async () => {
-      await fetch("/policy/freeze", {
+      const r = await fetch("/policy/freeze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ initiated_by: "hub-ui", channel: "hub_ui", reason: "Emergency Freeze triggered from Hub UI" })
       });
+      if (!r.ok) {
+        showToast(await failureDetail(r, "Freeze was NOT engaged (HTTP " + r.status + ")"));
+        return;
+      }
       showToast("Ecosystem Freeze engaged");
       refreshAll();
     });
@@ -962,17 +981,25 @@ CONTROL_PLANE_HTML = """<!DOCTYPE html>
       refreshAll();
     });
     modal.addEventListener("ecosystem-override-submit", async (ev) => {
-      const d = ev.detail;
+      // Field names follow <ecosystem-override-modal>'s payload
+      // (validateOverrideForm): duration_id and step_up.{method, credential}.
+      const d = ev.detail || {};
+      const stepUp = d.step_up || {};
+      const body = {
+        scope: d.scope,
+        duration: d.duration_id,
+        until_revoked: d.duration_id === "until_revoked",
+        reason: d.reason
+      };
+      if (stepUp.method === "totp") {
+        body.totp_code = stepUp.credential;
+      } else if (stepUp.credential) {
+        body.step_up_token = stepUp.credential;
+      }
       const r = await fetch("/policy/restrictions/off", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          scope: d.scope,
-          duration: d.duration,
-          until_revoked: d.untilRevoked,
-          reason: d.reason,
-          totp_code: d.stepUpCredential
-        })
+        body: JSON.stringify(body)
       });
       const data = await r.json();
       if (!r.ok) {
