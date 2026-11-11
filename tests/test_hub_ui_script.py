@@ -60,3 +60,31 @@ def test_success_is_only_reported_after_the_hub_accepted_the_request(ui_script, 
     # after the fetch: a refused Freeze must never read as "engaged".
     assert re.search(r"\.ok\b", handler), "response status is never checked"
     assert handler.index(".ok") < handler.index(success_toast)
+
+
+def _contrast(hex_a: str, hex_b: str) -> float:
+    def lum(h: str) -> float:
+        h = h.lstrip("#")
+        if len(h) == 3:
+            h = "".join(c * 2 for c in h)
+        chans = [int(h[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+        lin = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in chans]
+        return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
+
+    a, b = lum(hex_a), lum(hex_b)
+    return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+
+
+def test_filled_buttons_meet_text_contrast(ui_script):
+    # Apple HIG / WCAG AA: 4.5:1 for button labels (non-bold, under 18pt).
+    # The accent used for links on a dark page is too light to sit under a
+    # white label, so fills have their own token.
+    fills = dict(re.findall(r"(--cp-fill-(?:accent|danger)):\s*(#[0-9a-fA-F]{3,6})", ui_script))
+    assert set(fills) == {"--cp-fill-accent", "--cp-fill-danger"}
+    for name, value in fills.items():
+        assert _contrast(value, "#ffffff") >= 4.5, f"{name} {value}"
+    # No theme variant may redefine a fill to something lighter.
+    for name in fills:
+        assert len(set(re.findall(rf"{name}:\s*(#[0-9a-fA-F]{{3,6}})", ui_script))) == 1
+    assert re.search(r"\.btn\.primary\s*\{[^}]*background:\s*var\(--cp-fill-accent\)", ui_script)
+    assert re.search(r"\.btn\.danger\s*\{[^}]*background:\s*var\(--cp-fill-danger\)", ui_script)

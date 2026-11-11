@@ -40,6 +40,9 @@ const SHARED_STYLES = `
   --_text-tertiary: var(--text-tertiary, hsl(220, 8%, 58%));
   --_accent: var(--color-accent, hsl(210, 100%, 52%));
   --_text-on-accent: var(--text-on-accent, hsl(0, 0%, 100%));
+  --_fill-accent: var(--fill-accent, hsl(211, 100%, 44%));
+  --_fill-critical: var(--fill-critical, hsl(0, 78%, 48%));
+  --_text-on-critical: var(--text-on-critical, hsl(0, 0%, 100%));
   --_success: var(--color-success, hsl(120, 60%, 48%));
   --_warning: var(--color-warning, hsl(35, 100%, 55%));
   --_error: var(--color-error, hsl(0, 85%, 60%));
@@ -200,7 +203,7 @@ button.hig-btn:disabled {
 }
 
 button.hig-btn[data-variant="primary"] {
-  background: var(--_accent);
+  background: var(--_fill-accent);
   border-color: transparent;
   color: var(--_text-on-accent);
 }
@@ -219,8 +222,9 @@ button.hig-btn[data-variant="critical"] {
 }
 
 button.hig-btn[data-variant="critical"] {
-  background: var(--_error);
-  color: #ffffff;
+  background: var(--_fill-critical);
+  border-color: transparent;
+  color: var(--_text-on-critical);
 }
 
 /* Filled variants keep their fill on hover. The generic hover rule above would
@@ -229,12 +233,12 @@ button.hig-btn[data-variant="critical"] {
    light grey in the light theme). Hover darkens the fill: lightening it
    would lower the contrast of a white label. */
 button.hig-btn[data-variant="primary"]:hover:not(:disabled) {
-  background: var(--_accent);
+  background: var(--_fill-accent);
   filter: brightness(0.92);
 }
 
 button.hig-btn[data-variant="critical"]:hover:not(:disabled) {
-  background: var(--_error);
+  background: var(--_fill-critical);
   filter: brightness(0.92);
 }
 

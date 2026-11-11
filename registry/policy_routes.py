@@ -723,6 +723,9 @@ CONTROL_PLANE_HTML = """<!DOCTYPE html>
       --cp-muted: var(--eco-text-secondary, #6e6e73);
       --cp-border: rgba(128, 128, 128, 0.2);
       --cp-accent: #0071e3;
+      /* Fills under a white label: 4.5:1 or better in both colour schemes. */
+      --cp-fill-accent: #0071e3;
+      --cp-fill-danger: #d70015;
     }
     @media (prefers-color-scheme: dark) {
       :root {
@@ -770,8 +773,8 @@ CONTROL_PLANE_HTML = """<!DOCTYPE html>
       background: transparent; color: var(--cp-text); font-size: 14px; font-weight: 600;
       cursor: pointer;
     }
-    .btn.primary { background: var(--cp-accent); color: #fff; border-color: transparent; }
-    .btn.danger { background: #ff3b30; color: #fff; border-color: transparent; }
+    .btn.primary { background: var(--cp-fill-accent); color: #fff; border-color: transparent; }
+    .btn.danger { background: var(--cp-fill-danger); color: #fff; border-color: transparent; }
     input.totp-input {
       min-height: 44px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--cp-border);
       background: var(--cp-bg); color: var(--cp-text); font-size: 15px; width: 150px;
