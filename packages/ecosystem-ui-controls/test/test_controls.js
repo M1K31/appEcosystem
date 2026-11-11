@@ -357,3 +357,14 @@ test("Restore action disappears once a suspended override has expired under a fr
     assert.strictEqual(expired.actions.canRestoreRestrictions, false);
     assert.strictEqual(expired.overrideSuspended, false);
 });
+
+test("A freeze that could not be saved warns that it will not survive a restart", () => {
+    const base = { mode: "freeze", frozen: true, authority: "standalone_local", freeze_confirmed: false,
+        freeze_info: { initiated_by: "magicmirror_display", reason: "smoke" } };
+    const volatile = computeEffectivePolicyBanner({ ...base, freeze_durable: false }, { viewMode: "ambient" });
+    assert.strictEqual(volatile.freezeNotDurable, true);
+    assert.ok(volatile.detailText.includes("Not saved to disk"));
+    const saved = computeEffectivePolicyBanner(base, { viewMode: "ambient" });
+    assert.strictEqual(saved.freezeNotDurable, false);
+    assert.ok(!saved.detailText.includes("Not saved to disk"));
+});

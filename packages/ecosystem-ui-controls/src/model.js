@@ -158,6 +158,7 @@ function computeEffectivePolicyBanner(rawState, opts = {}) {
             overrideSuspended: false,
             overrideExpired: false,
             freezeUnconfirmed: false,
+            freezeNotDurable: false,
             viewMode,
             actions: {
                 canFreeze: true,
@@ -232,6 +233,13 @@ function computeEffectivePolicyBanner(rawState, opts = {}) {
             : freezeUnconfirmed
                 ? " · Scoped override may still be active on other devices"
                 : " · Scoped override suspended while frozen";
+        // The surface holding this freeze could not write it to disk (for
+        // example a read-only config mount): it holds for now but would be
+        // lost on restart. Operators need to know that before relying on it.
+        const freezeNotDurable = state.freeze_durable === false;
+        const durabilityNote = freezeNotDurable
+            ? " · Not saved to disk — this freeze will be lost if the display restarts"
+            : "";
 
         return {
             effectiveState: "frozen",
@@ -241,7 +249,7 @@ function computeEffectivePolicyBanner(rawState, opts = {}) {
             headline: freezeUnconfirmed
                 ? "Freeze held on this display — mesh delivery not confirmed"
                 : "Emergency Freeze Active — Mutating automations & commands halted",
-            detailText: `Initiated ${initiator}${reason}${suspendedNote}`,
+            detailText: `Initiated ${initiator}${reason}${suspendedNote}${durabilityNote}`,
             modeLabel: MODE_LABELS.freeze,
             authorityKey,
             authorityLabel,
@@ -252,6 +260,7 @@ function computeEffectivePolicyBanner(rawState, opts = {}) {
             overrideSuspended,
             overrideExpired,
             freezeUnconfirmed,
+            freezeNotDurable,
             viewMode,
             actions: {
                 canFreeze: freezeUnconfirmed,
@@ -288,6 +297,7 @@ function computeEffectivePolicyBanner(rawState, opts = {}) {
             overrideSuspended: false,
             overrideExpired: false,
             freezeUnconfirmed: false,
+            freezeNotDurable: false,
             viewMode,
             actions: {
                 canFreeze: true,
@@ -322,6 +332,7 @@ function computeEffectivePolicyBanner(rawState, opts = {}) {
         overrideSuspended: false,
         overrideExpired,
         freezeUnconfirmed: false,
+        freezeNotDurable: false,
         viewMode,
         actions: {
             canFreeze: true,
