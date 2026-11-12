@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 # — PEP 503 normalizes that to `appecosystem`, which is NOT the same project as
 # `app-ecosystem`, so the old name would have published somewhere else entirely.
 name = "appecosystem"
-version = "0.4.0"
+version = "0.5.0"
 description = "Service registry, event bus and coordination layer for the appEcosystem service mesh"
 readme = "README.md"
 license = "MIT"
@@ -47,7 +47,7 @@ dependencies = [
     # registry, voice router); they were previously only available from a
     # checkout, so a PyPI install of the registry could not start.
     "appecosystem-policy>=0.3.0",
-    "appecosystem-hub>=0.1.0",
+    "appecosystem-hub>=0.2.0",
     "appecosystem-voice>=0.1.0",
     "appecosystem-ai>=0.1.1",
     "appecosystem-compute>=0.1.0",

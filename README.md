@@ -147,11 +147,12 @@ Detailed architecture specifications and operational guides are maintained in [`
 3. **[Policy Engine (`docs/POLICY_ENGINE.md`)](docs/POLICY_ENGINE.md)**: Cryptographic policy state, action classification, and provisional containment with TTL rollbacks.
 4. **[Dashboard Controls (`docs/POLICY_DASHBOARD_CONTROLS.md`)](docs/POLICY_DASHBOARD_CONTROLS.md)**: Apple HIG Web Components, 44px touch targets, ambient view modes, and step-up TOTP verification.
 5. **[Scan Authorization (`docs/SCAN_AUTHORIZATION.md`)](docs/SCAN_AUTHORIZATION.md)**: Consent architecture, AUP recording, Ed25519 device key binding, DHCP churn resistance, and encrypted reports at rest (`0600`).
-6. **[Capability Contracts (`docs/CAPABILITY_CONTRACTS.md`)](docs/CAPABILITY_CONTRACTS.md)**: Draft 2020-12 JSON Schemas for Events, Commands, Notifications, Capabilities, and Policy.
-7. **[Ollama, GPU & Docker Guide (`docs/OLLAMA_GPU_AND_DOCKER.md`)](docs/OLLAMA_GPU_AND_DOCKER.md)**: Comprehensive accelerator setup, macOS Docker lack of Metal passthrough vs host Ollama, and authenticated LAN inference.
-8. **[Cloud GPU Providers (`docs/CLOUD_GPU_PROVIDERS.md`)](docs/CLOUD_GPU_PROVIDERS.md)**: Multi-provider compute broker, sensitive data egress gates, and hard budget spend caps.
-9. **[Acceptable Use Policy Template (`docs/AUP_TEMPLATE.md`)](docs/AUP_TEMPLATE.md)**: Standard AUP legal template for endpoint forensic sweeps.
-10. **[Threat Model (`docs/THREAT_MODEL.md`)](docs/THREAT_MODEL.md)**: STRIDE analysis for the distributed mesh, ambient display boundaries, and audit logging.
+6. **[Commands (`docs/COMMANDS.md`)](docs/COMMANDS.md)**: Invoking a registered capability through the hub — the two policy gates, statuses, approvals, idempotency, and how an app provides a handler.
+7. **[Capability Contracts (`docs/CAPABILITY_CONTRACTS.md`)](docs/CAPABILITY_CONTRACTS.md)**: Draft 2020-12 JSON Schemas for Events, Commands, Notifications, Capabilities, and Policy.
+8. **[Ollama, GPU & Docker Guide (`docs/OLLAMA_GPU_AND_DOCKER.md`)](docs/OLLAMA_GPU_AND_DOCKER.md)**: Comprehensive accelerator setup, macOS Docker lack of Metal passthrough vs host Ollama, and authenticated LAN inference.
+9. **[Cloud GPU Providers (`docs/CLOUD_GPU_PROVIDERS.md`)](docs/CLOUD_GPU_PROVIDERS.md)**: Multi-provider compute broker, sensitive data egress gates, and hard budget spend caps.
+10. **[Acceptable Use Policy Template (`docs/AUP_TEMPLATE.md`)](docs/AUP_TEMPLATE.md)**: Standard AUP legal template for endpoint forensic sweeps.
+11. **[Threat Model (`docs/THREAT_MODEL.md`)](docs/THREAT_MODEL.md)**: STRIDE analysis for the distributed mesh, ambient display boundaries, and audit logging.
 
 ---
 
