@@ -36,6 +36,7 @@ from .command_common import (
     TRIGGER_BY_ACTOR_TYPE,
     actor_string,
     json_too_large,
+    policy_action,
     policy_target,
     request_digest,
 )
@@ -258,12 +259,13 @@ class CommandReceiver:
             decision = self._engine.decide(
                 ActionRequest(
                     actor=actor_string(actor),
-                    action=command,
+                    action=policy_action(command),
                     action_class=action_class,
-                    target=policy_target(envelope["target"], action_class),
+                    target=policy_target(envelope["target"], action_class, envelope["parameters"]),
                     context={
                         "trigger": TRIGGER_BY_ACTOR_TYPE.get(str(actor.get("type")), "service"),
                         "command_id": command_id,
+                        "capability": command,
                     },
                     rationale=str(envelope.get("rationale") or ""),
                     authenticated=True,
@@ -355,11 +357,15 @@ def build_command_router(receiver: CommandReceiver):
 
 
 class HubApprovalVerifier:
-    """Confirms with the hub that a command's approval is real.
+    """Confirms with the hub that a command's approval is real and is for this execution.
 
     Every first-party app holds the shared secret, so a signed envelope that
-    names an approval proves nothing by itself. The hub's own record does.
-    Any error, mismatch or unreachable hub is a refusal.
+    names an approval proves nothing by itself. The hub's own record does: the
+    approval must belong to this exact request (digest, capability, action
+    class, requester), be routed to this provider, and be in flight right now
+    (`dispatching`), so an approval cannot be replayed after it was used or
+    redirected to another provider. Any error, mismatch or unreachable hub is
+    a refusal.
     """
 
     def __init__(
@@ -367,10 +373,12 @@ class HubApprovalVerifier:
         registry_url: str,
         secret: str,
         *,
+        app_name: str,
         client_factory: Callable[[], httpx.AsyncClient] | None = None,
         timeout: float = 3.0,
     ):
         self.registry_url = registry_url.rstrip("/")
+        self.app_name = app_name
         self._secret = secret
         self._client_factory = client_factory or (lambda: httpx.AsyncClient(timeout=timeout))
 
@@ -392,13 +400,25 @@ class HubApprovalVerifier:
             return False
         if not isinstance(record, dict):
             return False
-        if record.get("approval_id") != approval_id:
-            return False
-        if record.get("digest") != request_digest(envelope["command"], envelope["target"], envelope["parameters"]):
-            return False
+        expected = {
+            "approval_id": approval_id,
+            "digest": request_digest(envelope["command"], envelope["target"], envelope["parameters"]),
+            "capability": envelope["command"],
+            "action_class": envelope["action_class"],
+            "requester_app": (envelope.get("actor") or {}).get("app"),
+            "provider": self.app_name,
+            "status": "dispatching",
+        }
+        for field, value in expected.items():
+            if record.get(field) != value:
+                return False
         approval = record.get("approval")
         if not isinstance(approval, dict):
             return False
         if approval.get("status") == "approved":
             return True
-        return approval.get("status") == "pending" and bool(approval.get("async_containment"))
+        return (
+            envelope["action_class"] == "contain"
+            and approval.get("status") == "pending"
+            and bool(approval.get("async_containment"))
+        )

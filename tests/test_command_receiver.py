@@ -463,10 +463,26 @@ def _fake_hub(record: dict | None, seen: list):
     return app
 
 
+def _record(env, **over) -> dict:
+    record = {
+        "digest": _digest(env),
+        "approval_id": "A1",
+        "approval": {"status": "approved"},
+        "status": "dispatching",
+        "provider": "aegissiem",
+        "capability": env["command"],
+        "action_class": env["action_class"],
+        "requester_app": env["actor"]["app"],
+    }
+    record.update(over)
+    return record
+
+
 def _verifier(app) -> HubApprovalVerifier:
     return HubApprovalVerifier(
         "http://hub.test",
         SECRET,
+        app_name="aegissiem",
         client_factory=lambda: httpx.AsyncClient(transport=httpx.ASGITransport(app=app)),
     )
 
@@ -479,7 +495,7 @@ def _digest(env) -> str:
 async def test_hub_approval_verifier_accepts_an_approved_matching_command():
     env = envelope("network.inspect_host", "investigate", authorization_ref="approval:A1")
     seen: list = []
-    hub = _fake_hub({"digest": _digest(env), "approval_id": "A1", "approval": {"status": "approved"}}, seen)
+    hub = _fake_hub(_record(env), seen)
     assert await _verifier(hub)(env) is True
     assert seen == [env["id"]]
 
@@ -487,14 +503,14 @@ async def test_hub_approval_verifier_accepts_an_approved_matching_command():
 @pytest.mark.asyncio
 async def test_hub_approval_verifier_requires_matching_digest():
     env = envelope("network.inspect_host", "investigate", authorization_ref="approval:A1")
-    hub = _fake_hub({"digest": "0" * 64, "approval_id": "A1", "approval": {"status": "approved"}}, [])
+    hub = _fake_hub(_record(env, digest="0" * 64), [])
     assert await _verifier(hub)(env) is False
 
 
 @pytest.mark.asyncio
 async def test_hub_approval_verifier_requires_the_named_approval():
     env = envelope("network.inspect_host", "investigate", authorization_ref="approval:OTHER")
-    hub = _fake_hub({"digest": _digest(env), "approval_id": "A1", "approval": {"status": "approved"}}, [])
+    hub = _fake_hub(_record(env), [])
     assert await _verifier(hub)(env) is False
 
 
@@ -502,17 +518,41 @@ async def test_hub_approval_verifier_requires_the_named_approval():
 @pytest.mark.parametrize("approval", [{"status": "pending"}, {"status": "denied"}, {"status": "expired"}, None])
 async def test_hub_approval_verifier_rejects_unapproved(approval):
     env = envelope("network.inspect_host", "investigate", authorization_ref="approval:A1")
-    hub = _fake_hub({"digest": _digest(env), "approval_id": "A1", "approval": approval}, [])
+    hub = _fake_hub(_record(env, approval=approval), [])
     assert await _verifier(hub)(env) is False
 
 
 @pytest.mark.asyncio
 async def test_hub_approval_verifier_accepts_pending_provisional_containment():
     env = envelope("containment.block_ip", "contain", authorization_ref="approval:A1")
-    hub = _fake_hub(
-        {"digest": _digest(env), "approval_id": "A1", "approval": {"status": "pending", "async_containment": True}}, []
-    )
+    hub = _fake_hub(_record(env, approval={"status": "pending", "async_containment": True}), [])
     assert await _verifier(hub)(env) is True
+
+
+@pytest.mark.asyncio
+async def test_hub_approval_verifier_pending_path_is_only_for_containment():
+    env = envelope("network.inspect_host", "investigate", authorization_ref="approval:A1")
+    hub = _fake_hub(_record(env, approval={"status": "pending", "async_containment": True}), [])
+    assert await _verifier(hub)(env) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"provider": "openeye"},            # approved for a different provider
+        {"status": "completed"},            # already executed: an approval is used once
+        {"status": "pending_approval"},     # the hub is not dispatching it
+        {"status": "denied"},
+        {"action_class": "observe"},        # the hub recorded a different class
+        {"requester_app": "cyber_harness"}, # approved for a different requester
+        {"capability": "camera.snapshot"},
+    ],
+)
+async def test_hub_approval_verifier_binds_the_approval_to_this_execution(override):
+    env = envelope("network.inspect_host", "investigate", authorization_ref="approval:A1")
+    hub = _fake_hub(_record(env, **override), [])
+    assert await _verifier(hub)(env) is False
 
 
 @pytest.mark.asyncio
@@ -525,5 +565,86 @@ async def test_hub_approval_verifier_fails_closed_when_command_unknown():
 async def test_hub_approval_verifier_fails_closed_when_hub_unreachable():
     env = envelope("network.inspect_host", "investigate", authorization_ref="approval:A1")
     # No transport override: the suite's network guard refuses the connection.
-    verifier = HubApprovalVerifier("http://127.0.0.1:8500", SECRET)
+    verifier = HubApprovalVerifier("http://127.0.0.1:8500", SECRET, app_name="aegissiem")
     assert await verifier(env) is False
+
+
+# ---- the action name the policy sees ------------------------------------------
+
+
+def test_policy_action_is_the_last_segment_of_the_capability():
+    from ecosystem_hub.command_common import policy_action
+
+    assert policy_action("containment.block_ip") == "block_ip"
+    assert policy_action("threat_intel.lookup_ioc") == "lookup_ioc"
+    assert policy_action("a.b.c") == "c"
+
+
+@pytest.mark.asyncio
+async def test_passive_external_lookup_is_recognised_by_its_bare_action_name(h):
+    # The policy's passive_actions list names "reputation", not "threat_intel.reputation".
+    h.receiver.register("threat_intel.reputation", "investigate", h._lookup)
+    status, body = await h.receiver.handle(
+        envelope("threat_intel.reputation", "investigate", target={"scope": "external", "identifier": "8.8.8.8"})
+    )
+    assert (status, body["status"]) == (200, "completed")
+    assert body["decision"]["result"] == "allow_and_notify"
+
+
+# ---- the subject may also be named in the parameters ---------------------------
+
+
+@pytest.mark.parametrize(
+    "parameters",
+    [
+        {"host": "8.8.8.8"},
+        {"ip": "203.0.113.9"},
+        {"indicator": "example.com"},
+        {"url": "https://example.com/admin"},
+        {"URL": "http://8.8.8.8:8080/x"},
+        {"hosts": ["192.168.1.5", "8.8.8.8"]},
+        {"cidr": "0.0.0.0/0"},
+        {"host": 134744072},
+    ],
+)
+def test_external_subject_in_parameters_makes_the_target_external(parameters):
+    mapped = policy_target({"scope": "local", "identifier": "192.168.1.20"}, "investigate", parameters)
+    assert mapped["is_external"] is True
+
+
+@pytest.mark.parametrize(
+    "parameters",
+    [
+        {"host": "192.168.1.5"},
+        {"url": "http://nas.local:5000/status"},
+        {"hosts": ["192.168.1.5", "10.0.0.2"]},
+        {"depth": 3, "note": "example.com is mentioned in a comment"},
+        {},
+        None,
+    ],
+)
+def test_internal_parameters_do_not_make_the_target_external(parameters):
+    mapped = policy_target({"scope": "local", "identifier": "192.168.1.20"}, "investigate", parameters)
+    assert "is_external" not in mapped
+
+
+def test_touching_class_without_any_subject_is_external():
+    # Nothing says what will be touched, so it cannot be shown to be the owner's.
+    assert policy_target({"scope": "local"}, "investigate")["is_external"] is True
+    assert policy_target({"scope": "local"}, "remediate", {"depth": 2})["is_external"] is True
+    # A device id or an internal subject in the parameters is enough.
+    assert "is_external" not in policy_target({"scope": "device", "device_id": "mbp-01"}, "remediate")
+    assert "is_external" not in policy_target({"scope": "local"}, "investigate", {"host": "192.168.1.5"})
+    # Classes that do not reach into the subject are unaffected.
+    assert "is_external" not in policy_target({"scope": "local"}, "contain", {"ip": "203.0.113.9"})
+
+
+@pytest.mark.asyncio
+async def test_gate2_denies_external_host_hidden_in_parameters(h):
+    status, body = await h.receiver.handle(
+        envelope("network.inspect_host", "investigate", parameters={"host": "8.8.8.8"},
+                 authorization_ref="approval:01HAPPROVAL")
+    )
+    assert (status, body["status"]) == (200, "denied")
+    assert body["decision"]["result"] == "deny"
+    assert h.calls == []

@@ -6,6 +6,7 @@ import ipaddress
 import json
 import re
 from typing import Any
+from urllib.parse import urlsplit
 
 FINAL_STATUSES = frozenset({"completed", "denied", "failed", "provider_unavailable"})
 OPEN_STATUSES = frozenset({"received", "dispatching", "accepted", "pending_approval"})
@@ -92,21 +93,76 @@ def is_internal_subject(identifier: str | None) -> bool:
     return bool(_HOSTNAME_RE.match(host)) and host.endswith(_INTERNAL_SUFFIXES)
 
 
-def policy_target(target: dict[str, Any], action_class: str) -> dict[str, Any]:
-    """Translate a CommandEnvelope target into the target the PolicyEngine evaluates."""
+# Parameter names under which a request commonly names the system it will touch.
+SUBJECT_PARAMETER_KEYS = frozenset({
+    "host", "hosts", "hostname", "hostnames", "ip", "ips", "ip_address", "address", "addresses", "addr",
+    "indicator", "indicators", "target", "targets", "url", "urls", "uri", "domain", "domains",
+    "cidr", "network", "networks", "subnet", "endpoint",
+})
+
+
+def _subject_values(parameters: dict[str, Any] | None) -> list[Any]:
+    """Values of the top-level parameters that name a system, with URLs reduced to their host."""
+    out: list[Any] = []
+    for key, value in (parameters or {}).items():
+        if str(key).lower() not in SUBJECT_PARAMETER_KEYS:
+            continue
+        for item in value if isinstance(value, (list, tuple)) else [value]:
+            if isinstance(item, str) and "://" in item:
+                try:
+                    item = urlsplit(item).hostname or item
+                except ValueError:
+                    pass
+            out.append(item)
+    return out
+
+
+def policy_target(
+    target: dict[str, Any],
+    action_class: str,
+    parameters: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Translate a CommandEnvelope target into the target the PolicyEngine evaluates.
+
+    For the classes that reach into the subject's own system, the target is
+    external unless everything the request names is provably the owner's: the
+    `target.identifier`, and any host, address, URL or network in the
+    parameters. A request of those classes that names no subject at all (no
+    identifier, no device id, nothing in the parameters) is external too —
+    what it would touch cannot be shown to be the owner's.
+    """
     target = target or {}
     out = {k: target[k] for k in ("scope", "device_id", "service", "identifier") if target.get(k) is not None}
     identifier = target.get("identifier")
-    external = target.get("scope") == "external" or (
-        action_class in TOUCHES_SUBJECT and not is_internal_subject(identifier)
-    )
+    external_subject = identifier
+    external = target.get("scope") == "external"
+    if not external and action_class in TOUCHES_SUBJECT:
+        named = _subject_values(parameters)
+        if not is_internal_subject(identifier):
+            external = True
+        else:
+            for value in named:
+                if not is_internal_subject(value):
+                    external, external_subject = True, value
+                    break
+        if not external and not identifier and not target.get("device_id") and not named:
+            external = True
     if external:
         out["is_external"] = True
         out["kind"] = "external_ip"
-        out["host"] = identifier
+        out["host"] = external_subject if isinstance(external_subject, str) else None
     return out
 
 
 def actor_string(actor: dict[str, Any]) -> str:
     """The `app/id` actor string the PolicyEngine and the audit log use."""
     return f"{actor.get('app', 'unknown')}/{actor.get('id', 'unknown')}"
+
+
+def policy_action(capability: str) -> str:
+    """The action name the PolicyEngine evaluates: the capability's last segment.
+
+    Policy files list bare action names (`lookup_ioc`, `block_ip`), so
+    `threat_intel.lookup_ioc` is evaluated as `lookup_ioc`.
+    """
+    return str(capability).rsplit(".", 1)[-1]
