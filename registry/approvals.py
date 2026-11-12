@@ -157,10 +157,16 @@ class ApprovalService:
                 logger.debug("Failed routing approval request notification: %r", exc)
         return rec
 
+    # Every read and write expires overdue approvals through expire_due() first,
+    # so the listener hears about each expiry; the queue would otherwise expire
+    # them itself, silently.
+
     def list_approvals(self, *, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        self.expire_due()
         return self.queue.list_approvals(status=status, limit=limit)
 
     def get(self, approval_id: str) -> dict[str, Any] | None:
+        self.expire_due()
         return self.queue.get(approval_id)
 
     def expire_due(self, *, now: float | None = None) -> list[dict[str, Any]]:

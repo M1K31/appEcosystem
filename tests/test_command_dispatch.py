@@ -546,3 +546,85 @@ async def test_actor_app_must_be_the_requester(w):
         await w.dispatch("threat_intel.lookup_ioc", actor={**ACTOR, "app": "aegissiem"})
     assert provider.envelopes == []
     assert w.store.list() == []
+
+
+# ---- final review ---------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_retry_after_unknown_outcome_is_refused_once_too_old(w):
+    from ecosystem_hub.command_common import RETRY_WINDOW_SECONDS
+
+    provider = w.add_provider("aegissiem", "threat_intel.lookup_ioc")
+    clock = {"now": 1_800_000_000.0}
+    w.dispatcher = w.make_dispatcher()
+    w.dispatcher._clock = lambda: clock["now"]
+    w.overrides["aegissiem"] = Failing(httpx.ReadTimeout)
+    first = await w.dispatch("threat_intel.lookup_ioc")
+    assert first["outcome_unknown"] is True
+    del w.overrides["aegissiem"]
+
+    clock["now"] = w.store.get(first["command_id"])["created_at"] + RETRY_WINDOW_SECONDS + 1
+    second = await w.dispatch("threat_intel.lookup_ioc")
+    assert (second["status"], second["outcome_unknown"]) == ("failed", True)
+    assert provider.envelopes == []
+    last = w.store.get(first["command_id"])["events"][-1]
+    assert last["event"] == "retry_refused"
+    assert "too old" in last["detail"]["reason"]
+
+
+@pytest.mark.asyncio
+async def test_caller_cannot_supply_the_reserved_policy_parameter(w):
+    from registry.commands import InvalidCommand
+
+    w.add_provider("aegissiem", "threat_intel.lookup_ioc")
+    with pytest.raises(InvalidCommand):
+        await w.dispatch("threat_intel.lookup_ioc", parameters={"_policy": {"incident_id": "forged"}})
+    assert w.store.list() == []
+
+
+@pytest.mark.asyncio
+async def test_both_gates_see_the_same_policy_context(w):
+    provider = w.add_provider("aegissiem", "threat_intel.lookup_ioc")
+    hub_seen, provider_seen = [], []
+    real_hub, real_provider = w.engine.decide, provider.engine.decide
+    w.engine.decide = lambda req, **kw: (hub_seen.append(req), real_hub(req, **kw))[1]
+    provider.engine.decide = lambda req, **kw: (provider_seen.append(req), real_provider(req, **kw))[1]
+    out = await w.dispatch(
+        "threat_intel.lookup_ioc",
+        context={"trigger": "schedule", "incident_id": "INC-7", "profile": "full"},
+    )
+    assert out["status"] == "completed"
+    assert hub_seen[0].context == provider_seen[0].context
+    assert hub_seen[0].action == provider_seen[0].action
+    assert hub_seen[0].target == provider_seen[0].target
+    assert provider.calls[0].parameters == {"indicator": "192.168.1.20"}
+
+
+@pytest.mark.asyncio
+async def test_unexpected_forwarding_error_does_not_leave_the_command_dispatching(w):
+    w.add_provider("aegissiem", "threat_intel.lookup_ioc")
+
+    class Broken(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request):
+            raise ValueError("something nobody expected")
+
+    w.overrides["aegissiem"] = Broken()
+    out = await w.dispatch("threat_intel.lookup_ioc")
+    assert out["status"] == "failed"
+    assert out["outcome_unknown"] is True
+    assert w.store.get(out["command_id"])["events"][-1]["event"] == "forward_error"
+
+
+@pytest.mark.asyncio
+async def test_a_late_approval_on_a_closed_command_is_not_recorded_as_granted(w):
+    provider = w.add_provider("aegissiem", "network.inspect_host", "investigate")
+    doc = await w.dispatch("network.inspect_host", parameters={"host": "192.168.1.20"})
+    approval = {"approval_id": doc["approval_id"], "async_containment": False}
+    w.dispatcher.mark_approval_closed(approval, outcome="denied")
+    out = await w.dispatcher.execute_approved(approval)
+    assert out["status"] == "denied"
+    events = [e["event"] for e in w.store.get(doc["command_id"])["events"]]
+    assert "approval_granted" not in events
+    assert events[-1] == "approval_arrived_late"
+    assert provider.envelopes == []

@@ -149,7 +149,9 @@ def _subject_values(parameters: Any, *, _key_is_subject: bool = False, _depth: i
     counts. Under any other key a value counts when it is itself an address
     (with or without a port) or a URL; a hostname under an arbitrary key cannot
     be told from ordinary text, which is why a handler must take the system it
-    touches from `target.identifier` or from a subject-bearing key. Nested objects and lists are walked; anything nested too deeply to
+    touches from `target.identifier` or from a subject-bearing key. Nested
+    objects and lists are walked, and everything inside a subject-bearing key
+    stays a subject however deeply it is nested; anything nested too deeply to
     inspect is reported as uninspectable, which callers treat as external.
     """
     if _depth > _MAX_PARAMETER_DEPTH:
@@ -157,7 +159,7 @@ def _subject_values(parameters: Any, *, _key_is_subject: bool = False, _depth: i
     out: list[Any] = []
     if isinstance(parameters, dict):
         for key, value in parameters.items():
-            subject_key = str(key).lower() in SUBJECT_PARAMETER_KEYS
+            subject_key = _key_is_subject or str(key).lower() in SUBJECT_PARAMETER_KEYS
             out.extend(_subject_values(value, _key_is_subject=subject_key, _depth=_depth + 1))
         return out
     if isinstance(parameters, (list, tuple)):
@@ -191,28 +193,80 @@ def policy_target(
     parameters. A request of those classes that names no subject at all (no
     identifier, no device id, nothing in the parameters) is external too —
     what it would touch cannot be shown to be the owner's.
+
+    The engine authorises an external target by its single `host`. When a
+    request names more than one distinct external subject, `host` is None, so
+    authorising one of them never covers another: the engine then allows only
+    passive actions.
     """
     target = target or {}
     out = {k: target[k] for k in ("scope", "device_id", "service", "identifier") if target.get(k) is not None}
     identifier = target.get("identifier")
-    external_subject = identifier
+    externals: list[Any] = []
     external = target.get("scope") == "external"
-    if not external and action_class in TOUCHES_SUBJECT:
+    if action_class in TOUCHES_SUBJECT:
         named = _subject_values(parameters)
-        if not is_internal_subject(identifier):
+        candidates = ([identifier] if identifier not in (None, "") else []) + named
+        externals = [v for v in candidates if not is_internal_subject(v)]
+        if externals:
             external = True
-        else:
-            for value in named:
-                if not is_internal_subject(value):
-                    external, external_subject = True, value
-                    break
-        if not external and not identifier and not target.get("device_id") and not named:
+        elif not identifier and not target.get("device_id") and not named:
             external = True
     if external:
+        distinct = {v if isinstance(v, str) else repr(v) for v in externals}
+        if len(distinct) > 1:
+            host = None
+        elif externals:
+            host = externals[0] if isinstance(externals[0], str) else None
+        else:
+            host = identifier if isinstance(identifier, str) else None
         out["is_external"] = True
         out["kind"] = "external_ip"
-        out["host"] = external_subject if isinstance(external_subject, str) else None
+        out["host"] = host
     return out
+
+
+# ---- policy context ------------------------------------------------------------
+
+# The hub forwards the policy context it evaluated with in this reserved
+# parameter, so the provider's gate evaluates the same request. Callers may not
+# set it; the receiver removes it before the handler sees the parameters.
+POLICY_PARAMETER_KEY = "_policy"
+# The only caller-supplied context the policy may see. Anything that could grant
+# something (an approved data release, a budget flag) is not here.
+CALLER_CONTEXT_KEYS = ("incident_id", "profile")
+# A caller may only declare a trigger that makes the evaluation stricter.
+RESTRICTIVE_TRIGGERS = frozenset({"schedule", "automation"})
+_MAX_CONTEXT_VALUE = 128
+
+# How long a provider remembers a command, and how long after its creation a
+# command may still be sent. The gap leaves room for clock differences between
+# hub and provider: past the window nothing is sent or run, because the
+# provider could no longer tell a retry from a first attempt.
+REPLAY_RETENTION_SECONDS = 24 * 3600
+RETRY_WINDOW_SECONDS = 20 * 3600
+
+
+def policy_context(actor: dict[str, Any], supplied: dict[str, Any] | None) -> dict[str, Any]:
+    """The context both gates evaluate: the trigger and the whitelisted caller keys."""
+    ctx: dict[str, Any] = {}
+    supplied = supplied if isinstance(supplied, dict) else {}
+    for key in CALLER_CONTEXT_KEYS:
+        value = supplied.get(key)
+        if isinstance(value, str) and value and len(value) <= _MAX_CONTEXT_VALUE:
+            ctx[key] = value
+    trigger = TRIGGER_BY_ACTOR_TYPE.get(str((actor or {}).get("type")), "service")
+    if supplied.get("trigger") in RESTRICTIVE_TRIGGERS:
+        trigger = supplied["trigger"]
+    ctx["trigger"] = trigger
+    return ctx
+
+
+def split_policy_parameters(parameters: dict[str, Any] | None) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Separate the handler's parameters from the forwarded policy context."""
+    params = dict(parameters or {})
+    supplied = params.pop(POLICY_PARAMETER_KEY, None)
+    return params, supplied if isinstance(supplied, dict) else {}
 
 
 def actor_string(actor: dict[str, Any]) -> str:

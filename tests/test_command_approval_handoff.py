@@ -183,9 +183,10 @@ def test_approving_an_expired_request_executes_nothing(hub, monkeypatch):
     monkeypatch.setattr(time, "time", lambda: real_time() + 10**7)
     resp = hub.approve(doc["approval_id"])
     monkeypatch.setattr(time, "time", real_time)
-    assert resp.status_code in (401, 409)
+    assert resp.status_code == 409
     assert provider.envelopes == []
-    assert hub.command(doc["command_id"])["status"] in ("denied", "pending_approval")
+    record = hub.command(doc["command_id"])
+    assert (record["status"], record["error"]) == ("denied", "approval expired")
 
 
 def test_provisional_containment_approved_keeps_its_result(hub):
@@ -278,3 +279,36 @@ def test_retry_after_unknown_outcome_of_an_approved_command(hub):
     assert again["command_id"] == doc["command_id"]
     assert again["status"] == "completed"
     assert len(provider.calls) == 1
+
+
+# ---- final review: an approval that expires anywhere closes its command ----------
+
+
+def test_listing_approvals_after_expiry_closes_the_command(hub, monkeypatch):
+    provider = hub.add_verified_provider("aegissiem", INSPECT, "investigate")
+    doc = hub.pending()
+    real_time = time.time
+    monkeypatch.setattr(time, "time", lambda: real_time() + 10**7)
+    assert hub.client.get("/approvals", params={"status": "pending"}).status_code == 200
+    monkeypatch.setattr(time, "time", real_time)
+    record = hub.command(doc["command_id"])
+    assert (record["status"], record["error"]) == ("denied", "approval expired")
+    assert provider.envelopes == []
+
+
+def test_startup_closes_commands_whose_approval_closed_while_unobserved(monkeypatch, tmp_path):
+    _env(monkeypatch, tmp_path)
+    from registry.app import app
+
+    with TestClient(app) as client:
+        h = ApprovalHub(client, tmp_path)
+        h.register_service("ai_for_survival")
+        h.add_verified_provider("aegissiem", INSPECT, "investigate")
+        doc = h.pending()
+        # Expired behind the listener's back (as an older hub version would have done).
+        h.state.approval_service.queue.expire_due(now=time.time() + 10**7)
+        assert h.command(doc["command_id"])["status"] == "pending_approval"
+
+    with TestClient(app) as client:
+        record = client.get(f"/commands/{doc['command_id']}").json()
+        assert (record["status"], record["error"]) == ("denied", "approval expired")

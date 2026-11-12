@@ -31,20 +31,23 @@ import httpx
 
 from ecosystem_auth.tokens import sign_request
 from ecosystem_client.contracts import verify_command_envelope
+from ecosystem_client.ulid import ulid_timestamp_ms
 
 from .command_common import (
-    TRIGGER_BY_ACTOR_TYPE,
+    REPLAY_RETENTION_SECONDS,
+    RETRY_WINDOW_SECONDS,
     actor_string,
     json_too_large,
     policy_action,
+    policy_context,
     policy_target,
     request_digest,
+    split_policy_parameters,
 )
 
 logger = logging.getLogger(__name__)
 
 ACTION_CLASSES = frozenset({"observe", "investigate", "contain", "remediate", "data_release", "system_change"})
-REPLAY_RETENTION_SECONDS = 24 * 3600
 
 
 @dataclass(frozen=True)
@@ -201,7 +204,8 @@ class CommandReceiver:
         command: str = envelope["command"]
         actor: dict[str, Any] = envelope["actor"]
         target: dict[str, Any] = envelope["target"]
-        parameters: dict[str, Any] = envelope["parameters"]
+        # The hub's policy context travels in a reserved parameter; the handler never sees it.
+        parameters, supplied_context = split_policy_parameters(envelope["parameters"])
 
         # 2. Addressed to this app, and a capability it actually offers.
         addressed_to = target.get("service")
@@ -219,7 +223,17 @@ class CommandReceiver:
                 error=f"action class mismatch: '{command}' is '{action_class}', not '{envelope['action_class']}'",
             )
 
-        # 4. Replay: the same key is answered from memory, never executed twice.
+        # 4. Too old to tell a retry from a first attempt: the replay store may have
+        # forgotten it, so it is never run. (The command id is a ULID: it carries
+        # the time the hub created the command, and a retry keeps the same id.)
+        if self._now() * 1000 - ulid_timestamp_ms(command_id) > RETRY_WINDOW_SECONDS * 1000:
+            return 409, self._body(
+                command_id, "failed",
+                error="command is too old to be run safely; its earlier outcome cannot be checked",
+                outcome_unknown=True,
+            )
+
+        # 5. Replay: the same key is answered from memory, never executed twice.
         requester = str(actor.get("app") or "unknown")
         key = str(envelope["idempotency_key"])
         state, stored = self._replay.begin(
@@ -242,17 +256,20 @@ class CommandReceiver:
                 command_id, "failed", error="idempotency key or command id was already used for a different request"
             )
 
-        body = await self._decide_and_run(envelope, action_class, handler, timeout_seconds)
+        body = await self._decide_and_run(
+            envelope, action_class, handler, timeout_seconds, parameters, supplied_context
+        )
         self._replay.finish(requester=requester, key=key, response=body)
         return 200, body
 
     async def _decide_and_run(self, envelope: dict[str, Any], action_class: str, handler: Handler,
-                              timeout_seconds: float) -> dict[str, Any]:
+                              timeout_seconds: float, parameters: dict[str, Any],
+                              supplied_context: dict[str, Any]) -> dict[str, Any]:
         command_id = envelope["id"]
         command = envelope["command"]
         actor = envelope["actor"]
 
-        # 5. Second policy gate, with this app's own engine.
+        # 6. Second policy gate, with this app's own engine.
         try:
             from ecosystem_policy.models import ActionRequest
 
@@ -261,9 +278,9 @@ class CommandReceiver:
                     actor=actor_string(actor),
                     action=policy_action(command, action_class),
                     action_class=action_class,
-                    target=policy_target(envelope["target"], action_class, envelope["parameters"]),
+                    target=policy_target(envelope["target"], action_class, parameters),
                     context={
-                        "trigger": TRIGGER_BY_ACTOR_TYPE.get(str(actor.get("type")), "service"),
+                        **policy_context(actor, supplied_context),
                         "command_id": command_id,
                         "capability": command,
                     },
@@ -279,7 +296,7 @@ class CommandReceiver:
         if decision.result == "deny":
             return self._body(command_id, "denied", error=decision.reason, decision=decision_dict)
 
-        # 6. An approval is confirmed with the hub, not read from the envelope.
+        # 7. An approval is confirmed with the hub, not read from the envelope.
         if decision.result == "require_approval":
             ref = envelope.get("authorization_ref")
             approved = False
@@ -292,14 +309,14 @@ class CommandReceiver:
             if not approved:
                 return self._body(command_id, "denied", error="approval required", decision=decision_dict)
 
-        # 7. Run. `completed` means the handler returned, i.e. it confirmed the action.
+        # 8. Run. `completed` means the handler returned, i.e. it confirmed the action.
         ctx = CommandContext(
             command_id=command_id,
             command=command,
             action_class=action_class,
             actor=dict(actor),
             target=dict(envelope["target"]),
-            parameters=dict(envelope["parameters"]),
+            parameters=dict(parameters),
             rationale=envelope.get("rationale"),
             correlation_id=str(envelope["correlation_id"]),
             authorization_ref=envelope.get("authorization_ref"),
@@ -328,7 +345,7 @@ class CommandReceiver:
                 command_id, "failed", error="handler returned no result object", decision=decision_dict,
                 outcome_unknown=True,
             )
-        # 8. Bounded result.
+        # 9. Bounded result.
         if json_too_large(outcome):
             return self._body(command_id, "failed", error="result too large", decision=decision_dict)
         return self._body(command_id, "completed", result=outcome, decision=decision_dict)
@@ -402,7 +419,9 @@ class HubApprovalVerifier:
             return False
         expected = {
             "approval_id": approval_id,
-            "digest": request_digest(envelope["command"], envelope["target"], envelope["parameters"]),
+            "digest": request_digest(
+                envelope["command"], envelope["target"], split_policy_parameters(envelope["parameters"])[0]
+            ),
             "capability": envelope["command"],
             "action_class": envelope["action_class"],
             "requester_app": (envelope.get("actor") or {}).get("app"),

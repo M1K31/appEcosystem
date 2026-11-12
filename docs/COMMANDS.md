@@ -44,7 +44,7 @@ Both send a signed `POST /commands/dispatch`. The body:
 |---|---|
 | `capability` | Dotted capability id, as registered. |
 | `target` | Where the action applies: `{scope, device_id?, service?, identifier?}`. `scope` is `local`, `device`, `group`, `ecosystem` or `external`. `service` names the provider to use; `identifier` is the subject (an address, a hostname). |
-| `parameters` | Inputs for the handler, at most 64 KiB. Validated against the manifest's `inputs_schema` when it has one. |
+| `parameters` | Inputs for the handler, at most 64 KiB. Validated against the manifest's `inputs_schema` when it has one. The key `_policy` is reserved for the hub. |
 | `actor` | `{app, id?, type?, device_id?}`. `type` is `service` (default), `automation`, `voice_intent`, `ai_proposal` or `operator`. |
 | `rationale` | Why. Shown to the person who approves. |
 | `idempotency_key` | Required. The clients generate one when you do not pass it. |
@@ -68,9 +68,9 @@ Every policy or provider outcome is HTTP 200 with a status document:
 | `pending_approval` | Nothing was sent. An approval was opened (`approval_id`); approving it runs the command. |
 | `denied` | Policy refused, at the hub or at the provider. `error` says why. Nothing ran. |
 | `provider_unavailable` | No eligible provider, or it could not be connected to. Nothing was sent. |
-| `failed` | It was sent and did not succeed. Check `outcome_unknown`. |
+| `failed` | It did not succeed. With `outcome_unknown: true` it was sent and may have run; otherwise it did not take effect, or was never sent (for example the hub could not open the approval, or restarted before sending). `error` says which. |
 
-`outcome_unknown: true` means the command was sent and no usable answer came back, so it may or may not have run. Dispatch again **with the same `idempotency_key`**: the hub re-checks policy and asks the provider, which answers from its replay store without running anything twice.
+`outcome_unknown: true` means the command was sent and no usable answer came back, so it may or may not have run. Dispatch again **with the same `idempotency_key`**: the hub re-checks policy and the approval, and asks the provider, which answers from its replay store without running anything twice. This works for 20 hours after the command was created. After that the hub refuses the retry, and a provider refuses any command that old, because a provider remembers commands for 24 hours and could no longer tell a retry from a first attempt. Find out what happened on the provider itself, then send a new command with a new key if it is still needed.
 
 Other responses: `401` unsigned, `403` not permitted to act as that app or as an operator, `409` the idempotency key was already used for a different request, `422` malformed request.
 
@@ -88,11 +88,11 @@ Other responses: `401` unsigned, `403` not permitted to act as that app or as an
 
 ## What the policy sees
 
-The hub and the provider evaluate the same request:
+The hub and the provider evaluate the same request. The hub forwards the context it evaluated with (the trigger, and `incident_id` and `profile` when given) in the reserved `_policy` parameter; the provider evaluates with it and removes it before the handler runs.
 
 - **Action class** comes from the capability's registered manifest, never from the caller. A provider refuses an envelope whose class differs from the one it registered.
 - **Action name** is the capability id. The one exception is `threat_intel.lookup_ioc`, evaluated as `lookup_ioc` while it is registered as `observe` or `investigate`, because policy files list that passive lookup by its bare name.
-- **External targets.** For `investigate`, `remediate` and `system_change` — classes that reach into the subject's own system — the target is external unless everything the request names is provably on the owner's network: a strictly written private, loopback, link-local or unique-local address or CIDR, or a hostname under `.local`, `.lan`, `.home.arpa` or `.internal`. Public addresses, other hostnames, bare names, integer/hex/leading-zero address spellings, URLs with userinfo or backslashes, and a request that names no subject at all are external, and the engine denies them unless they are separately authorised. For `contain` and `observe` the subject is acted on from the owner's own infrastructure (blocking an attacker's public address on the owner's router), so only `scope: "external"` makes the target external.
+- **External targets.** For `investigate`, `remediate` and `system_change` — classes that reach into the subject's own system — the target is external unless everything the request names is provably on the owner's network: a strictly written private, loopback, link-local or unique-local address or CIDR, or a hostname under `.local`, `.lan`, `.home.arpa` or `.internal`. Public addresses, other hostnames, bare names, integer/hex/leading-zero address spellings, URLs with userinfo or backslashes, anything nested inside a subject parameter that is not one of those internal forms, and a request that names no subject at all are external, and the engine denies them unless they are separately authorised. A request that names more than one external subject cannot be authorised by authorising one of them: only passive lookups are allowed for it. For `contain` and `observe` the subject is acted on from the owner's own infrastructure (blocking an attacker's public address on the owner's router), so only `scope: "external"` makes the target external.
 - **Approvals.** `require_approval` stores the command and opens an approval. Approving it (step-up required) evaluates the policy again as it stands at that moment, then forwards the command with `authorization_ref: "approval:<id>"`. Provisional containment runs at once and opens an approval alongside; if that approval is denied or expires, a revert is requested.
 
 ## Providing a capability
@@ -138,4 +138,5 @@ One `(requesting app, idempotency_key)` is one command. Repeating it returns the
 
 - Apps that authenticate with their own key cannot be providers yet: they cannot verify a hub-signed envelope.
 - Among first-party apps the requester's identity is a claim (see "Who may dispatch"). Per-app keys for first-party apps are planned.
-- Commands that were being dispatched when the hub stopped are marked `failed` with an unknown outcome on restart; they are not re-sent.
+- Commands that were being dispatched when the hub stopped are marked `failed` with an unknown outcome on restart; they are not re-sent. Commands the hub had not yet sent are marked `failed` with a known outcome. Commands waiting on an approval that was denied or expired while nobody was looking are closed on start.
+- A command waiting for approval keeps its original creation time. An approval granted more than 20 hours after the command was created is refused by the provider as too old.

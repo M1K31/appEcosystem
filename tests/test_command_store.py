@@ -140,3 +140,28 @@ def test_json_too_large_at_64_kib():
     overhead = len(json.dumps({"v": ""}, separators=(",", ":")).encode())
     assert json_too_large({"v": "x" * (65_536 - overhead)}) is False
     assert json_too_large({"v": "x" * (65_537 - overhead)}) is True
+
+
+def test_recover_interrupted_settles_every_transient_status(store):
+    ids = {}
+    for i, status in enumerate(["received", "dispatching", "closing", "reporting"]):
+        rec, _ = _create(store, command_id=f"01HZZZZZZZZZZZZZZZZZZZZZZ{i + 3}", key=f"k-{status}")
+        if status != "received":
+            store.claim(rec["command_id"], from_status="received", to_status=status)
+        ids[status] = rec["command_id"]
+    for status in ("pending_approval", "accepted"):
+        rec, _ = _create(store, command_id=f"01HZZZZZZZZZZZZZZZZZZZZZZ{9 if status == 'accepted' else 8}",
+                         key=f"k-{status}")
+        store.claim(rec["command_id"], from_status="received", to_status=status)
+        ids[status] = rec["command_id"]
+
+    assert store.recover_interrupted(now=3000.0) == 4
+    got = {s: store.get(cid) for s, cid in ids.items()}
+    assert (got["received"]["status"], got["received"]["outcome_unknown"]) == ("failed", False)
+    assert "before the command was sent" in got["received"]["error"]
+    assert (got["dispatching"]["status"], got["dispatching"]["outcome_unknown"]) == ("failed", True)
+    assert got["closing"]["status"] == "denied"
+    assert got["reporting"]["status"] == "accepted"
+    # Legitimately long-lived states are left alone.
+    assert got["pending_approval"]["status"] == "pending_approval"
+    assert got["accepted"]["status"] == "accepted"

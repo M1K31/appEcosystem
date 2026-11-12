@@ -11,6 +11,7 @@ could not be reached, nothing is queued for later.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Callable
 
 import httpx
@@ -24,10 +25,12 @@ from ecosystem_client.contracts import (
 )
 from ecosystem_client.ulid import generate_ulid
 from ecosystem_hub.command_common import (
-    TRIGGER_BY_ACTOR_TYPE,
+    POLICY_PARAMETER_KEY,
+    RETRY_WINDOW_SECONDS,
     actor_string,
     json_too_large,
     policy_action,
+    policy_context,
     policy_target,
     request_digest,
 )
@@ -36,11 +39,6 @@ from ecosystem_hub.command_store import CommandStore
 logger = logging.getLogger(__name__)
 
 PROVIDER_STATUSES = frozenset({"completed", "accepted", "failed", "denied"})
-# The only context a caller may add to the policy evaluation. Anything that
-# could grant something (an approved data release, a budget flag) is not here.
-CALLER_CONTEXT_KEYS = ("incident_id", "profile")
-# A caller may only declare a trigger that makes the evaluation stricter.
-RESTRICTIVE_TRIGGERS = frozenset({"schedule", "automation"})
 DEFAULT_COMMAND_PATH = "/ecosystem/commands"
 DEFAULT_TIMEOUT_SECONDS = 30.0
 MAX_ENVELOPE_TTL_SECONDS = 300.0
@@ -64,6 +62,7 @@ class CommandDispatcher:
         secret_fn: Callable[[], str],
         client_factory: Callable[[], httpx.AsyncClient] | None = None,
         connect_timeout: float = 3.0,
+        clock: Callable[[], float] = time.time,
     ):
         self.store = store
         self._caps = capability_registry
@@ -75,6 +74,7 @@ class CommandDispatcher:
         self._secret_fn = secret_fn
         self._client_factory = client_factory or (lambda: httpx.AsyncClient())
         self._connect_timeout = float(connect_timeout)
+        self._clock = clock
 
     # ---- views -------------------------------------------------------------
 
@@ -164,6 +164,8 @@ class CommandDispatcher:
         parameters = dict(parameters or {})
         if actor.get("app") != requester_app:
             raise InvalidCommand("actor.app must be the requesting app")
+        if POLICY_PARAMETER_KEY in parameters:
+            raise InvalidCommand(f"'{POLICY_PARAMETER_KEY}' is reserved for the hub")
         if json_too_large(parameters):
             raise InvalidCommand("parameters are larger than 64 KiB")
         provider, unavailable_reason = self._select_provider(capability, target)
@@ -263,17 +265,10 @@ class CommandDispatcher:
         """The part of the caller's context the policy may see.
 
         Stored with the command, so that a later re-evaluation (after an
-        approval, or on a retry) judges the same request the first one did.
+        approval, or on a retry) judges the same request the first one did,
+        and forwarded to the provider so its gate does too.
         """
-        ctx: dict[str, Any] = {}
-        for key in CALLER_CONTEXT_KEYS:
-            if context and context.get(key) is not None:
-                ctx[key] = context[key]
-        trigger = TRIGGER_BY_ACTOR_TYPE.get(str(actor.get("type")), "service")
-        if context and context.get("trigger") in RESTRICTIVE_TRIGGERS:
-            trigger = context["trigger"]
-        ctx["trigger"] = trigger
-        return ctx
+        return policy_context(actor, context)
 
     @staticmethod
     def _stored_context(record: dict[str, Any]) -> dict[str, Any]:
@@ -310,6 +305,11 @@ class CommandDispatcher:
 
     def _retry_refusal(self, record: dict[str, Any]) -> str | None:
         """Why a command with an unknown outcome may not be sent again, or None when it may."""
+        if self._clock() - float(record["created_at"]) > RETRY_WINDOW_SECONDS:
+            return (
+                "too old to ask the provider again: it may no longer remember the command, "
+                "so a retry could run it a second time"
+            )
         decision = self._decide(record, record["action_class"])
         if decision is None:
             return "policy evaluation failed"
@@ -343,8 +343,15 @@ class CommandDispatcher:
         command_id = record["command_id"]
         detail = {"approval_id": approval_id, "resolved_by": approval.get("resolved_by")}
         if record["status"] != "pending_approval":
-            # Provisional containment already ran; the approval lets it stand.
-            return self.public_view(self.store.update(command_id, event="approval_granted", detail=detail))
+            if approval.get("async_containment"):
+                # Provisional containment already ran; the approval lets it stand.
+                return self.public_view(self.store.update(command_id, event="approval_granted", detail=detail))
+            # The command was settled some other way first (denied, expired, re-evaluated).
+            return self.public_view(
+                self.store.update(
+                    command_id, event="approval_arrived_late", detail={**detail, "status": record["status"]}
+                )
+            )
         if not self.store.claim(command_id, from_status="pending_approval"):
             return self.public_view(self.store.get(command_id) or record)
         self.store.update(command_id, event="approval_granted", detail=detail)
@@ -391,6 +398,25 @@ class CommandDispatcher:
         else:
             updated = self.store.get(command_id) or record
         return self.public_view(updated)
+
+    def reconcile_closed_approvals(self) -> int:
+        """Close commands still waiting on an approval that was denied or expired unobserved.
+
+        Run at start: an expiry that happened while the hub was stopped, or by an
+        older hub, never reached the listener.
+        """
+        lookup = getattr(self._approvals, "get", None)
+        if not callable(lookup):
+            return 0
+        closed = 0
+        for record in self.store.list(status="pending_approval", limit=1000):
+            approval = lookup(record["approval_id"]) if record.get("approval_id") else None
+            if not isinstance(approval, dict):
+                continue
+            if approval.get("status") in ("denied", "expired"):
+                if self.mark_approval_closed(approval, outcome=approval["status"]) is not None:
+                    closed += 1
+        return closed
 
     async def _request_approval(self, record: dict[str, Any], action_class: str, decision: Any) -> dict[str, Any] | None:
         try:
@@ -443,7 +469,22 @@ class CommandDispatcher:
         if record["status"] != "dispatching" and not self.store.claim(command_id, from_status=record["status"]):
             # Someone else is already sending it.
             return self.store.get(command_id) or record
+        try:
+            return await self._forward_claimed(record, authorization_ref)
+        except Exception as exc:
+            # Never leave a claimed command in `dispatching`: it may or may not have been sent.
+            logger.exception("Forwarding %s failed unexpectedly", command_id)
+            return self.store.update(
+                command_id,
+                status="failed",
+                error="the hub could not complete sending the command",
+                outcome_unknown=True,
+                event="forward_error",
+                detail={"error": type(exc).__name__},
+            )
 
+    async def _forward_claimed(self, record: dict[str, Any], authorization_ref: str | None) -> dict[str, Any]:
+        command_id = record["command_id"]
         provider_app = record.get("provider_app") or ""
         service = self._services.get(provider_app)
         if service is None:
@@ -476,7 +517,12 @@ class CommandDispatcher:
                 record["actor"],
                 record["target"],
                 secret,
-                parameters=record["parameters"],
+                # The policy context gate 1 used travels with the command, so gate 2
+                # evaluates the same request. The provider strips it before the handler.
+                parameters={
+                    **record["parameters"],
+                    POLICY_PARAMETER_KEY: self._stored_context(self.store.get(command_id) or record),
+                },
                 ttl_seconds=min(timeout + 10.0, MAX_ENVELOPE_TTL_SECONDS),
                 correlation_id=record["correlation_id"],
                 idempotency_key=record["idempotency_key"],

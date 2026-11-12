@@ -733,3 +733,117 @@ def test_host_with_port_under_a_subject_key():
     assert policy_target({"scope": "local"}, "investigate", {"host": "nas.local:5000"}).get("is_external") is None
     assert policy_target({"scope": "local"}, "investigate", {"host": "example.com:443"})["is_external"] is True
     assert policy_target({"scope": "local"}, "investigate", {"host": "192.168.1.5:22"}).get("is_external") is None
+
+
+# ---- final review: every external subject must be authorised ------------------
+
+
+def test_two_external_subjects_leave_no_single_host_to_authorise():
+    mapped = policy_target(
+        {"scope": "local", "identifier": "lab.example.com"}, "investigate", {"host": "victim.example"}
+    )
+    assert mapped["is_external"] is True
+    assert mapped["host"] is None
+    one = policy_target({"scope": "local", "identifier": "lab.example.com"}, "investigate", {"depth": 1})
+    assert one["host"] == "lab.example.com"
+    same_twice = policy_target(
+        {"scope": "local", "identifier": "lab.example.com"}, "investigate", {"host": "lab.example.com"}
+    )
+    assert same_twice["host"] == "lab.example.com"
+
+
+async def _approved(env):
+    return True
+
+
+@pytest.mark.asyncio
+async def test_one_authorised_external_subject_does_not_unlock_another(tmp_path):
+    h = Harness(tmp_path, verifier=_approved)
+    h.engine.authorize_external_target("lab.example.com")
+    target = {"scope": "local", "identifier": "lab.example.com"}
+
+    ok = await h.receiver.handle(envelope("network.inspect_host", "investigate", target=target,
+                                          parameters={"depth": 1}, key="k-ok",
+                                          authorization_ref="approval:A1"))
+    assert ok[1]["status"] == "completed"
+
+    for i, params in enumerate([{"host": "victim.example"}, {"hosts": ["lab.example.com", "victim.example"]}]):
+        status, body = await h.receiver.handle(envelope(
+            "network.inspect_host", "investigate", target=target, parameters=params, key=f"k-{i}",
+            authorization_ref="approval:A1",
+        ))
+        assert (status, body["status"]) == (200, "denied"), params
+        assert body["decision"]["result"] == "deny"
+    assert len(h.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "parameters",
+    [
+        {"host": {"value": "evil.com"}},
+        {"targets": [{"name": "evil.com"}]},
+        {"host": {"name": "nas.local", "port": 22}},  # fails closed: a structure under a subject key
+    ],
+)
+def test_values_nested_under_a_subject_key_are_subjects(parameters):
+    mapped = policy_target({"scope": "local", "identifier": "192.168.1.20"}, "investigate", parameters)
+    assert mapped["is_external"] is True
+
+
+# ---- final review: no execution after the replay window -----------------------
+
+
+@pytest.mark.asyncio
+async def test_command_older_than_the_retry_window_is_never_run(tmp_path):
+    from ecosystem_client.ulid import generate_ulid
+    from ecosystem_hub.command_common import RETRY_WINDOW_SECONDS
+
+    t0 = 1_800_000_000.0
+    clock = {"now": t0}
+    h = Harness(tmp_path, now_fn=lambda: clock["now"])
+    cid = generate_ulid(int(t0 * 1000))
+
+    async def crash(ctx):
+        h.calls.append(ctx)
+        raise asyncio.TimeoutError()  # the handler never confirmed
+
+    h.receiver.register("camera.snapshot", "observe", crash, timeout_seconds=0.01)
+    first = await h.receiver.handle(envelope("camera.snapshot", command_id=cid, issued_at=t0))
+    assert first[1]["outcome_unknown"] is True
+
+    # Long after the replay store forgot it, the same command arrives again.
+    clock["now"] = t0 + 25 * 3600
+    later = clock["now"]
+    status, body = await h.receiver.handle(envelope("camera.snapshot", command_id=cid, issued_at=later))
+    assert status == 409
+    assert body["outcome_unknown"] is True
+    assert "too old" in body["error"]
+    assert len(h.calls) == 1
+    assert RETRY_WINDOW_SECONDS < 24 * 3600
+
+
+# ---- final review: both gates see the same policy context ---------------------
+
+
+@pytest.mark.asyncio
+async def test_policy_context_travels_in_the_reserved_parameter_and_is_not_given_to_the_handler(h):
+    seen = []
+    real = h.engine.decide
+    h.engine.decide = lambda req, **kw: (seen.append(req), real(req, **kw))[1]
+    params = {"indicator": "192.168.1.20",
+              "_policy": {"trigger": "schedule", "incident_id": "INC-7", "profile": "quick", "budget_exceeded": False}}
+    _, body = await h.receiver.handle(envelope(parameters=params))
+    assert body["status"] == "completed"
+    ctx = seen[0].context
+    assert (ctx["trigger"], ctx["incident_id"], ctx["profile"]) == ("schedule", "INC-7", "quick")
+    assert "budget_exceeded" not in ctx
+    assert h.calls[0].parameters == {"indicator": "192.168.1.20"}
+
+
+@pytest.mark.asyncio
+async def test_a_permissive_trigger_in_the_policy_parameter_is_ignored(h):
+    seen = []
+    real = h.engine.decide
+    h.engine.decide = lambda req, **kw: (seen.append(req), real(req, **kw))[1]
+    await h.receiver.handle(envelope(parameters={"indicator": "x", "_policy": {"trigger": "operator"}}))
+    assert seen[0].context["trigger"] == "service"

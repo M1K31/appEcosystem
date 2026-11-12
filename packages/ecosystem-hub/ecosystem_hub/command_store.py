@@ -320,22 +320,36 @@ class CommandStore:
                 return True
             return False
 
+    # What a status left behind by a stopped hub becomes on the next start.
+    # `pending_approval` and `accepted` are legitimately long-lived and stay.
+    _RECOVERY = {
+        # Claimed for sending: it may or may not have reached the provider.
+        "dispatching": ("failed", True, "hub restarted while the command was being dispatched",
+                        "interrupted_by_restart"),
+        # Never claimed for sending, so nothing reached the provider.
+        "received": ("failed", False, "hub restarted before the command was sent", "interrupted_before_send"),
+        # Its approval had been denied or had expired; the command was being closed.
+        "closing": ("denied", False, "approval closed", "interrupted_while_closing"),
+        # A provider's result report was being recorded; it may report again.
+        "reporting": ("accepted", False, None, "interrupted_result_report"),
+    }
+
     def recover_interrupted(self, *, now: float | None = None) -> int:
-        """Mark every command that was mid-dispatch at shutdown as failed with an unknown outcome."""
+        """Settle every command a stopped hub left in a transient status. Nothing is re-sent."""
         ts = time.time() if now is None else float(now)
+        count = 0
         with self._lock, self._connect() as conn:
-            ids = [
-                r["command_id"]
-                for r in conn.execute("SELECT command_id FROM commands WHERE status = 'dispatching'").fetchall()
-            ]
-            for cid in ids:
-                conn.execute(
-                    """
-                    UPDATE commands SET status = 'failed', outcome_unknown = 1,
-                        error = 'hub restarted while the command was being dispatched', updated_at = ?
-                    WHERE command_id = ?
-                    """,
-                    (ts, cid),
-                )
-                self._add_event(conn, cid, ts, "interrupted_by_restart", None)
-            return len(ids)
+            for status, (new_status, unknown, error, event) in self._RECOVERY.items():
+                ids = [
+                    r["command_id"]
+                    for r in conn.execute("SELECT command_id FROM commands WHERE status = ?", (status,)).fetchall()
+                ]
+                for cid in ids:
+                    conn.execute(
+                        "UPDATE commands SET status = ?, outcome_unknown = ?, error = COALESCE(?, error),"
+                        " updated_at = ? WHERE command_id = ? AND status = ?",
+                        (new_status, 1 if unknown else 0, error, ts, cid, status),
+                    )
+                    self._add_event(conn, cid, ts, event, None)
+                count += len(ids)
+        return count
