@@ -134,6 +134,7 @@ def _detail_view(request: Request, dispatcher: CommandDispatcher, record: dict[s
         {
             "action_class": record["action_class"],
             "requester_app": record["requester_app"],
+            "idempotency_key": record["idempotency_key"],
             "actor": record["actor"],
             "target": record["target"],
             "parameters": record["parameters"],

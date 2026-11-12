@@ -399,6 +399,12 @@ def build_command_router(receiver: CommandReceiver):
     return router
 
 
+def _actor_identity(actor: Any) -> tuple | None:
+    if not isinstance(actor, dict):
+        return None
+    return tuple(actor.get(k) for k in ("app", "id", "type", "device_id", "auth_method"))
+
+
 class HubApprovalVerifier:
     """Confirms with the hub that a command's approval is real and is for this execution.
 
@@ -453,6 +459,12 @@ class HubApprovalVerifier:
         for field, value in expected.items():
             if record.get(field) != value:
                 return None
+        # Gate 2 judges by who is acting and treats a key as one command: the hub's
+        # record must be for this actor and this key, not merely this request.
+        if record.get("idempotency_key") != envelope.get("idempotency_key"):
+            return None
+        if _actor_identity(record.get("actor")) != _actor_identity(envelope.get("actor")):
+            return None
         return record
 
     async def __call__(self, envelope: dict[str, Any]) -> bool:

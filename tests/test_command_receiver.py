@@ -474,6 +474,8 @@ def _record(env, **over) -> dict:
         "capability": env["command"],
         "action_class": env["action_class"],
         "requester_app": env["actor"]["app"],
+        "actor": dict(env["actor"]),
+        "idempotency_key": env["idempotency_key"],
     }
     record.update(over)
     return record
@@ -548,6 +550,9 @@ async def test_hub_approval_verifier_pending_path_is_only_for_containment():
         {"action_class": "observe"},        # the hub recorded a different class
         {"requester_app": "cyber_harness"}, # approved for a different requester
         {"capability": "camera.snapshot"},
+        {"actor": {**ACTOR, "type": "operator", "id": "someone-else"}},  # gate 2 judges by actor
+        {"actor": {**ACTOR, "auth_method": "totp"}},
+        {"idempotency_key": "another-key"},
     ],
 )
 async def test_hub_approval_verifier_binds_the_approval_to_this_execution(override):
@@ -921,6 +926,8 @@ async def test_context_verifier_is_not_asked_when_nothing_is_claimed(tmp_path):
         ({"status": "completed"}, False),
         ({"provider": "openeye"}, False),
         ({"requester_app": "cyber_harness"}, False),
+        ({"actor": {**ACTOR, "type": "operator", "id": "someone-else"}}, False),
+        ({"idempotency_key": "another-key"}, False),
     ],
 )
 async def test_hub_verifier_confirms_context_only_for_this_execution(override, expected):
