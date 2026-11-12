@@ -131,12 +131,25 @@ def _is_address_literal(value: str) -> bool:
         return False
 
 
+_BRACKETED_PORT_RE = re.compile(r"^\[([0-9A-Fa-f:.]+)\]:\d{1,5}$")
+_PLAIN_PORT_RE = re.compile(r"^([^:\s]+):\d{1,5}$")
+
+
+def _strip_port(value: str) -> str:
+    """`host:port` and `[v6]:port` reduced to the host; anything else unchanged."""
+    text = value.strip()
+    match = _BRACKETED_PORT_RE.match(text) or _PLAIN_PORT_RE.match(text)
+    return match.group(1) if match else text
+
+
 def _subject_values(parameters: Any, *, _key_is_subject: bool = False, _depth: int = 0) -> list[Any]:
     """Everything in the parameters that names a system the request could touch.
 
     Under a subject-bearing key (host, ip, url, indicator, ...) every value
-    counts. Under any other key a value counts when it is itself an address or
-    a URL. Nested objects and lists are walked; anything nested too deeply to
+    counts. Under any other key a value counts when it is itself an address
+    (with or without a port) or a URL; a hostname under an arbitrary key cannot
+    be told from ordinary text, which is why a handler must take the system it
+    touches from `target.identifier` or from a subject-bearing key. Nested objects and lists are walked; anything nested too deeply to
     inspect is reported as uninspectable, which callers treat as external.
     """
     if _depth > _MAX_PARAMETER_DEPTH:
@@ -156,8 +169,10 @@ def _subject_values(parameters: Any, *, _key_is_subject: bool = False, _depth: i
         if "://" in value or value.startswith("//"):
             host = _url_host(value)
             out.append(host if host else value)
-        elif _key_is_subject or _is_address_literal(value):
-            out.append(value)
+        else:
+            bare = _strip_port(value)
+            if _key_is_subject or _is_address_literal(bare):
+                out.append(bare)
     elif _key_is_subject and value is not None and not isinstance(value, bool):
         out.append(value)
     return out

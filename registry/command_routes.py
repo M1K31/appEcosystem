@@ -20,6 +20,7 @@ from .commands import CommandDispatcher, InvalidCommand
 router = APIRouter(tags=["commands"])
 
 DISPATCH_SCOPE = "commands:dispatch"
+READ_SCOPE = "commands:read"
 _CAPABILITY_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$")
 _ACTOR_TYPES = ("service", "automation", "voice_intent", "ai_proposal", "operator")
 _MAX_KEY = 128
@@ -42,10 +43,26 @@ async def _signed_caller(request: Request) -> dict[str, Any]:
     return auth
 
 
-async def _reader(request: Request) -> None:
+async def _reader(request: Request) -> Optional[set[str]]:
+    """Who is reading. None means everything is visible (the owner, or the local dashboard).
+
+    An app with its own key sees only commands it requested or was asked to
+    run, and needs the read scope to see even those.
+    """
     from .policy_routes import _optional_auth, _require_loopback_or_auth
 
-    _require_loopback_or_auth(request, await _optional_auth(request))
+    auth = await _optional_auth(request)
+    _require_loopback_or_auth(request, auth)
+    if auth is None or _is_owner(auth):
+        return None
+    scopes = auth.get("scopes") or []
+    if READ_SCOPE not in scopes and "*" not in scopes:
+        raise HTTPException(status_code=403, detail=f"This app key lacks the '{READ_SCOPE}' scope")
+    return set(auth.get("owned_names") or [])
+
+
+def _visible(record: dict[str, Any], names: Optional[set[str]]) -> bool:
+    return names is None or record.get("requester_app") in names or record.get("provider_app") in names
 
 
 def _invalid(detail: str) -> HTTPException:
@@ -190,10 +207,14 @@ async def list_commands(
     status_filter: Optional[str] = None,
     limit: int = 100,
 ):
-    await _reader(request)
+    names = await _reader(request)
     dispatcher = get_command_dispatcher(request)
     wanted_status = request.query_params.get("status") or status_filter
-    records = dispatcher.store.list(correlation_id=correlation_id, status=wanted_status, limit=limit)
+    limit = max(1, min(int(limit), 1000))
+    records = dispatcher.store.list(
+        correlation_id=correlation_id, status=wanted_status, limit=limit if names is None else 1000
+    )
+    records = [r for r in records if _visible(r, names)][:limit]
     return {
         "commands": [
             {**dispatcher.public_view(r), "requester_app": r["requester_app"], "created_at": r["created_at"]}
@@ -204,10 +225,11 @@ async def list_commands(
 
 @router.get("/commands/{command_id}")
 async def get_command(command_id: str, request: Request):
-    await _reader(request)
+    names = await _reader(request)
     dispatcher = get_command_dispatcher(request)
     record = dispatcher.store.get(command_id)
-    if record is None:
+    # A record the caller may not see answers exactly like one that does not exist.
+    if record is None or not _visible(record, names):
         raise HTTPException(status_code=404, detail=f"Command '{command_id}' not found")
     return _detail_view(request, dispatcher, record)
 

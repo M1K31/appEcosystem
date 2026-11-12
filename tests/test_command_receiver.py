@@ -701,3 +701,35 @@ def test_disguised_or_nested_external_subjects_are_external(parameters):
 def test_internal_values_under_any_key_stay_internal(parameters):
     mapped = policy_target({"scope": "local", "identifier": "192.168.1.20"}, "investigate", parameters)
     assert "is_external" not in mapped
+
+
+@pytest.mark.parametrize(
+    "parameters",
+    [
+        {"peer": "8.8.8.8:53"},                 # address with a port, under an arbitrary key
+        {"upstream": "[2001:4860:4860::8888]:443"},
+        {"relay": "203.0.113.9:8080"},
+    ],
+)
+def test_address_with_port_under_any_key_is_a_subject(parameters):
+    mapped = policy_target({"scope": "local", "identifier": "192.168.1.20"}, "investigate", parameters)
+    assert mapped["is_external"] is True
+
+
+@pytest.mark.parametrize(
+    "parameters",
+    [
+        {"peer": "192.168.1.9:22"},
+        {"upstream": "[fd00::5]:443"},
+        {"window": "12:30", "ratio": "3:1", "version": "v1.2", "file": "report.pdf"},
+    ],
+)
+def test_internal_address_with_port_and_ordinary_text_stay_internal(parameters):
+    mapped = policy_target({"scope": "local", "identifier": "192.168.1.20"}, "investigate", parameters)
+    assert "is_external" not in mapped
+
+
+def test_host_with_port_under_a_subject_key():
+    assert policy_target({"scope": "local"}, "investigate", {"host": "nas.local:5000"}).get("is_external") is None
+    assert policy_target({"scope": "local"}, "investigate", {"host": "example.com:443"})["is_external"] is True
+    assert policy_target({"scope": "local"}, "investigate", {"host": "192.168.1.5:22"}).get("is_external") is None

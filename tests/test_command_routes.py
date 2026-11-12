@@ -341,3 +341,42 @@ def test_commands_are_readable_from_loopback_without_a_signature(hub):
     assert hub.client.get("/commands").status_code == 200
     remote = hub.client.get("/commands", headers={"x-forwarded-for": "203.0.113.5"})
     assert remote.status_code == 401
+
+
+# ---- who may read command records ---------------------------------------------
+
+
+def _get(hub, path, *, secret, key_id):
+    return hub.client.get(path, headers=sign_request("GET", path, secret, key_id=key_id))
+
+
+def test_app_key_caller_reads_only_its_own_commands(hub):
+    hub.add_provider("aegissiem", "threat_intel.lookup_ioc")
+    theirs = hub.dispatch(hub.body()).json()["command_id"]  # a first-party command
+    key_id, secret = _enrol(hub, "partner", ["partner_svc"], ["commands:dispatch", "commands:read"])
+    mine = hub.dispatch(
+        hub.body(actor={"app": "partner_svc"}, idempotency_key="p-1"), secret=secret, key_id=key_id
+    ).json()["command_id"]
+
+    assert _get(hub, f"/commands/{mine}", secret=secret, key_id=key_id).status_code == 200
+    # Someone else's record looks exactly like one that does not exist.
+    assert _get(hub, f"/commands/{theirs}", secret=secret, key_id=key_id).status_code == 404
+    listed = _get(hub, "/commands", secret=secret, key_id=key_id).json()["commands"]
+    assert [c["command_id"] for c in listed] == [mine]
+
+
+def test_app_key_caller_needs_a_read_scope(hub):
+    hub.add_provider("aegissiem", "threat_intel.lookup_ioc")
+    key_id, secret = _enrol(hub, "partner", ["partner_svc"], ["commands:dispatch"])
+    mine = hub.dispatch(
+        hub.body(actor={"app": "partner_svc"}, idempotency_key="p-1"), secret=secret, key_id=key_id
+    ).json()["command_id"]
+    assert _get(hub, f"/commands/{mine}", secret=secret, key_id=key_id).status_code == 403
+    assert _get(hub, "/commands", secret=secret, key_id=key_id).status_code == 403
+
+
+def test_owner_reads_every_command(hub):
+    hub.add_provider("aegissiem", "threat_intel.lookup_ioc")
+    cid = hub.dispatch(hub.body()).json()["command_id"]
+    path = f"/commands/{cid}"
+    assert hub.client.get(path, headers=sign_request("GET", path, SECRET)).status_code == 200
