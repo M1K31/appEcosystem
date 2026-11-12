@@ -15,8 +15,10 @@ authors = [
 dependencies = [
   "PyYAML>=6.0",
   "cryptography>=41.0.0",
-  "appecosystem-auth>=0.1.0",
-  "appecosystem-client>=0.1.0",
+  "appecosystem-auth>=0.4.0",
+  # 0.4.0 is the first client release with ecosystem_client.ulid, which
+  # approval_queue imports. An older client installs fine and then fails at import.
+  "appecosystem-client>=0.4.0",
 ]
 
 [tool.setuptools.packages.find]

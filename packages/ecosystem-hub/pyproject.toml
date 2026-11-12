@@ -24,7 +24,8 @@ classifiers = [
 dependencies = [
     "httpx>=0.24.0",
     "appecosystem-auth>=0.4.0",
-    "appecosystem-client>=0.3.1",
+    # 0.4.0 is the first client release with ecosystem_client.contracts and .ulid.
+    "appecosystem-client>=0.4.0",
 ]
 
 [project.optional-dependencies]

@@ -16,6 +16,10 @@ dependencies = [
     "httpx>=0.24.0",
 ]
 
+[project.optional-dependencies]
+# Policy-gated cloud placement. Without it the broker stays local-only.
+policy = ["appecosystem-policy>=0.3.0"]
+
 [tool.setuptools.packages.find]
 include = ["ecosystem_compute*"]
 

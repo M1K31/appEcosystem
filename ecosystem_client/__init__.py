@@ -16,7 +16,7 @@ from .peer import Peer
 # Keep in step with packages/ecosystem-client/pyproject.toml. This drifted to
 # 0.1.0 while pyproject said 0.3.1, so anything reporting the runtime version
 # (logs, diagnostics, compatibility checks) named a release that never shipped.
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 
 logger = logging.getLogger(__name__)
 
