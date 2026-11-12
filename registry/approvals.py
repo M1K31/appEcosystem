@@ -47,6 +47,9 @@ class ApprovalService:
         )
         self._task: asyncio.Task[None] | None = None
         self._running = False
+        # Called with each approval record that expires, so whatever was waiting
+        # on it (a stored command) learns that it will not run.
+        self.on_expired: Any = None
 
     def _on_containment_revert(self, approval_record: dict[str, Any]) -> None:
         """Record revert execution and schedule peer notification on the running event loop."""
@@ -112,7 +115,7 @@ class ApprovalService:
     async def _sweep_loop(self) -> None:
         while self._running:
             try:
-                self.queue.expire_due()
+                self.expire_due()
             except Exception as exc:
                 logger.debug("ApprovalService sweep error: %r", exc)
             await asyncio.sleep(self._sweep_interval)
@@ -160,6 +163,17 @@ class ApprovalService:
     def get(self, approval_id: str) -> dict[str, Any] | None:
         return self.queue.get(approval_id)
 
+    def expire_due(self, *, now: float | None = None) -> list[dict[str, Any]]:
+        """Expire overdue approvals and tell the listener about each one."""
+        expired = self.queue.expire_due(now=now) if now is not None else self.queue.expire_due()
+        if self.on_expired is not None:
+            for rec in expired:
+                try:
+                    self.on_expired(rec)
+                except Exception as exc:
+                    logger.warning("Approval expiry listener failed for %s: %r", rec.get("approval_id"), exc)
+        return expired
+
     def approve(
         self,
         approval_id: str,
@@ -167,6 +181,9 @@ class ApprovalService:
         step_up_token: str | None = None,
         note: str = "",
     ) -> dict[str, Any]:
+        # Expire first, through the listener: the queue would otherwise expire
+        # overdue records on its own, silently.
+        self.expire_due()
         return self.queue.approve(
             approval_id,
             step_up_token=step_up_token,
@@ -181,6 +198,7 @@ class ApprovalService:
         step_up_token: str | None = None,
         note: str = "",
     ) -> dict[str, Any]:
+        self.expire_due()
         return self.queue.deny(
             approval_id,
             step_up_token=step_up_token,

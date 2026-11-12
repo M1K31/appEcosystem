@@ -187,14 +187,14 @@ class CommandDispatcher:
             rationale=rationale,
             correlation_id=correlation_id or command_id,
             digest=request_digest(capability, target, parameters),
-            detail={"identity": identity},
+            detail={"identity": identity, "context": self._safe_context(actor, context)},
         )
         if not created:
             # Same key, same request. Only an unknown outcome is worth asking about again;
             # the provider answers it from its replay store without running anything twice.
             if record["status"] == "failed" and record["outcome_unknown"] and record.get("provider_app"):
                 # Asking again is still dispatching: the policy is evaluated as it stands now.
-                refusal = self._retry_refusal(record, context)
+                refusal = self._retry_refusal(record)
                 if refusal:
                     return self.public_view(
                         self.store.update(record["command_id"], event="retry_refused", detail={"reason": refusal})
@@ -212,7 +212,7 @@ class CommandDispatcher:
             )
         self.store.update(command_id, provider_app=provider["app"])
 
-        decision = self._decide(record, action_class, context)
+        decision = self._decide(record, action_class)
         if decision is None:
             return self.public_view(
                 self.store.update(command_id, status="denied", error="policy evaluation failed", event="denied")
@@ -258,9 +258,13 @@ class CommandDispatcher:
             await self._notify(final, decision)
         return self.public_view(final)
 
-    def _decide(self, record: dict[str, Any], action_class: str, context: dict[str, Any] | None):
-        """Gate 1. Returns the PolicyDecision, or None when the engine could not decide (fail closed)."""
-        actor = record["actor"]
+    @staticmethod
+    def _safe_context(actor: dict[str, Any], context: dict[str, Any] | None) -> dict[str, Any]:
+        """The part of the caller's context the policy may see.
+
+        Stored with the command, so that a later re-evaluation (after an
+        approval, or on a retry) judges the same request the first one did.
+        """
         ctx: dict[str, Any] = {}
         for key in CALLER_CONTEXT_KEYS:
             if context and context.get(key) is not None:
@@ -268,7 +272,24 @@ class CommandDispatcher:
         trigger = TRIGGER_BY_ACTOR_TYPE.get(str(actor.get("type")), "service")
         if context and context.get("trigger") in RESTRICTIVE_TRIGGERS:
             trigger = context["trigger"]
-        ctx.update({"trigger": trigger, "command_id": record["command_id"], "capability": record["capability"]})
+        ctx["trigger"] = trigger
+        return ctx
+
+    @staticmethod
+    def _stored_context(record: dict[str, Any]) -> dict[str, Any]:
+        for event in record.get("events") or []:
+            if event.get("event") == "created":
+                stored = (event.get("detail") or {}).get("context")
+                if isinstance(stored, dict):
+                    return dict(stored)
+                break
+        return CommandDispatcher._safe_context(record.get("actor") or {}, None)
+
+    def _decide(self, record: dict[str, Any], action_class: str):
+        """Gate 1. Returns the PolicyDecision, or None when the engine could not decide (fail closed)."""
+        actor = record["actor"]
+        ctx = self._stored_context(record)
+        ctx.update({"command_id": record["command_id"], "capability": record["capability"]})
         try:
             from ecosystem_policy.models import ActionRequest
 
@@ -287,9 +308,9 @@ class CommandDispatcher:
             logger.error("Policy evaluation failed for %s: %r", record["capability"], exc)
             return None
 
-    def _retry_refusal(self, record: dict[str, Any], context: dict[str, Any] | None) -> str | None:
+    def _retry_refusal(self, record: dict[str, Any]) -> str | None:
         """Why a command with an unknown outcome may not be sent again, or None when it may."""
-        decision = self._decide(record, record["action_class"], context)
+        decision = self._decide(record, record["action_class"])
         if decision is None:
             return "policy evaluation failed"
         if decision.result == "deny":
@@ -306,6 +327,70 @@ class CommandDispatcher:
                 return None
             return f"the approval is '{approval.get('status')}'"
         return None
+
+    # ---- approval hand-off -------------------------------------------------
+
+    async def execute_approved(self, approval: dict[str, Any]) -> dict[str, Any] | None:
+        """Run the command an approval was opened for. None when the approval has no command.
+
+        The approval answers `require_approval` and nothing else: the policy is
+        evaluated again as it stands now, and a denial stops the command.
+        """
+        approval_id = approval.get("approval_id")
+        record = self.store.get_by_approval(approval_id) if approval_id else None
+        if record is None:
+            return None
+        command_id = record["command_id"]
+        detail = {"approval_id": approval_id, "resolved_by": approval.get("resolved_by")}
+        if record["status"] != "pending_approval":
+            # Provisional containment already ran; the approval lets it stand.
+            return self.public_view(self.store.update(command_id, event="approval_granted", detail=detail))
+        if not self.store.claim(command_id, from_status="pending_approval"):
+            return self.public_view(self.store.get(command_id) or record)
+        self.store.update(command_id, event="approval_granted", detail=detail)
+
+        decision = self._decide(record, record["action_class"])
+        if decision is None:
+            return self.public_view(
+                self.store.update(command_id, status="denied", error="policy evaluation failed", event="denied")
+            )
+        if decision.result == "deny":
+            return self.public_view(
+                self.store.update(
+                    command_id,
+                    status="denied",
+                    error=decision.reason,
+                    event="denied_on_re_evaluation",
+                    detail={"decision": decision.to_dict()},
+                )
+            )
+        final = await self._forward(self.store.get(command_id), f"approval:{approval_id}")
+        return self.public_view(final)
+
+    def mark_approval_closed(self, approval: dict[str, Any], *, outcome: str) -> dict[str, Any] | None:
+        """An approval was denied or expired. None when it has no command."""
+        approval_id = approval.get("approval_id")
+        record = self.store.get_by_approval(approval_id) if approval_id else None
+        if record is None:
+            return None
+        command_id = record["command_id"]
+        if self.store.claim(command_id, from_status="pending_approval", to_status="closing"):
+            updated = self.store.update(
+                command_id,
+                status="denied",
+                error=f"approval {outcome}",
+                event=f"approval_{outcome}",
+                detail={"approval_id": approval_id},
+            )
+        elif approval.get("async_containment"):
+            # It already ran provisionally. The revert itself is the approval
+            # service's containment.reverted broadcast; the record says it was asked for.
+            updated = self.store.update(
+                command_id, event="revert_requested", detail={"approval_id": approval_id, "outcome": outcome}
+            )
+        else:
+            updated = self.store.get(command_id) or record
+        return self.public_view(updated)
 
     async def _request_approval(self, record: dict[str, Any], action_class: str, decision: Any) -> dict[str, Any] | None:
         try:

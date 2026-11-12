@@ -208,6 +208,8 @@ async def lifespan(app: FastAPI):
         app_store=app_store,
         secret_fn=_ecosystem_secret_or_empty,
     )
+    # A command waiting on an approval that expires will not run; say so on its record.
+    approval_service.on_expired = lambda rec: command_dispatcher.mark_approval_closed(rec, outcome="expired")
 
     # Stash on app.state so request handlers resolve them via dependencies
     # rather than module globals (which could be None before startup).

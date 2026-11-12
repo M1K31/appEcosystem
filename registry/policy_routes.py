@@ -623,7 +623,7 @@ async def approve_checkpoint(
     # Issue a fresh verified token for queue auditing
     fresh = step_up.issue_step_up_token(str(claims["sub"]), auth_method=str(claims["amr"]))
     try:
-        return approvals.approve(
+        record = approvals.approve(
             approval_id,
             step_up_token=fresh["step_up_token"],
             note=str(payload.get("note") or ""),
@@ -634,6 +634,15 @@ async def approve_checkpoint(
         raise HTTPException(status_code=403, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+
+    # If a command was waiting on this approval, it runs now — after the policy
+    # has been evaluated again — and its outcome is part of the answer.
+    dispatcher = getattr(request.app.state, "command_dispatcher", None)
+    if dispatcher is not None:
+        command = await dispatcher.execute_approved(record)
+        if command is not None:
+            record = {**record, "command": command}
+    return record
 
 
 @router.post("/approvals/{approval_id}/deny")
@@ -649,7 +658,7 @@ async def deny_checkpoint(
     claims = _resolve_step_up_claims(step_up, payload, request)
     fresh = step_up.issue_step_up_token(str(claims["sub"]), auth_method=str(claims["amr"]))
     try:
-        return approvals.deny(
+        record = approvals.deny(
             approval_id,
             step_up_token=fresh["step_up_token"],
             note=str(payload.get("note") or ""),
@@ -660,6 +669,13 @@ async def deny_checkpoint(
         raise HTTPException(status_code=403, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+
+    dispatcher = getattr(request.app.state, "command_dispatcher", None)
+    if dispatcher is not None:
+        command = dispatcher.mark_approval_closed(record, outcome="denied")
+        if command is not None:
+            record = {**record, "command": command}
+    return record
 
 
 # ---- Apple HIG Control Plane Web UI (:8500/ui) ------------------------------
