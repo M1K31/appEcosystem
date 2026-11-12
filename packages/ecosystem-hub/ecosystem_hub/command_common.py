@@ -101,19 +101,65 @@ SUBJECT_PARAMETER_KEYS = frozenset({
 })
 
 
-def _subject_values(parameters: dict[str, Any] | None) -> list[Any]:
-    """Values of the top-level parameters that name a system, with URLs reduced to their host."""
+_MAX_PARAMETER_DEPTH = 6
+_UNINSPECTABLE = object()  # stands for "could not be shown to be internal"
+
+
+def _url_host(value: str) -> str | None:
+    """The host of a URL, or None when parsers could disagree about what the host is.
+
+    Backslashes, whitespace, control characters and userinfo are how one parser
+    is made to see an internal host while another connects to an external one;
+    a URL carrying any of them is not trusted to name its own host.
+    """
+    if any(ch == "\\" or ch.isspace() or ord(ch) < 0x20 for ch in value):
+        return None
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return None
+    if "@" in parts.netloc:
+        return None
+    return parts.hostname
+
+
+def _is_address_literal(value: str) -> bool:
+    try:
+        ipaddress.ip_network(value.strip(), strict=False)
+        return True
+    except ValueError:
+        return False
+
+
+def _subject_values(parameters: Any, *, _key_is_subject: bool = False, _depth: int = 0) -> list[Any]:
+    """Everything in the parameters that names a system the request could touch.
+
+    Under a subject-bearing key (host, ip, url, indicator, ...) every value
+    counts. Under any other key a value counts when it is itself an address or
+    a URL. Nested objects and lists are walked; anything nested too deeply to
+    inspect is reported as uninspectable, which callers treat as external.
+    """
+    if _depth > _MAX_PARAMETER_DEPTH:
+        return [_UNINSPECTABLE]
     out: list[Any] = []
-    for key, value in (parameters or {}).items():
-        if str(key).lower() not in SUBJECT_PARAMETER_KEYS:
-            continue
-        for item in value if isinstance(value, (list, tuple)) else [value]:
-            if isinstance(item, str) and "://" in item:
-                try:
-                    item = urlsplit(item).hostname or item
-                except ValueError:
-                    pass
-            out.append(item)
+    if isinstance(parameters, dict):
+        for key, value in parameters.items():
+            subject_key = str(key).lower() in SUBJECT_PARAMETER_KEYS
+            out.extend(_subject_values(value, _key_is_subject=subject_key, _depth=_depth + 1))
+        return out
+    if isinstance(parameters, (list, tuple)):
+        for item in parameters:
+            out.extend(_subject_values(item, _key_is_subject=_key_is_subject, _depth=_depth + 1))
+        return out
+    value = parameters
+    if isinstance(value, str):
+        if "://" in value or value.startswith("//"):
+            host = _url_host(value)
+            out.append(host if host else value)
+        elif _key_is_subject or _is_address_literal(value):
+            out.append(value)
+    elif _key_is_subject and value is not None and not isinstance(value, bool):
+        out.append(value)
     return out
 
 
@@ -159,10 +205,20 @@ def actor_string(actor: dict[str, Any]) -> str:
     return f"{actor.get('app', 'unknown')}/{actor.get('id', 'unknown')}"
 
 
-def policy_action(capability: str) -> str:
-    """The action name the PolicyEngine evaluates: the capability's last segment.
+# Passive lookups that policy files list by bare name. The alias applies only
+# to exactly these capabilities, and only while they are registered as
+# non-mutating; sharing a last segment with one earns nothing.
+PASSIVE_LOOKUP_ALIASES = {"threat_intel.lookup_ioc": "lookup_ioc"}
+NON_MUTATING_CLASSES = frozenset({"observe", "investigate"})
 
-    Policy files list bare action names (`lookup_ioc`, `block_ip`), so
-    `threat_intel.lookup_ioc` is evaluated as `lookup_ioc`.
+
+def policy_action(capability: str, action_class: str | None = None) -> str:
+    """The action name the PolicyEngine evaluates for a capability.
+
+    The capability id itself, so the engine's exact-name rules (its scan
+    consent check matches "scan.request") see what they expect. The only
+    exception is the explicit alias table above.
     """
-    return str(capability).rsplit(".", 1)[-1]
+    if action_class in NON_MUTATING_CLASSES and capability in PASSIVE_LOOKUP_ALIASES:
+        return PASSIVE_LOOKUP_ALIASES[capability]
+    return str(capability)

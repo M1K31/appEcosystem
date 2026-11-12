@@ -259,7 +259,7 @@ class CommandReceiver:
             decision = self._engine.decide(
                 ActionRequest(
                     actor=actor_string(actor),
-                    action=policy_action(command),
+                    action=policy_action(command, action_class),
                     action_class=action_class,
                     target=policy_target(envelope["target"], action_class, envelope["parameters"]),
                     context={

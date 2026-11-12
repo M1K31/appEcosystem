@@ -294,7 +294,7 @@ async def test_provisional_containment_forwards_and_opens_approval(w):
     req = w.approvals.requests[0]
     assert req["async_containment"] is True
     assert req["on_deny"] == "revert"
-    assert req["revert_plan"]["action"] == "revert_block_ip"
+    assert req["revert_plan"]["action"] == "revert_containment.block_ip"
     assert provider.envelopes[0]["authorization_ref"] == "approval:APPROVAL1"
     # The approval request already notifies; no second notification for the same action.
     assert w.notifications.routed == []
@@ -503,3 +503,46 @@ async def test_concurrent_duplicates_execute_once(w):
     a, b = await asyncio.gather(w.dispatch("threat_intel.lookup_ioc"), w.dispatch("threat_intel.lookup_ioc"))
     assert a["command_id"] == b["command_id"]
     assert len(provider.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_retry_after_unknown_outcome_is_re_evaluated(w):
+    provider = w.add_provider("aegissiem", "threat_intel.lookup_ioc")
+    w.overrides["aegissiem"] = Failing(httpx.ReadTimeout)
+    first = await w.dispatch("threat_intel.lookup_ioc", target={"scope": "local", "identifier": "192.168.1.20"})
+    assert (first["status"], first["outcome_unknown"]) == ("failed", True)
+    del w.overrides["aegissiem"]
+
+    # The hub is frozen before the retry: observation is still allowed...
+    w.engine.freeze(initiated_by="test")
+    still_ok = await w.dispatch("threat_intel.lookup_ioc")
+    assert still_ok["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_retry_after_unknown_outcome_is_refused_when_policy_now_denies(w):
+    provider = w.add_provider("aegissiem", "containment.block_ip", "contain")
+    w.overrides["aegissiem"] = Failing(httpx.ReadTimeout)
+    first = await w.dispatch("containment.block_ip", target={"scope": "local", "identifier": "203.0.113.9"})
+    assert (first["status"], first["outcome_unknown"]) == ("failed", True)
+    sent_before = w.overrides["aegissiem"].requests
+    del w.overrides["aegissiem"]
+
+    w.engine.freeze(initiated_by="test")
+    second = await w.dispatch("containment.block_ip", target={"scope": "local", "identifier": "203.0.113.9"})
+    assert second["command_id"] == first["command_id"]
+    assert (second["status"], second["outcome_unknown"]) == ("failed", True)
+    assert provider.envelopes == [] and sent_before == 1
+    events = [e["event"] for e in w.store.get(first["command_id"])["events"]]
+    assert events[-1] == "retry_refused"
+
+
+@pytest.mark.asyncio
+async def test_actor_app_must_be_the_requester(w):
+    from registry.commands import InvalidCommand
+
+    provider = w.add_provider("aegissiem", "threat_intel.lookup_ioc")
+    with pytest.raises(InvalidCommand):
+        await w.dispatch("threat_intel.lookup_ioc", actor={**ACTOR, "app": "aegissiem"})
+    assert provider.envelopes == []
+    assert w.store.list() == []

@@ -572,23 +572,41 @@ async def test_hub_approval_verifier_fails_closed_when_hub_unreachable():
 # ---- the action name the policy sees ------------------------------------------
 
 
-def test_policy_action_is_the_last_segment_of_the_capability():
+def test_policy_action_is_the_capability_unless_explicitly_aliased():
     from ecosystem_hub.command_common import policy_action
 
-    assert policy_action("containment.block_ip") == "block_ip"
-    assert policy_action("threat_intel.lookup_ioc") == "lookup_ioc"
-    assert policy_action("a.b.c") == "c"
+    # The engine matches some names exactly (its scan-consent check looks for "scan.request"),
+    # so the capability id is passed through untouched...
+    assert policy_action("scan.request", "investigate") == "scan.request"
+    assert policy_action("containment.block_ip", "contain") == "containment.block_ip"
+    # ...except for the passive lookups the policy lists by bare name, and only
+    # while the capability is registered as non-mutating.
+    assert policy_action("threat_intel.lookup_ioc", "observe") == "lookup_ioc"
+    assert policy_action("threat_intel.lookup_ioc", "investigate") == "lookup_ioc"
+    assert policy_action("threat_intel.lookup_ioc", "remediate") == "threat_intel.lookup_ioc"
+    # Sharing a last segment with a passive action earns nothing.
+    assert policy_action("evil.lookup_ioc", "investigate") == "evil.lookup_ioc"
+    assert policy_action("threat_intel.reputation", "investigate") == "threat_intel.reputation"
 
 
 @pytest.mark.asyncio
-async def test_passive_external_lookup_is_recognised_by_its_bare_action_name(h):
-    # The policy's passive_actions list names "reputation", not "threat_intel.reputation".
-    h.receiver.register("threat_intel.reputation", "investigate", h._lookup)
+async def test_passive_external_lookup_is_allowed_for_the_aliased_capability(h):
+    h.receiver.register("threat_intel.lookup_ioc", "investigate", h._lookup)
     status, body = await h.receiver.handle(
-        envelope("threat_intel.reputation", "investigate", target={"scope": "external", "identifier": "8.8.8.8"})
+        envelope("threat_intel.lookup_ioc", "investigate", target={"scope": "external", "identifier": "8.8.8.8"})
     )
     assert (status, body["status"]) == (200, "completed")
     assert body["decision"]["result"] == "allow_and_notify"
+
+
+@pytest.mark.asyncio
+async def test_a_capability_named_like_a_passive_action_gets_no_allowance(h):
+    h.receiver.register("evil.lookup_ioc", "investigate", h._lookup)
+    status, body = await h.receiver.handle(
+        envelope("evil.lookup_ioc", "investigate", target={"scope": "external", "identifier": "8.8.8.8"})
+    )
+    assert (status, body["status"]) == (200, "denied")
+    assert h.calls == []
 
 
 # ---- the subject may also be named in the parameters ---------------------------
@@ -648,3 +666,38 @@ async def test_gate2_denies_external_host_hidden_in_parameters(h):
     assert (status, body["status"]) == (200, "denied")
     assert body["decision"]["result"] == "deny"
     assert h.calls == []
+
+
+@pytest.mark.parametrize(
+    "parameters",
+    [
+        {"url": "http://8.8.8.8\\@192.168.1.5/"},          # backslash: parsers disagree on the host
+        {"url": "http://192.168.1.5@8.8.8.8/"},
+        {"url": "http://user:pw@192.168.1.5/"},              # userinfo is never needed here
+        {"url": "http://192.168.1.5\t.example.com/"},
+        {"url": "http://192.168.1.5 .example.com/"},
+        {"url": "//8.8.8.8/x"},
+        {"probe": "8.8.8.8"},                                # an address under any key is a subject
+        {"callback": "https://example.com/hook"},            # so is a URL
+        {"options": {"host": "8.8.8.8"}},                    # nested
+        {"steps": [{"ip": "203.0.113.9"}]},
+        {"options": {"deep": {"deeper": {"url": "http://8.8.8.8/"}}}},
+    ],
+)
+def test_disguised_or_nested_external_subjects_are_external(parameters):
+    mapped = policy_target({"scope": "local", "identifier": "192.168.1.20"}, "investigate", parameters)
+    assert mapped["is_external"] is True
+
+
+@pytest.mark.parametrize(
+    "parameters",
+    [
+        {"probe": "192.168.1.9"},
+        {"callback": "http://nas.local:8080/hook"},
+        {"options": {"host": "10.0.0.5", "retries": 3}},
+        {"count": 8, "ratio": 0.5, "enabled": True, "label": "weekly"},
+    ],
+)
+def test_internal_values_under_any_key_stay_internal(parameters):
+    mapped = policy_target({"scope": "local", "identifier": "192.168.1.20"}, "investigate", parameters)
+    assert "is_external" not in mapped

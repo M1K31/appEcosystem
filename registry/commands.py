@@ -20,6 +20,7 @@ from ecosystem_client.contracts import (
     SchemaValidationError,
     build_command_envelope,
     build_notification_envelope,
+    validate_against_schema,
 )
 from ecosystem_client.ulid import generate_ulid
 from ecosystem_hub.command_common import (
@@ -43,6 +44,10 @@ RESTRICTIVE_TRIGGERS = frozenset({"schedule", "automation"})
 DEFAULT_COMMAND_PATH = "/ecosystem/commands"
 DEFAULT_TIMEOUT_SECONDS = 30.0
 MAX_ENVELOPE_TTL_SECONDS = 300.0
+
+
+class InvalidCommand(ValueError):
+    """The request cannot be dispatched as written; nothing was stored."""
 
 
 class CommandDispatcher:
@@ -157,8 +162,17 @@ class CommandDispatcher:
         """Run one capability request to a final or waiting status. Raises IdempotencyConflict."""
         target = dict(target or {})
         parameters = dict(parameters or {})
+        if actor.get("app") != requester_app:
+            raise InvalidCommand("actor.app must be the requesting app")
+        if json_too_large(parameters):
+            raise InvalidCommand("parameters are larger than 64 KiB")
         provider, unavailable_reason = self._select_provider(capability, target)
         action_class = provider["action_class"] if provider else "unknown"
+        inputs_schema = ((provider or {}).get("manifest") or {}).get("inputs_schema")
+        if isinstance(inputs_schema, dict) and inputs_schema:
+            errors = validate_against_schema(parameters, inputs_schema)
+            if errors:
+                raise InvalidCommand(f"parameters do not match the capability's inputs: {errors[0]}")
 
         command_id = generate_ulid()
         record, created = self.store.create(
@@ -179,6 +193,12 @@ class CommandDispatcher:
             # Same key, same request. Only an unknown outcome is worth asking about again;
             # the provider answers it from its replay store without running anything twice.
             if record["status"] == "failed" and record["outcome_unknown"] and record.get("provider_app"):
+                # Asking again is still dispatching: the policy is evaluated as it stands now.
+                refusal = self._retry_refusal(record, context)
+                if refusal:
+                    return self.public_view(
+                        self.store.update(record["command_id"], event="retry_refused", detail={"reason": refusal})
+                    )
                 if self.store.reopen_unknown(record["command_id"]):
                     ref = f"approval:{record['approval_id']}" if record.get("approval_id") else None
                     return self.public_view(await self._forward(self.store.get(record["command_id"]), ref))
@@ -255,7 +275,7 @@ class CommandDispatcher:
             return self._engine.decide(
                 ActionRequest(
                     actor=actor_string(actor),
-                    action=policy_action(record["capability"]),
+                    action=policy_action(record["capability"], action_class),
                     action_class=action_class,
                     target=policy_target(record["target"], action_class, record["parameters"]),
                     context=ctx,
@@ -266,6 +286,26 @@ class CommandDispatcher:
         except Exception as exc:
             logger.error("Policy evaluation failed for %s: %r", record["capability"], exc)
             return None
+
+    def _retry_refusal(self, record: dict[str, Any], context: dict[str, Any] | None) -> str | None:
+        """Why a command with an unknown outcome may not be sent again, or None when it may."""
+        decision = self._decide(record, record["action_class"], context)
+        if decision is None:
+            return "policy evaluation failed"
+        if decision.result == "deny":
+            return decision.reason
+        if decision.result == "require_approval" or decision.async_approval:
+            approval_id = record.get("approval_id")
+            lookup = getattr(self._approvals, "get", None)
+            approval = lookup(approval_id) if (approval_id and callable(lookup)) else None
+            if not isinstance(approval, dict):
+                return "the command has no valid approval"
+            if approval.get("status") == "approved":
+                return None
+            if decision.async_approval and approval.get("status") == "pending" and approval.get("async_containment"):
+                return None
+            return f"the approval is '{approval.get('status')}'"
+        return None
 
     async def _request_approval(self, record: dict[str, Any], action_class: str, decision: Any) -> dict[str, Any] | None:
         try:
