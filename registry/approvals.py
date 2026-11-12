@@ -157,6 +157,9 @@ class ApprovalService:
     def list_approvals(self, *, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
         return self.queue.list_approvals(status=status, limit=limit)
 
+    def get(self, approval_id: str) -> dict[str, Any] | None:
+        return self.queue.get(approval_id)
+
     def approve(
         self,
         approval_id: str,

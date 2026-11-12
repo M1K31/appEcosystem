@@ -42,6 +42,16 @@ def _create_capability_registry(persistence_path: str):
     return CapabilityRegistry(persistence_path=persistence_path)
 
 
+def _ecosystem_secret_or_empty() -> str:
+    """The shared secret used to sign outgoing commands, or "" when the hub has none."""
+    from ecosystem_auth.tokens import get_ecosystem_secret
+
+    try:
+        return get_ecosystem_secret() or ""
+    except Exception:
+        return ""
+
+
 def _create_policy_and_approvals(data_dir: str, notification_router, event_bus):
     import sys
     from pathlib import Path
@@ -177,6 +187,28 @@ async def lifespan(app: FastAPI):
         event_bus=event_bus,
     )
 
+    # Command dispatch: the durable record of every capability invocation, and
+    # the dispatcher that gates, signs and forwards them. Commands that were
+    # mid-dispatch when the hub last stopped are marked as having an unknown
+    # outcome; they are never re-sent on their own.
+    from ecosystem_hub.command_store import CommandStore
+    from .commands import CommandDispatcher
+
+    command_store = CommandStore(os.environ.get("ECOSYSTEM_COMMANDS_DB") or os.path.join(data_dir, "commands.db"))
+    interrupted = command_store.recover_interrupted()
+    if interrupted:
+        logger.warning("%d command(s) were interrupted by the last shutdown; outcome unknown", interrupted)
+    command_dispatcher = CommandDispatcher(
+        store=command_store,
+        capability_registry=capability_registry,
+        service_registry=registry,
+        policy_engine=policy_engine,
+        approval_service=approval_service,
+        notification_router=notification_router,
+        app_store=app_store,
+        secret_fn=_ecosystem_secret_or_empty,
+    )
+
     # Stash on app.state so request handlers resolve them via dependencies
     # rather than module globals (which could be None before startup).
     app.state.registry = registry
@@ -192,6 +224,7 @@ async def lifespan(app: FastAPI):
     app.state.approval_service = approval_service
     app.state.scan_runner = scan_runner
     app.state.scan_scheduler = scan_scheduler
+    app.state.command_dispatcher = command_dispatcher
 
     logger.info("Ecosystem registry started")
     yield
@@ -352,6 +385,7 @@ app.add_middleware(
 
 from .policy_routes import router as policy_router
 from .scan_routes import router as scan_router
+from .command_routes import router as command_router
 
 
 def _ensure_voice_pkg():
@@ -367,6 +401,7 @@ from ecosystem_voice import router as voice_router
 
 app.include_router(policy_router)
 app.include_router(scan_router)
+app.include_router(command_router)
 app.include_router(voice_router)
 
 
