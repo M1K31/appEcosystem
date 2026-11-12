@@ -25,7 +25,7 @@ ACTOR = {"id": "blue-team", "type": "service", "app": "ai_for_survival", "device
 
 
 class Harness:
-    def __init__(self, tmp_path, *, verifier=None, now_fn=None):
+    def __init__(self, tmp_path, *, verifier=None, now_fn=None, context_verifier=None):
         self.engine = PolicyEngine(authority="hub_synced")
         self.calls: list = []
         kwargs = {"now_fn": now_fn} if now_fn else {}
@@ -35,6 +35,7 @@ class Harness:
             policy_engine=self.engine,
             replay_db_path=tmp_path / "replay.db",
             approval_verifier=verifier,
+            context_verifier=context_verifier,
             **kwargs,
         )
         self.receiver.register("threat_intel.lookup_ioc", "observe", self._lookup)
@@ -826,7 +827,14 @@ async def test_command_older_than_the_retry_window_is_never_run(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_policy_context_travels_in_the_reserved_parameter_and_is_not_given_to_the_handler(h):
+async def test_policy_context_travels_in_the_reserved_parameter_and_is_not_given_to_the_handler(tmp_path):
+    confirmed = []
+
+    async def confirm(env, claims):
+        confirmed.append(claims)
+        return True
+
+    h = Harness(tmp_path, context_verifier=confirm)
     seen = []
     real = h.engine.decide
     h.engine.decide = lambda req, **kw: (seen.append(req), real(req, **kw))[1]
@@ -838,6 +846,7 @@ async def test_policy_context_travels_in_the_reserved_parameter_and_is_not_given
     assert (ctx["trigger"], ctx["incident_id"], ctx["profile"]) == ("schedule", "INC-7", "quick")
     assert "budget_exceeded" not in ctx
     assert h.calls[0].parameters == {"indicator": "192.168.1.20"}
+    assert confirmed == [{"incident_id": "INC-7", "profile": "quick"}]
 
 
 @pytest.mark.asyncio
@@ -847,3 +856,78 @@ async def test_a_permissive_trigger_in_the_policy_parameter_is_ignored(h):
     h.engine.decide = lambda req, **kw: (seen.append(req), real(req, **kw))[1]
     await h.receiver.handle(envelope(parameters={"indicator": "x", "_policy": {"trigger": "operator"}}))
     assert seen[0].context["trigger"] == "service"
+
+
+# ---- claims that could grant something are confirmed with the hub --------------
+
+
+def _spy(h):
+    seen = []
+    real = h.engine.decide
+    h.engine.decide = lambda req, **kw: (seen.append(req), real(req, **kw))[1]
+    return seen
+
+
+INCIDENT_PARAMS = {"indicator": "192.168.1.20", "_policy": {"trigger": "schedule", "incident_id": "INC-7",
+                                                            "profile": "full"}}
+
+
+@pytest.mark.asyncio
+async def test_unconfirmed_incident_and_profile_claims_are_dropped(h):
+    # No verifier: anyone holding the shared secret could have written these.
+    seen = _spy(h)
+    _, body = await h.receiver.handle(envelope(parameters=INCIDENT_PARAMS))
+    assert body["status"] == "completed"
+    ctx = seen[0].context
+    assert ctx["trigger"] == "schedule"  # restrictive: believed without confirmation
+    assert "incident_id" not in ctx and "profile" not in ctx
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answer", ["no", "raise"])
+async def test_rejected_context_claims_are_dropped(tmp_path, answer):
+    async def confirm(env, claims):
+        if answer == "raise":
+            raise RuntimeError("hub down")
+        return False
+
+    h = Harness(tmp_path, context_verifier=confirm)
+    seen = _spy(h)
+    await h.receiver.handle(envelope(parameters=INCIDENT_PARAMS))
+    assert "incident_id" not in seen[0].context and "profile" not in seen[0].context
+
+
+@pytest.mark.asyncio
+async def test_context_verifier_is_not_asked_when_nothing_is_claimed(tmp_path):
+    asked = []
+
+    async def confirm(env, claims):
+        asked.append(claims)
+        return True
+
+    h = Harness(tmp_path, context_verifier=confirm)
+    await h.receiver.handle(envelope(parameters={"indicator": "x", "_policy": {"trigger": "automation"}}))
+    assert asked == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "override, expected",
+    [
+        ({}, True),
+        ({"policy_context": {"trigger": "schedule", "incident_id": "INC-8", "profile": "full"}}, False),
+        ({"policy_context": {"trigger": "schedule"}}, False),
+        ({"policy_context": None}, False),
+        ({"status": "completed"}, False),
+        ({"provider": "openeye"}, False),
+        ({"requester_app": "cyber_harness"}, False),
+    ],
+)
+async def test_hub_verifier_confirms_context_only_for_this_execution(override, expected):
+    env = envelope(parameters=INCIDENT_PARAMS)
+    stripped = {"indicator": "192.168.1.20"}
+    record = _record(env, digest=request_digest(env["command"], env["target"], stripped),
+                     policy_context={"trigger": "schedule", "incident_id": "INC-7", "profile": "full"})
+    record.update(override)
+    hub = _fake_hub(record, [])
+    assert await _verifier(hub).confirm_context(env, {"incident_id": "INC-7", "profile": "full"}) is expected

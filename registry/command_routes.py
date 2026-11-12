@@ -142,6 +142,8 @@ def _detail_view(request: Request, dispatcher: CommandDispatcher, record: dict[s
             "created_at": record["created_at"],
             "updated_at": record["updated_at"],
             "events": record.get("events", []),
+            # The context gate 1 evaluated with; providers confirm forwarded claims against it.
+            "policy_context": CommandDispatcher._stored_context(record),
             "approval": None,
         }
     )

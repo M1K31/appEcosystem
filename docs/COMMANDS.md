@@ -83,12 +83,12 @@ Other responses: `401` unsigned, `403` not permitted to act as that app or as an
 
 ### Reading the record
 
-- `GET /commands/{command_id}` — the status document plus `action_class`, `requester_app`, `actor`, `target`, `parameters`, `digest`, the approval record, and `events` (the ordered audit trail).
+- `GET /commands/{command_id}` — the status document plus `action_class`, `requester_app`, `actor`, `target`, `parameters`, `digest`, `policy_context`, the approval record, and `events` (the ordered audit trail).
 - `GET /commands?correlation_id=&status=&limit=`.
 
 ## What the policy sees
 
-The hub and the provider evaluate the same request. The hub forwards the context it evaluated with (the trigger, and `incident_id` and `profile` when given) in the reserved `_policy` parameter; the provider evaluates with it and removes it before the handler runs.
+The hub and the provider evaluate the same request. The hub forwards the context it evaluated with (the trigger, and `incident_id` and `profile` when given) in the reserved `_policy` parameter; the provider evaluates with it and removes it before the handler runs. A restrictive trigger is believed as sent, because it can only make the decision stricter. `incident_id` and `profile` can make it more permissive, so the provider believes them only after the hub confirms it evaluated this exact command with those values; otherwise it evaluates without them.
 
 - **Action class** comes from the capability's registered manifest, never from the caller. A provider refuses an envelope whose class differs from the one it registered.
 - **Action name** is the capability id. The one exception is `threat_intel.lookup_ioc`, evaluated as `lookup_ioc` while it is registered as `observe` or `investigate`, because policy files list that passive lookup by its bare name.
@@ -100,12 +100,14 @@ The hub and the provider evaluate the same request. The hub forwards the context
 ```python
 from ecosystem_hub import CommandReceiver, CommandFailed, HubApprovalVerifier, build_command_router
 
+hub_check = HubApprovalVerifier(registry_url, ecosystem_secret, app_name="aegissiem")
 receiver = CommandReceiver(
     "aegissiem",
     secret=ecosystem_secret,
     policy_engine=policy_engine,                 # this app's own engine: gate 2
     replay_db_path=data_dir / "commands-replay.db",
-    approval_verifier=HubApprovalVerifier(registry_url, ecosystem_secret, app_name="aegissiem"),
+    approval_verifier=hub_check,                 # approvals are confirmed with the hub
+    context_verifier=hub_check.confirm_context,  # so are incident and profile claims
 )
 
 async def lookup_ioc(ctx):

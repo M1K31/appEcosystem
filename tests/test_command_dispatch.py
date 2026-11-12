@@ -585,7 +585,17 @@ async def test_caller_cannot_supply_the_reserved_policy_parameter(w):
 
 @pytest.mark.asyncio
 async def test_both_gates_see_the_same_policy_context(w):
+    from registry.commands import CommandDispatcher
+
     provider = w.add_provider("aegissiem", "threat_intel.lookup_ioc")
+
+    async def confirm(env, claims):
+        # Stands in for HubApprovalVerifier.confirm_context against this hub's record.
+        record = w.store.get(env["id"])
+        stored = CommandDispatcher._stored_context(record)
+        return record["status"] == "dispatching" and all(stored.get(k) == v for k, v in claims.items())
+
+    provider.receiver._context_verifier = confirm
     hub_seen, provider_seen = [], []
     real_hub, real_provider = w.engine.decide, provider.engine.decide
     w.engine.decide = lambda req, **kw: (hub_seen.append(req), real_hub(req, **kw))[1]

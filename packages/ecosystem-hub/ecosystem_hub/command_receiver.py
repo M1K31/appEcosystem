@@ -34,6 +34,7 @@ from ecosystem_client.contracts import verify_command_envelope
 from ecosystem_client.ulid import ulid_timestamp_ms
 
 from .command_common import (
+    CALLER_CONTEXT_KEYS,
     REPLAY_RETENTION_SECONDS,
     RETRY_WINDOW_SECONDS,
     actor_string,
@@ -83,6 +84,8 @@ class Accepted:
 
 Handler = Callable[[CommandContext], Awaitable["dict[str, Any] | Accepted"]]
 ApprovalVerifier = Callable[[dict[str, Any]], Awaitable[bool]]
+# Confirms context claims (incident_id, profile) for an envelope: (envelope, claims) -> bool.
+ContextVerifier = Callable[[dict[str, Any], dict[str, Any]], Awaitable[bool]]
 
 
 class _ReplayStore:
@@ -153,6 +156,7 @@ class CommandReceiver:
         policy_engine: Any,
         replay_db_path: str | Path,
         approval_verifier: ApprovalVerifier | None = None,
+        context_verifier: ContextVerifier | None = None,
         now_fn: Callable[[], float] = time.time,
     ):
         if not secret:
@@ -163,6 +167,7 @@ class CommandReceiver:
         self._secret = secret
         self._engine = policy_engine
         self._verifier = approval_verifier
+        self._context_verifier = context_verifier
         self._now = now_fn
         self._replay = _ReplayStore(replay_db_path)
         self._handlers: dict[str, tuple[str, Handler, float]] = {}
@@ -262,6 +267,23 @@ class CommandReceiver:
         self._replay.finish(requester=requester, key=key, response=body)
         return 200, body
 
+    async def _confirmed_context(self, envelope: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        """Keep incident_id/profile only if the hub confirms them; the restrictive trigger needs no proof."""
+        claims = {k: context[k] for k in CALLER_CONTEXT_KEYS if k in context}
+        if not claims:
+            return context
+        confirmed = False
+        if self._context_verifier is not None:
+            try:
+                confirmed = bool(await self._context_verifier(envelope, claims))
+            except Exception as exc:
+                logger.warning("Could not confirm policy context for %s: %r", envelope.get("id"), exc)
+                confirmed = False
+        if confirmed:
+            return context
+        logger.info("Ignoring unconfirmed policy context %s for %s", sorted(claims), envelope.get("id"))
+        return {k: v for k, v in context.items() if k not in claims}
+
     async def _decide_and_run(self, envelope: dict[str, Any], action_class: str, handler: Handler,
                               timeout_seconds: float, parameters: dict[str, Any],
                               supplied_context: dict[str, Any]) -> dict[str, Any]:
@@ -269,7 +291,11 @@ class CommandReceiver:
         command = envelope["command"]
         actor = envelope["actor"]
 
-        # 6. Second policy gate, with this app's own engine.
+        # 6. Second policy gate, with this app's own engine. The hub's context is
+        # used as forwarded, except the keys that can grant something: those are
+        # claims, believed only when the hub confirms it evaluated with them.
+        context = policy_context(actor, supplied_context)
+        context = await self._confirmed_context(envelope, context)
         try:
             from ecosystem_policy.models import ActionRequest
 
@@ -280,7 +306,7 @@ class CommandReceiver:
                     action_class=action_class,
                     target=policy_target(envelope["target"], action_class, parameters),
                     context={
-                        **policy_context(actor, supplied_context),
+                        **context,
                         "command_id": command_id,
                         "capability": command,
                     },
@@ -399,26 +425,22 @@ class HubApprovalVerifier:
         self._secret = secret
         self._client_factory = client_factory or (lambda: httpx.AsyncClient(timeout=timeout))
 
-    async def __call__(self, envelope: dict[str, Any]) -> bool:
-        ref = envelope.get("authorization_ref")
-        if not isinstance(ref, str) or not ref.startswith("approval:"):
-            return False
-        approval_id = ref[len("approval:"):]
+    async def _bound_record(self, envelope: dict[str, Any]) -> dict[str, Any] | None:
+        """The hub's record of this envelope's command, if it is this exact execution, else None."""
         url = f"{self.registry_url}/commands/{envelope.get('id')}"
         try:
             headers = sign_request("GET", url, self._secret) if self._secret else {}
             async with self._client_factory() as client:
                 resp = await client.get(url, headers=headers)
             if resp.status_code != 200:
-                return False
+                return None
             record = resp.json()
         except Exception as exc:
-            logger.warning("Could not confirm approval %s with the hub: %r", approval_id, exc)
-            return False
+            logger.warning("Could not reach the hub to confirm %s: %r", envelope.get("id"), exc)
+            return None
         if not isinstance(record, dict):
-            return False
+            return None
         expected = {
-            "approval_id": approval_id,
             "digest": request_digest(
                 envelope["command"], envelope["target"], split_policy_parameters(envelope["parameters"])[0]
             ),
@@ -430,7 +452,16 @@ class HubApprovalVerifier:
         }
         for field, value in expected.items():
             if record.get(field) != value:
-                return False
+                return None
+        return record
+
+    async def __call__(self, envelope: dict[str, Any]) -> bool:
+        ref = envelope.get("authorization_ref")
+        if not isinstance(ref, str) or not ref.startswith("approval:"):
+            return False
+        record = await self._bound_record(envelope)
+        if record is None or record.get("approval_id") != ref[len("approval:"):]:
+            return False
         approval = record.get("approval")
         if not isinstance(approval, dict):
             return False
@@ -441,3 +472,16 @@ class HubApprovalVerifier:
             and approval.get("status") == "pending"
             and bool(approval.get("async_containment"))
         )
+
+    async def confirm_context(self, envelope: dict[str, Any], claims: dict[str, Any]) -> bool:
+        """True when the hub evaluated this exact execution with these incident/profile values.
+
+        Pass as `context_verifier=` to CommandReceiver.
+        """
+        record = await self._bound_record(envelope)
+        if record is None:
+            return False
+        stored = record.get("policy_context")
+        if not isinstance(stored, dict):
+            return False
+        return all(stored.get(key) == value for key, value in claims.items())

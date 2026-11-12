@@ -34,6 +34,7 @@ class ApprovalHub(Hub):
             return verdict
 
         provider.receiver._verifier = verifier
+        provider.receiver._context_verifier = inner.confirm_context
         return provider
 
     def step_up(self):
@@ -312,3 +313,38 @@ def test_startup_closes_commands_whose_approval_closed_while_unobserved(monkeypa
     with TestClient(app) as client:
         record = client.get(f"/commands/{doc['command_id']}").json()
         assert (record["status"], record["error"]) == ("denied", "approval expired")
+
+
+# ---- incident and profile claims are confirmed with the real hub ---------------
+
+
+def _spy(engine):
+    seen = []
+    real = engine.decide
+    engine.decide = lambda req, **kw: (seen.append(req), real(req, **kw))[1]
+    return seen
+
+
+def test_incident_context_is_confirmed_with_the_hub(hub):
+    provider = hub.add_verified_provider("aegissiem", "threat_intel.lookup_ioc", "observe")
+    seen = _spy(provider.engine)
+    doc = hub.dispatch(hub.body(context={"incident_id": "INC-7", "profile": "full"})).json()
+    assert doc["status"] == "completed"
+    assert (seen[0].context["incident_id"], seen[0].context["profile"]) == ("INC-7", "full")
+    assert hub.command(doc["command_id"])["policy_context"]["incident_id"] == "INC-7"
+
+
+@pytest.mark.asyncio
+async def test_forged_incident_claim_sent_directly_is_dropped(hub):
+    provider = hub.add_verified_provider("aegissiem", "threat_intel.lookup_ioc", "observe")
+    seen = _spy(provider.engine)
+    actor = {"id": "x", "type": "service", "app": "ai_for_survival", "device_id": "local-device"}
+    # Signed with the shared secret, sent straight to the provider: the hub never saw it.
+    forged = build_command_envelope(
+        "threat_intel.lookup_ioc", "observe", actor, {"scope": "local", "identifier": "192.168.1.20"}, SECRET,
+        parameters={"indicator": "192.168.1.20", "_policy": {"trigger": "service", "incident_id": "INC-7"}},
+        idempotency_key="forged-ctx",
+    )
+    status, body = await provider.receiver.handle(forged)
+    assert status == 200
+    assert "incident_id" not in seen[0].context
