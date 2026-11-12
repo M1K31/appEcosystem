@@ -11,7 +11,7 @@ const os = require("os");
 const path = require("path");
 const { signRequest } = require("./_auth");
 const { assertValidSchema, buildNotificationEnvelope } = require("./contracts");
-const { resolveDeviceId } = require("./ulid");
+const { generateUlid, resolveDeviceId } = require("./ulid");
 
 function defaultJsOutboxPath(appName) {
     const safe = String(appName || "js-app").replace(/[^A-Za-z0-9_-]/g, "_");
@@ -140,6 +140,113 @@ class HubClient {
                 method: "POST",
                 headers: this._headers("POST", url, payload),
                 body: JSON.stringify(payload),
+                signal: AbortSignal.timeout(this.timeout),
+            });
+            if (resp && resp.ok) {
+                return await resp.json();
+            }
+        } catch {
+            return null;
+        }
+        return null;
+    }
+
+    /**
+     * Ask the hub to run a capability and return its status document.
+     *
+     * The hub decides (policy, approval) and forwards to the provider; `status`
+     * is one of completed, accepted, pending_approval, denied, failed or
+     * provider_unavailable. Nothing is ever queued: if the hub cannot be
+     * reached the answer is provider_unavailable. To retry safely after an
+     * unknown outcome, pass the same `idempotencyKey`.
+     *
+     * opts: rationale, idempotencyKey, actorType, actorId, correlationId,
+     *       context, stepUpToken, timeoutMs
+     */
+    async invoke(capability, target, parameters = {}, opts = {}) {
+        if (!this.secret) {
+            return { status: "provider_unavailable", error: "not_configured", command_id: null };
+        }
+        const key = opts.idempotencyKey || generateUlid();
+        const body = {
+            capability,
+            target: Object.assign({}, target || {}),
+            parameters: Object.assign({}, parameters || {}),
+            actor: {
+                app: this.appName,
+                id: opts.actorId || this.appName,
+                type: opts.actorType || "service",
+                device_id: this.deviceId,
+            },
+            idempotency_key: key,
+        };
+        if (opts.rationale != null) body.rationale = opts.rationale;
+        if (opts.correlationId != null) body.correlation_id = opts.correlationId;
+        if (opts.context != null) body.context = opts.context;
+        if (opts.stepUpToken != null) body.step_up_token = opts.stepUpToken;
+
+        const url = `${this.registryUrl}/commands/dispatch`;
+        let resp;
+        try {
+            resp = await fetch(url, {
+                method: "POST",
+                headers: this._headers("POST", url, body),
+                body: JSON.stringify(body),
+                signal: AbortSignal.timeout(opts.timeoutMs || 60000),
+            });
+        } catch (err) {
+            if (HubClient._neverConnected(err)) {
+                return { status: "provider_unavailable", error: "hub_unreachable", command_id: null };
+            }
+            // Sent, but no answer: it may or may not have run.
+            return {
+                status: "failed",
+                error: `no answer from the hub (${(err && err.name) || "Error"})`,
+                outcome_unknown: true,
+                command_id: null,
+                idempotency_key: key,
+            };
+        }
+
+        let payload = null;
+        try {
+            payload = await resp.json();
+        } catch {
+            payload = null;
+        }
+        const isObject = payload !== null && typeof payload === "object" && !Array.isArray(payload);
+        if (resp.status === 200 && isObject) {
+            return payload;
+        }
+        const out = {
+            status: "failed",
+            error: isObject && payload.detail ? String(payload.detail) : `hub answered HTTP ${resp.status}`,
+            http_status: resp.status,
+            command_id: null,
+            idempotency_key: key,
+        };
+        if (resp.status >= 500 || resp.status === 200) {
+            out.outcome_unknown = true;
+        }
+        return out;
+    }
+
+    /** True when the request never reached the hub (as opposed to: sent, no answer). */
+    static _neverConnected(err) {
+        const codes = ["ECONNREFUSED", "ENOTFOUND", "EHOSTUNREACH", "ENETUNREACH", "EAI_AGAIN", "UND_ERR_CONNECT_TIMEOUT"];
+        const code = err && ((err.cause && err.cause.code) || err.code);
+        if (code && codes.includes(code)) return true;
+        const message = String((err && err.message) || "");
+        return codes.some((c) => message.includes(c));
+    }
+
+    /** The hub's record of a command (status, result, audit events), or null. */
+    async getCommand(commandId) {
+        try {
+            const url = `${this.registryUrl}/commands/${encodeURIComponent(commandId)}`;
+            const resp = await fetch(url, {
+                method: "GET",
+                headers: this._headers("GET", url, null),
                 signal: AbortSignal.timeout(this.timeout),
             });
             if (resp && resp.ok) {

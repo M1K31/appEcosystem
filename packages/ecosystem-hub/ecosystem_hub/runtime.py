@@ -17,7 +17,7 @@ from ecosystem_auth.tokens import sign_request
 from ecosystem_client import EcosystemClient
 from ecosystem_client.config import EcosystemConfig
 from ecosystem_client.contracts import build_notification_envelope
-from ecosystem_client.ulid import resolve_device_id
+from ecosystem_client.ulid import generate_ulid, resolve_device_id
 
 from .capabilities import CapabilityRegistry, CapabilityResolution
 from .lock import SingleHostLock
@@ -98,6 +98,8 @@ class HubRuntime:
         self._effective_mode = "standalone"
         self._started = False
         self._bg_task: asyncio.Task[None] | None = None
+        # How invoke()/get_command() open their HTTP client; tests substitute a transport.
+        self._http_factory: Callable[[float], httpx.AsyncClient] = lambda timeout: httpx.AsyncClient(timeout=timeout)
 
     @property
     def effective_mode(self) -> str:
@@ -439,6 +441,104 @@ class HubRuntime:
             "status": "queued_offline" if queued else "deduplicated_offline",
             "id": envelope["id"],
         }
+
+    # ---- capability invocation --------------------------------------------
+
+    async def invoke(
+        self,
+        capability: str,
+        target: dict[str, Any],
+        parameters: dict[str, Any] | None = None,
+        *,
+        rationale: str | None = None,
+        idempotency_key: str | None = None,
+        actor_type: str = "service",
+        actor_id: str | None = None,
+        correlation_id: str | None = None,
+        context: dict[str, Any] | None = None,
+        step_up_token: str | None = None,
+        timeout: float = 60.0,
+    ) -> dict[str, Any]:
+        """Ask the hub to run a capability and return its status document.
+
+        The hub decides (policy, approval) and forwards to the provider;
+        `status` is one of completed, accepted, pending_approval, denied,
+        failed or provider_unavailable. Nothing is ever queued: if the hub
+        cannot be reached the answer is provider_unavailable, and the caller
+        decides whether to try again. To retry safely after an unknown
+        outcome, pass the same `idempotency_key`.
+        """
+        if not self.config.hmac_secret:
+            return {"status": "provider_unavailable", "error": "not_configured", "command_id": None}
+        key = idempotency_key or generate_ulid()
+        body: dict[str, Any] = {
+            "capability": capability,
+            "target": dict(target or {}),
+            "parameters": dict(parameters or {}),
+            "actor": {
+                "app": self.app_name,
+                "id": actor_id or self.app_name,
+                "type": actor_type,
+                "device_id": self.device_id,
+            },
+            "idempotency_key": key,
+        }
+        for name, value in (
+            ("rationale", rationale),
+            ("correlation_id", correlation_id),
+            ("context", context),
+            ("step_up_token", step_up_token),
+        ):
+            if value is not None:
+                body[name] = value
+
+        url = f"{self.config.registry_url.rstrip('/')}/commands/dispatch"
+        try:
+            async with self._http_factory(timeout) as http:
+                resp = await http.post(url, json=body, headers=self._signed_headers("POST", url, body))
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            # Never connected: the hub did not receive the request.
+            return {"status": "provider_unavailable", "error": "hub_unreachable", "command_id": None}
+        except httpx.HTTPError as exc:
+            return {
+                "status": "failed",
+                "error": f"no answer from the hub ({type(exc).__name__})",
+                "outcome_unknown": True,
+                "command_id": None,
+                "idempotency_key": key,
+            }
+
+        try:
+            payload = resp.json()
+        except ValueError:
+            payload = None
+        if resp.status_code == 200 and isinstance(payload, dict):
+            return payload
+        detail = payload.get("detail") if isinstance(payload, dict) else None
+        out: dict[str, Any] = {
+            "status": "failed",
+            "error": str(detail) if detail else f"hub answered HTTP {resp.status_code}",
+            "http_status": resp.status_code,
+            "command_id": None,
+            "idempotency_key": key,
+        }
+        if resp.status_code >= 500 or resp.status_code == 200:
+            # The hub may have got as far as forwarding the command.
+            out["outcome_unknown"] = True
+        return out
+
+    async def get_command(self, command_id: str) -> dict[str, Any] | None:
+        """The hub's record of a command (status, result, audit events), or None."""
+        url = f"{self.config.registry_url.rstrip('/')}/commands/{command_id}"
+        try:
+            async with self._http_factory(self.config.request_timeout) as http:
+                resp = await http.get(url, headers=self._signed_headers("GET", url))
+            if resp.status_code != 200:
+                return None
+            payload = resp.json()
+        except (httpx.HTTPError, ValueError):
+            return None
+        return payload if isinstance(payload, dict) else None
 
     def status(self) -> dict[str, Any]:
         return {
