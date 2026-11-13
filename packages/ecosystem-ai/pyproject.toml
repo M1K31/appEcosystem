@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 # Prefixed to group the family under the reserved `appEcosystem` PyPI name.
 # Import name is unchanged: `pip install appecosystem-ai` -> `import ecosystem_ai`.
 name = "appecosystem-ai"
-version = "0.1.0"
+version = "0.1.1"
 description = "Hardware-adaptive, provider-pluggable AI routing layer for appEcosystem"
 readme = "README.md"
 license = "MIT"

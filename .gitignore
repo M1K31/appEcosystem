@@ -4,6 +4,10 @@ data/
 !package.json
 !package-lock.json
 !tsconfig.json
+!contracts/schemas/*.json
+!ecosystem_client/schemas/*.json
+!ecosystem_client_js/schemas/*.json
+!packages/ecosystem-ui-controls/*.json
 
 # Python
 __pycache__/
@@ -46,6 +50,8 @@ CLAUDE.md
 # Pytest scratch (tmp_path basetemp + cache) — regenerated every run
 pytest-of-mikelsmart/
 .pytest_cache/
+/tmp????????/
+tmp*/test.db
 
 # Node V8 compile cache — machine/version-specific, regenerated every run
 node-compile-cache/

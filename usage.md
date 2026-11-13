@@ -132,3 +132,196 @@ await eco.publish("security.alert", {"src": "203.0.113.5", "severity": "high"})
 ```bash
 ./scripts/smoke-ecosystem.sh    # single-host + subset + networked guarantees (no ports/services)
 ```
+
+
+---
+
+## 7. Policy Engine, Step-Up Approvals & Emergency Freeze
+
+The policy engine guards all mutations, scanning requests, containment actions, and administrative overrides.
+
+### API Endpoints
+- `GET /api/policy/state`: Retrieve current active policy mode (`normal`, `incident`, `emergency`, `survival`, `freeze`), restrictions status, and effective bypass grants.
+- `POST /api/policy/mode`: Set operational mode. Requires signed HMAC request and administrative step-up TOTP code if raising privileges or unfreezing.
+- `POST /api/policy/freeze`: Emergency containment kill-switch (`ecosystem.freeze`). Immediately stops new mutation and scan jobs and cancels interruptible work. Can be invoked without step-up authentication.
+- `POST /api/policy/resume`: Resumes normal operations from freeze. **Always** requires valid administrative step-up TOTP verification.
+- `GET /api/approvals`: List pending, approved, or rejected checkpoints.
+- `POST /api/approvals/{id}/decide`: Approve or reject a checkpoint:
+  ```json
+  { "decision": "allow", "operator": "admin", "totp_code": "123456" }
+  ```
+
+---
+
+## 8. Forensic Scanning Service (Zero Breach Toolkit)
+
+The integrated scanning subsystem executes authorized endpoint scans with encrypted-at-rest persistence and redacted event summaries.
+
+### API Endpoints
+- `POST /scans/run`: Request an authorized scan.
+  ```json
+  { "device_id": "self", "profile": "quick", "reason": "security.audit" }
+  ```
+- `GET /scans`: List all scan jobs and summary status.
+- `GET /scans/{id}`: Fetch high-level redacted scan summary (`share.json`).
+- `GET /scans/{id}/full`: Decrypt and view full scan report (`full.json`). **Requires step-up TOTP** in headers or query params (`X-Ecosystem-TOTP`).
+- `GET /scans/targets`: List enrolled devices, reachability status, and active auto-scan designations.
+
+---
+
+## 9. Compute Broker & Hardware Acceleration Diagnostics
+
+`ecosystem-compute` manages multi-provider AI model execution across local accelerators, LAN peers, and optional cloud providers.
+
+### CLI Diagnostics
+```bash
+# Diagnose host GPU, Metal, CUDA, ROCm, and Docker VM passthrough status
+ecosystem doctor gpu
+```
+
+### Python Broker Usage
+```python
+from ecosystem_compute import ComputeBroker, ComputeConfig
+
+broker = ComputeBroker(config=ComputeConfig(
+    providers={
+        "local": {"enabled": True},
+        "lan_node": {"enabled": True, "endpoints": ["http://192.168.1.50:11434"]},
+        "runpod": {"enabled": False, "monthly_usd": 25.0}  # Cloud off by default
+    }
+))
+
+# Ensure model endpoint with automatic fallback
+endpoint = await broker.ensure_endpoint(task="chat", classification="standard")
+print(f"Connected to {endpoint.provider_name} at {endpoint.base_url}")
+```
+
+---
+
+## 10. Apple HIG Web Components & Control Plane UI
+
+A zero-dependency Web Component bundle is served at `/ui/ecosystem-ui-controls.js` alongside standard styling `/ui/ecosystem-theme.css`:
+
+```html
+<link rel="stylesheet" href="/ui/ecosystem-theme.css">
+<script type="module" src="/ui/ecosystem-ui-controls.js"></script>
+
+<!-- Policy Restrictions Toggle with Step-Up Modal -->
+<ecosystem-policy-toggle endpoint="/api/policy/state"></ecosystem-policy-toggle>
+
+<!-- Emergency Freeze Button -->
+<button class="ecosystem-button ecosystem-button--destructive" onclick="EcosystemUI.requestFreeze()">
+  Emergency Freeze
+</button>
+```
+Access the complete control plane at: `http://127.0.0.1:8500/ui`
+
+---
+
+## 11. Inter-Application Practical Workflow Examples
+
+### Example A: Physical Security to Network SIEM Correlation
+When `OpenEye` detects an unrecognized visitor near physical infrastructure, it publishes a canonical `physical.intrusion` event:
+
+```python
+from ecosystem_client import EcosystemClient
+
+eco = EcosystemClient(service_name="openeye", service_port=8200)
+await eco.start()
+
+await eco.publish("physical.intrusion", {
+    "camera_id": "server-room-cam1",
+    "zone": "critical-perimeter",
+    "unrecognized_faces": 1,
+    "confidence": 0.96,
+    "timestamp": "2026-11-02T19:45:00Z"
+})
+```
+
+`AegisSIEM` and `cyber-agents` consume this event from the event bus and correlate it with real-time router association logs:
+
+```python
+# In AegisSIEM / cyber-agents event handler:
+async def handle_physical_event(event: dict):
+    if event["type"] == "physical.intrusion":
+        camera_ts = event["data"]["timestamp"]
+        # Check router DHCP & ARP table for new devices within ±3 minutes
+        anomalies = db.get_recent_unseen_devices(window_seconds=180, reference_ts=camera_ts)
+        for dev in anomalies:
+            logger.warning("Correlated Physical & Cyber Intrusion! Device: %s (IP: %s)", dev["mac"], dev["ip"])
+            await trigger_escalation(dev["ip"], severity="CRITICAL")
+```
+
+---
+
+### Example B: AegisSIEM Querying AI-for-Survival for Offline Playbooks
+When `AegisSIEM` discovers a suspicious brute-force or exploitation attempt, it queries `AI-for-Survival`'s local RAG knowledge base for defensive remediation procedures without touching external APIs:
+
+```python
+import httpx
+
+async def fetch_defense_playbook(threat_type: str, service_banner: str):
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "http://127.0.0.1:8000/api/knowledge/search",
+            json={
+                "query": f"remediation and hardening playbook for {threat_type} targeting {service_banner}",
+                "top_k": 2
+            },
+            timeout=10.0
+        )
+        if response.status_code == 200:
+            return response.json()
+    return None
+```
+
+---
+
+### Example C: Policy-Gated Endpoint Quarantine with Rollback Plan
+`cyber-agents` requests containment of an internal endpoint. The cryptographic `PolicyEngine` validates whether an active bypass grant exists or if step-up approval is required:
+
+```python
+from ecosystem_policy import PolicyEngine, ActionRequest
+
+engine = PolicyEngine.load()
+req = ActionRequest(
+    actor="cyber-agents/triage-daemon",
+    model="security_analysis:local-llama3",
+    action="isolate_device",
+    action_class="contain",
+    target={"device_id": "workstation-alpha", "ip": "192.168.1.142"},
+    context={"incident_id": "INC-8812", "severity": "HIGH"},
+    rationale="Repeated brute force against internal gateway detected."
+)
+
+decision = engine.decide(req)
+if decision.result in ("allow", "allow_and_notify"):
+    # Apply containment rule with automated TTL revert plan
+    await router_mgr.block_lan_traffic(req.target["ip"])
+    await scheduler.schedule_revert(decision.revert_plan)
+elif decision.result == "require_approval":
+    # Submit to unified approvals queue; surfaces in Control Plane & AegisSIEM UI
+    await approvals_client.request_approval(req, deadline=decision.deadline)
+```
+
+---
+
+### Example D: Emergency Mesh Freeze from MagicMirror or iOS Shortcut
+An operator can instantly freeze all scanning, container alterations, and automated changes across every connected app using the unauthenticated freeze route:
+
+```bash
+# Emergency freeze (allowed from any enrolled control surface without password)
+curl -X POST http://127.0.0.1:8500/api/policy/freeze \
+  -H "Content-Type: application/json" \
+  -d '{"initiated_by": "magicmirror-wall", "reason": "Operator physical alert button pressed"}'
+
+# Verify freeze state across the mesh
+curl -s http://127.0.0.1:8500/api/policy/state | jq .mode
+# Output: "freeze"
+
+# Resuming normal operations ALWAYS requires step-up TOTP verification
+curl -X POST http://127.0.0.1:8500/api/policy/resume \
+  -H "Content-Type: application/json" \
+  -d '{"operator_id": "admin", "totp_code": "123456"}'
+```
+

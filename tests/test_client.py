@@ -171,3 +171,108 @@ class TestEcosystemClient:
             await client.stop()
 
         mock_dereg.assert_called_once_with("test-svc")
+
+    @pytest.mark.asyncio
+    async def test_registration_401_degrades_to_standalone_and_backs_off(self):
+        """On 401 Unauthorized, start() degrades to standalone mode and sets backoff."""
+        from ecosystem_client import EcosystemClient
+        from ecosystem_client.discovery import DiscoveryMode
+
+        client = EcosystemClient(service_name="test-svc", service_port=8000)
+        with patch.object(
+            client._discovery, "detect_mode",
+            new_callable=AsyncMock, return_value=DiscoveryMode.REGISTRY,
+        ):
+            # Simulate 401 from discovery
+            async def mock_reg_401(*args, **kwargs):
+                client._discovery.last_status_code = 401
+                client._discovery.is_unauthorized = True
+                return False
+
+            with patch.object(client._discovery, "register_self", side_effect=mock_reg_401) as mock_reg:
+                with patch.object(client._discovery, "get_peers", new_callable=AsyncMock, return_value={}):
+                    await client.start()
+
+            assert client._publisher._mode == DiscoveryMode.STANDALONE
+            assert client.is_authenticated is False
+            assert client.registration_backoff > 0
+            assert client._consecutive_auth_failures == 1
+
+            # Subsequent call during backoff window should skip calling discovery
+            with patch.object(client._discovery, "register_self", new_callable=AsyncMock) as mock_reg_subsequent:
+                ok = await client._register_self(force=False)
+                assert ok is False
+                mock_reg_subsequent.assert_not_called()
+
+        await client.stop()
+
+    @pytest.mark.asyncio
+    async def test_registration_exponential_backoff_and_reset(self):
+        """Repeated 401 errors exponentially increase backoff; reset_backoff clears it."""
+        import time
+        from ecosystem_client import EcosystemClient
+        from ecosystem_client.discovery import DiscoveryMode
+
+        client = EcosystemClient(service_name="test-svc", service_port=8000)
+        client._discovery._mode = DiscoveryMode.REGISTRY
+
+        client._discovery.last_status_code = 401
+        client._discovery.is_unauthorized = True
+
+        with patch.object(client._discovery, "register_self", new_callable=AsyncMock, return_value=False):
+            # Failure 1
+            await client._register_self(force=True)
+            assert client._consecutive_auth_failures == 1
+            # 10s base
+            assert 8 < client.registration_backoff <= 10
+
+            # Failure 2
+            await client._register_self(force=True)
+            assert client._consecutive_auth_failures == 2
+            # 20s
+            assert 18 < client.registration_backoff <= 20
+
+            # Failure 3
+            await client._register_self(force=True)
+            assert client._consecutive_auth_failures == 3
+            # 40s
+            assert 38 < client.registration_backoff <= 40
+
+        # Reset backoff clears backoff and failure count
+        client.reset_backoff()
+        assert client._consecutive_auth_failures == 0
+        assert client.registration_backoff == 0.0
+        assert client._discovery.is_unauthorized is False
+        assert client.is_authenticated is True
+
+    @pytest.mark.asyncio
+    async def test_registration_recovers_to_registry_mode(self):
+        """When registration succeeds after failure, registry mode is restored."""
+        from ecosystem_client import EcosystemClient
+        from ecosystem_client.discovery import DiscoveryMode
+
+        client = EcosystemClient(service_name="test-svc", service_port=8000)
+        client._discovery._mode = DiscoveryMode.REGISTRY
+        client._consecutive_auth_failures = 3
+        client._discovery.is_unauthorized = True
+
+        with patch.object(client._discovery, "register_self", new_callable=AsyncMock, return_value=True):
+            ok = await client._register_self(force=True)
+            assert ok is True
+            assert client._consecutive_auth_failures == 0
+            assert client._discovery.is_unauthorized is False
+            assert client.is_authenticated is True
+
+    @pytest.mark.asyncio
+    async def test_unauthorized_discovery_skips_services_fetch(self):
+        """When discovery is marked unauthorized, _fetch_registry_services skips requests."""
+        from ecosystem_client.discovery import DiscoveryManager, EcosystemConfig
+
+        cfg = EcosystemConfig.from_env()
+        dm = DiscoveryManager(cfg)
+        dm.is_unauthorized = True
+
+        with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+            services = await dm._fetch_registry_services()
+            assert services == []
+            mock_get.assert_not_called()

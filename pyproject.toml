@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 # — PEP 503 normalizes that to `appecosystem`, which is NOT the same project as
 # `app-ecosystem`, so the old name would have published somewhere else entirely.
 name = "appecosystem"
-version = "0.3.0"
+version = "0.5.0"
 description = "Service registry, event bus and coordination layer for the appEcosystem service mesh"
 readme = "README.md"
 license = "MIT"
@@ -41,8 +41,16 @@ dependencies = [
     # This package used to ship its own ecosystem_client/ (see the exclusion in
     # tool.setuptools.packages.find below): registry/app.py imports it, and
     # ecosystem_auth is imported throughout the registry and CLI.
-    "appecosystem-client>=0.3.1",
+    "appecosystem-client>=0.4.0",
     "appecosystem-auth>=0.4.0",
+    # The registry imports these at module scope (policy engine, capability
+    # registry, voice router); they were previously only available from a
+    # checkout, so a PyPI install of the registry could not start.
+    "appecosystem-policy>=0.3.0",
+    "appecosystem-hub>=0.2.0",
+    "appecosystem-voice>=0.1.0",
+    "appecosystem-ai>=0.1.1",
+    "appecosystem-compute>=0.1.0",
 ]
 
 [project.optional-dependencies]
@@ -66,4 +74,16 @@ Issues = "https://github.com/M1K31/appEcosystem/issues"
 # this package could silently overwrite a NEWER appecosystem-client with the
 # copy bundled at this package's build time — while pip still reported the newer
 # version as installed. An invisible downgrade is worse than a missing module.
-include = ["cli*", "events*", "llm*", "registry*"]
+include = ["agents*", "cli*", "events*", "llm*", "registry*"]
+
+[tool.pytest.ini_options]
+pythonpath = [
+    ".",
+    "packages/ecosystem-policy",
+    "packages/ecosystem-hub",
+    "packages/ecosystem-schemas",
+    "packages/ecosystem-auth",
+    "packages/ecosystem-ai",
+    "packages/ecosystem-voice",
+    "packages/ecosystem-compute",
+]

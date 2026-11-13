@@ -30,6 +30,10 @@ class TestProfile:
         assert p.default_provider == "ollama"
         assert p.selected_model == "auto"
 
+    def test_default_disables_cloud_fallback(self):
+        p = default_profile()
+        assert p.allow_cloud_fallback is False
+
     def test_roundtrip(self):
         p = default_profile()
         p2 = AIProfile.from_dict(p.to_dict())
@@ -79,6 +83,48 @@ class TestHardwareTiers:
 
     def test_high_end(self):
         assert tier_for(self._hw(32, gpu=True, vram=16)) == CapabilityTier.T3_HIGH_END
+
+    def test_high_end_apple_silicon_unified_memory(self):
+        hw = HardwareInfo(
+            ram_gb=36.0,
+            cpu_cores=12,
+            arch="arm64",
+            os_name="Darwin",
+            has_gpu=True,
+            vram_gb=0.0,
+            free_disk_gb=200.0,
+            available_ram_gb=24.0,
+            unified_memory=True,
+            gpu_vendor="apple",
+            backends=("metal", "cpu"),
+        )
+        assert hw.vram_gb == 0.0
+        assert tier_for(hw) == CapabilityTier.T3_HIGH_END
+        assert hw.to_dict()["backends"] == ["metal", "cpu"]
+
+    def test_apple_silicon_in_container_falls_back_to_cpu(self, monkeypatch):
+        from ecosystem_ai import hardware
+
+        monkeypatch.setattr(hardware.shutil, "which", lambda _cmd: None)
+        monkeypatch.setattr(hardware.platform, "system", lambda: "Darwin")
+        monkeypatch.setattr(hardware.platform, "machine", lambda: "arm64")
+        monkeypatch.setattr(hardware, "_in_container", lambda: True)
+
+        has_gpu, vram, unified, vendor, backends = hardware._gpu_and_backends()
+        assert has_gpu is False
+        assert vram == 0.0
+        assert unified is True
+        assert vendor == "apple"
+        assert backends == ("cpu",)
+
+    def test_rocm_and_xpu_parsers_preserve_cpu_fallback(self):
+        from ecosystem_ai import hardware
+
+        rocm_csv = "device,VRAM Total Memory (B),VRAM Total Used Memory (B)\ncard0,17163091968,1048576\n"
+        assert hardware._parse_rocm_vram_gb(rocm_csv) == 16.0
+
+        xpu_csv = "Device ID,Memory Physical Size\n0,16384 MiB\n"
+        assert hardware._parse_xpu_vram_gb(xpu_csv) == 16.0
 
     def test_recommended_model_scales(self):
         assert recommended_model(CapabilityTier.T0_MINIMAL) == ""
@@ -161,6 +207,7 @@ class TestRouter:
 
     def test_cloud_fallback_when_local_down(self):
         p = default_profile()
+        p.allow_cloud_fallback = True
         p.cloud["anthropic"].enabled = True
         p.cloud["anthropic"].model = "claude-x"
         providers = {

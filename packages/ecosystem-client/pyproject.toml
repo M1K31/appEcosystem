@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 # Prefixed to group the family under the reserved `appEcosystem` PyPI name.
 # Import name is unchanged: `pip install appecosystem-client` -> `import ecosystem_client`.
 name = "appecosystem-client"
-version = "0.3.1"
+version = "0.4.0"
 description = "Service registration, peer discovery and event bus client for appEcosystem"
 readme = "README.md"
 license = "MIT"
@@ -54,3 +54,6 @@ Issues = "https://github.com/M1K31/appEcosystem/issues"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["ecosystem_client*"]
+
+[tool.setuptools.package-data]
+"ecosystem_client" = ["schemas/*.json"]

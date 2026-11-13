@@ -58,9 +58,9 @@ class AIProfile:
         default_factory=lambda: {"chat": "", "security": "", "embed": "", "vision": ""}
     )
 
-    # Routing policy.
+    # Routing policy. Cloud usage always requires an explicit opt-in.
     prefer: str = "local"            # "local" | "cloud" | "quality"
-    allow_cloud_fallback: bool = True
+    allow_cloud_fallback: bool = False
 
     # Sync metadata (last-write-wins).
     version: int = 1

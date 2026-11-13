@@ -47,21 +47,10 @@ class EventSubscriber:
                 logger.error(f"Handler error for {event_type}: {e}")
 
     def _verify_envelope(self, envelope: dict[str, Any]) -> bool:
-        """Verify the HMAC signature on an event envelope."""
-        from ecosystem_auth.tokens import verify_signature
+        """Verify the HMAC signature on a v2 or legacy v1 event envelope."""
+        from .contracts import verify_event_envelope
 
-        signature = envelope.get("signature")
-        if not signature:
-            return False
-
-        signable = {
-            "id": envelope.get("id", ""),
-            "type": envelope.get("type", ""),
-            "source": envelope.get("source", ""),
-            "timestamp": envelope.get("timestamp", 0),
-            "data": envelope.get("data", {}),
-        }
-        return verify_signature(signable, signature, self._hmac_secret)
+        return verify_event_envelope(envelope, self._hmac_secret)
 
     def _get_matching_handlers(self, event_type: str) -> list[HandlerFunc]:
         """Find all handlers whose pattern matches the event type."""

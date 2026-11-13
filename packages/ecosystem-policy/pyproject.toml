@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "appecosystem-policy"
+version = "0.3.0"
+description = "Signed blue-team policy engine, Freeze preemption, Ed25519 scoped overrides, TOTP/Passkey step-up auth, and unified SQLite approval queue for appEcosystem."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+  {name = "Smart Industries LLC (Mikel Smart)"}
+]
+dependencies = [
+  "PyYAML>=6.0",
+  "cryptography>=41.0.0",
+  "appecosystem-auth>=0.4.0",
+  # 0.4.0 is the first client release with ecosystem_client.ulid, which
+  # approval_queue imports. An older client installs fine and then fails at import.
+  "appecosystem-client>=0.4.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ecosystem_policy*"]
+

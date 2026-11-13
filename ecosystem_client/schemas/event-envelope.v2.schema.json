@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://smartindustries.dev/schemas/appecosystem/event-envelope.v2.schema.json",
+  "title": "EcosystemEventEnvelopeV2",
+  "description": "Signed v2 event envelope for the appEcosystem event bus.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "type",
+    "source",
+    "timestamp",
+    "data",
+    "signature"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 2
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "description": "26-character Crockford Base32 ULID."
+    },
+    "type": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+      "description": "Dot-delimited canonical event type (e.g. 'scan.completed', 'notify.security')."
+    },
+    "source": {
+      "type": "object",
+      "required": ["app", "device_id"],
+      "additionalProperties": false,
+      "properties": {
+        "app": {
+          "type": "string",
+          "minLength": 1
+        },
+        "device_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "timestamp": {
+      "type": "number",
+      "minimum": 0
+    },
+    "data": {
+      "type": "object"
+    },
+    "correlation_id": {
+      "type": ["string", "null"]
+    },
+    "signature": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Hex-encoded HMAC-SHA256 signature over the canonical signable envelope."
+    }
+  }
+}

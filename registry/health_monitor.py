@@ -29,12 +29,14 @@ class HealthMonitor:
         timeout_seconds: int = 5,
         max_failures: int = 5,
         event_bus=None,
+        capability_registry=None,
     ):
         self.registry = registry
         self.interval = interval_seconds
         self.timeout = timeout_seconds
         self.max_failures = max_failures
         self._event_bus = event_bus
+        self._capability_registry = capability_registry
         self._task: Optional[asyncio.Task] = None
         self._running = False
         self._client = httpx.AsyncClient(timeout=timeout_seconds)
@@ -151,6 +153,7 @@ class HealthMonitor:
                         f"Static service {result.service_name} unhealthy after "
                         f"{record.consecutive_failures} failures (retained for recovery)"
                     )
+                    await self._withdraw_unhealthy_capabilities(result)
                     await self._publish_unhealthy(result, record)
                 continue
 
@@ -158,9 +161,32 @@ class HealthMonitor:
                 f"Auto-deregistering {result.service_name} "
                 f"after {record.consecutive_failures} consecutive failures"
             )
+            await self._withdraw_unhealthy_capabilities(result)
             await self._publish_unhealthy(result, record)
             self.registry.deregister(result.service_name)
             metrics.inc(metrics.AUTO_DEREGISTRATIONS)
+
+    async def _withdraw_unhealthy_capabilities(self, result) -> None:
+        if self._capability_registry is None:
+            return
+        affected = self._capability_registry.withdraw_provider(
+            result.service_name,
+            reason=f"Provider '{result.service_name}' unhealthy ({result.detail})",
+        )
+        if affected and self._event_bus:
+            try:
+                from events.schemas import EventEnvelope
+                await self._event_bus.publish(EventEnvelope(
+                    type="capability.withdrawn",
+                    source="registry",
+                    data={
+                        "app": result.service_name,
+                        "capabilities": [r["capability"] for r in affected],
+                        "reason": f"Provider '{result.service_name}' unhealthy ({result.detail})",
+                    },
+                ))
+            except Exception as e:
+                logger.debug(f"Failed to publish capability.withdrawn event: {e}")
 
     async def _publish_unhealthy(self, result, record) -> None:
         """Publish an ecosystem.service_unhealthy event (best-effort)."""
