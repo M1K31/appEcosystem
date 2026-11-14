@@ -1,5 +1,10 @@
 """App-embeddable HubRuntime, SingleHostLock, CapabilityRegistry, and DurableOutbox."""
 from .capabilities import CapabilityRegistry, CapabilityResolution
+from .command_adapters import (
+    build_aiohttp_handler,
+    build_flask_view,
+    build_receiver_from_env,
+)
 from .command_receiver import (
     Accepted,
     CommandContext,
@@ -29,7 +34,10 @@ __all__ = [
     "HubRuntime",
     "IdempotencyConflict",
     "SingleHostLock",
+    "build_aiohttp_handler",
     "build_command_router",
+    "build_flask_view",
+    "build_receiver_from_env",
     "default_hub_lock_path",
     "default_outbox_path",
 ]

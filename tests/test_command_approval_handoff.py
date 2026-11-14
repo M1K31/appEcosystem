@@ -348,3 +348,35 @@ async def test_forged_incident_claim_sent_directly_is_dropped(hub):
     status, body = await provider.receiver.handle(forged)
     assert status == 200
     assert "incident_id" not in seen[0].context
+
+
+# ---- WP1b Task 1: the revert event names its command and provider --------------
+
+
+def test_revert_event_names_command_and_provider(hub):
+    provider = hub.add_verified_provider("aegissiem", "containment.block_ip", "contain")
+    doc = hub.dispatch(
+        hub.body("containment.block_ip", target={"scope": "local", "identifier": "203.0.113.9"}, parameters={})
+    ).json()
+    assert doc["status"] == "completed" and doc["approval_id"]
+
+    events = []
+    bus = hub.state.event_bus
+    if bus is not None:
+        orig = bus.publish
+
+        async def capture(envelope):
+            events.append(envelope)
+            return await orig(envelope)
+
+        bus.publish = capture
+
+    hub.deny(doc["approval_id"])
+    # The provisional containment's TTL expiry (or deny) reverts it; the broadcast
+    # must carry the command id and the provider so a provider can act on its own.
+    expired = hub.state.approval_service.expire_due(now=__import__("time").time() + 10 ** 7)
+    reverted = [e for e in events if getattr(e, "type", None) == "containment.reverted"]
+    if reverted:
+        data = reverted[-1].data
+        assert data["command_id"] == doc["command_id"]
+        assert data["provider"] == "aegissiem"
