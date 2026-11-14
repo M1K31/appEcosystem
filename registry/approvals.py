@@ -50,6 +50,9 @@ class ApprovalService:
         # Called with each approval record that expires, so whatever was waiting
         # on it (a stored command) learns that it will not run.
         self.on_expired: Any = None
+        # Resolves an approval_id to (command_id, provider) so a revert broadcast
+        # names the command and the provider that ran it; None for a plain approval.
+        self.command_lookup: Any = None
 
     def _on_containment_revert(self, approval_record: dict[str, Any]) -> None:
         """Record revert execution and schedule peer notification on the running event loop."""
@@ -60,6 +63,19 @@ class ApprovalService:
                 loop.create_task(self._broadcast_revert(approval_record))
         except RuntimeError:
             pass
+
+    def _command_fields(self, approval_id: str) -> dict[str, Any]:
+        """{command_id, provider} for the command this approval gated, or both None."""
+        lookup = self.command_lookup
+        if callable(lookup):
+            try:
+                found = lookup(approval_id)
+                if found:
+                    command_id, provider = found
+                    return {"command_id": command_id, "provider": provider}
+            except Exception as exc:
+                logger.debug("command_lookup failed for %s: %r", approval_id, exc)
+        return {"command_id": None, "provider": None}
 
     async def _broadcast_revert(self, approval_record: dict[str, Any]) -> None:
         if self.event_bus is not None:
@@ -75,6 +91,7 @@ class ApprovalService:
                             "requester_service": approval_record["requester_service"],
                             "revert_plan": approval_record.get("revert_plan"),
                             "status": approval_record["status"],
+                            **self._command_fields(approval_record["approval_id"]),
                         },
                     )
                 )

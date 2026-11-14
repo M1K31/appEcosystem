@@ -210,6 +210,12 @@ async def lifespan(app: FastAPI):
     )
     # A command waiting on an approval that expires will not run; say so on its record.
     approval_service.on_expired = lambda rec: command_dispatcher.mark_approval_closed(rec, outcome="expired")
+
+    def _command_for_approval(approval_id):
+        record = command_store.get_by_approval(approval_id)
+        return (record["command_id"], record.get("provider_app")) if record else None
+
+    approval_service.command_lookup = _command_for_approval
     closed = command_dispatcher.reconcile_closed_approvals()
     if closed:
         logger.info("%d command(s) closed because their approval had been denied or had expired", closed)

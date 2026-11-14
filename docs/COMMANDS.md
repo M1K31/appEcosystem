@@ -130,6 +130,24 @@ Checklist for a handler:
 6. **Long-running work:** return `Accepted(job_ref)`; when the work ends, send a signed `POST /commands/{command_id}/result` with `{"status": "completed" | "failed", "result"?, "error"?}`. It is accepted once.
 7. **Undo provisional containment** when a `containment.reverted` event arrives for it.
 
+### Mounting on a non-FastAPI app
+
+FastAPI apps mount `build_command_router(receiver)`. For a Flask or aiohttp app, use the adapters:
+
+```python
+from ecosystem_hub import build_receiver_from_env, build_flask_view, build_aiohttp_handler
+
+receiver = build_receiver_from_env("aegissiem", policy_engine=engine, replay_db_path=db_path)
+if receiver is not None:                         # None when no ecosystem secret is set
+    # Flask (runs the coroutine on the app's own asyncio loop thread):
+    app.add_url_rule("/ecosystem/commands", "ecosystem_commands",
+                     build_flask_view(receiver, loop), methods=["POST"])
+    # aiohttp:
+    app.router.add_post("/ecosystem/commands", build_aiohttp_handler(receiver))
+```
+
+`build_receiver_from_env` wires the hub confirmation for both approvals and context claims, and returns `None` when no secret is configured, so an app with no ecosystem identity simply mounts nothing and runs standalone. The Flask view answers HTTP 504 with `outcome_unknown` if a handler does not finish in time. These adapters need the `provider-flask` or `provider-aiohttp` extra of `appecosystem-hub`.
+
 What the receiver does before your handler runs: verifies the envelope's schema, signature and expiry; checks the command is addressed to this app; answers a repeated idempotency key from its replay store; evaluates this app's policy engine; and, where the decision is `require_approval`, confirms with the hub that the approval is real, is for this exact request and provider, and is being dispatched right now. An approval named in an envelope is never taken on trust.
 
 ## Idempotency
