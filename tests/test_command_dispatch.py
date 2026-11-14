@@ -72,7 +72,15 @@ class FakeApprovals:
 
     async def create_request(self, payload):
         self.requests.append(payload)
-        return {"approval_id": f"APPROVAL{len(self.requests)}", "status": "pending", **payload}
+        rec = {"approval_id": f"APPROVAL{len(self.requests)}", "status": "pending", **payload}
+        self.requests[-1] = rec
+        return rec
+
+    def get(self, approval_id):
+        for rec in self.requests:
+            if rec.get("approval_id") == approval_id:
+                return rec
+        return None
 
 
 class FakeNotifications:
@@ -637,4 +645,57 @@ async def test_a_late_approval_on_a_closed_command_is_not_recorded_as_granted(w)
     events = [e["event"] for e in w.store.get(doc["command_id"])["events"]]
     assert "approval_granted" not in events
     assert events[-1] == "approval_arrived_late"
+    assert provider.envelopes == []
+
+
+# ---- push-review follow-ups ----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_retry_with_a_different_actor_is_a_conflict(w):
+    from ecosystem_hub import IdempotencyConflict
+
+    provider = w.add_provider("aegissiem", "threat_intel.lookup_ioc")
+    w.overrides["aegissiem"] = Failing(httpx.ReadTimeout)
+    first = await w.dispatch("threat_intel.lookup_ioc", actor={**ACTOR, "type": "operator", "id": "mikel"})
+    assert first["outcome_unknown"] is True
+    del w.overrides["aegissiem"]
+
+    # Same idempotency key and request, but a different actor must not be able to
+    # drive the retry of an operator's command.
+    with pytest.raises(IdempotencyConflict):
+        await w.dispatch("threat_intel.lookup_ioc", actor={**ACTOR, "type": "service", "id": "someone_else"})
+    assert provider.calls == []
+
+
+@pytest.mark.asyncio
+async def test_same_actor_may_retry(w):
+    provider = w.add_provider("aegissiem", "threat_intel.lookup_ioc")
+    w.overrides["aegissiem"] = Failing(httpx.ReadTimeout)
+    first = await w.dispatch("threat_intel.lookup_ioc")
+    assert first["outcome_unknown"] is True
+    del w.overrides["aegissiem"]
+    again = await w.dispatch("threat_intel.lookup_ioc")
+    assert again["status"] == "completed"
+    assert len(provider.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_provisional_containment_denied_before_forward_does_not_run(w):
+    provider = w.add_provider("aegissiem", "containment.block_ip", "contain")
+
+    # The approval exists as 'denied' by the time the dispatcher re-reads it just
+    # before forwarding (a deny landing in that window).
+    real_create = w.approvals.create_request
+
+    async def create_then_deny(payload):
+        rec = await real_create(payload)
+        w.approvals.requests[-1]["status"] = "denied"
+        return rec
+
+    w.approvals.create_request = create_then_deny
+
+    out = await w.dispatch("containment.block_ip", target={"scope": "local", "identifier": "203.0.113.9"})
+    assert out["status"] == "denied"
+    assert provider.calls == []
     assert provider.envelopes == []
