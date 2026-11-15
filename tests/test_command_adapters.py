@@ -134,6 +134,25 @@ def test_build_receiver_without_secret_returns_none(tmp_path, monkeypatch):
     assert build_receiver_from_env("aegissiem", policy_engine=engine, replay_db_path=tmp_path / "r.db") is None
 
 
+def test_build_receiver_refuses_the_dev_default_secret(tmp_path, monkeypatch):
+    from ecosystem_auth.tokens import DEFAULT_DEV_SECRET
+
+    monkeypatch.setenv("ECOSYSTEM_HMAC_SECRET", DEFAULT_DEV_SECRET)
+    engine = PolicyEngine(authority="hub_synced")
+    assert build_receiver_from_env("aegissiem", policy_engine=engine, replay_db_path=tmp_path / "r.db") is None
+
+
+def test_secret_resolution_does_not_fall_back_to_the_raw_environment(tmp_path, monkeypatch):
+    import ecosystem_hub.command_adapters as adapters
+
+    def rejecting():
+        raise RuntimeError("rejected")
+
+    monkeypatch.setenv("ECOSYSTEM_HMAC_SECRET", "raw-env-value-that-was-rejected")
+    monkeypatch.setattr(adapters, "get_ecosystem_secret", rejecting)
+    assert adapters._resolve_secret() == ""
+
+
 def test_build_receiver_wires_both_verifiers(tmp_path):
     from ecosystem_hub.command_receiver import HubApprovalVerifier
 

@@ -19,6 +19,8 @@ import os
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from ecosystem_auth.tokens import get_ecosystem_secret
+
 from .command_receiver import CommandReceiver, HubApprovalVerifier
 
 logger = logging.getLogger(__name__)
@@ -124,11 +126,8 @@ def build_receiver_from_env(
 
 
 def _resolve_secret() -> str:
-    try:
-        from ecosystem_auth.tokens import get_ecosystem_secret
-    except ImportError:
-        # The auth library is not installed: fall back to the raw environment.
-        return os.environ.get("ECOSYSTEM_HMAC_SECRET", "") or ""
+    # appecosystem-auth is a required dependency, so it is imported at module
+    # level: there is no raw-environment fallback that could bypass its checks.
     try:
         return get_ecosystem_secret() or ""
     except Exception:
