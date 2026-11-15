@@ -39,7 +39,9 @@ for arg in "$@"; do
     esac
 done
 
-run() { echo "  $*"; $DRY || eval "$@"; }
+# Each call passes one command string (it may contain redirects and ||), so it
+# is evaluated as a single string.
+run() { echo "  $*"; $DRY || eval "$*"; }
 
 if $KEEP_DATA; then
     echo "=== Uninstalling ecosystem registry ($OS) — keeping user data ==="

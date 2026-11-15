@@ -1,11 +1,13 @@
 """CLI entry point: python -m ecosystem"""
 
+from __future__ import annotations
+
 import argparse
 import sys
 
 from .commands import (
-    cmd_apps, cmd_install, cmd_logs, cmd_monitor, cmd_partner, cmd_provider,
-    cmd_restart, cmd_secret, cmd_start, cmd_start_all, cmd_status, cmd_stop,
+    cmd_apps, cmd_doctor, cmd_install, cmd_logs, cmd_monitor, cmd_partner, cmd_provider,
+    cmd_restart, cmd_scan, cmd_secret, cmd_start, cmd_start_all, cmd_status, cmd_stop,
     cmd_stop_all, cmd_uninstall,
 )
 
@@ -63,6 +65,25 @@ def main():
     partner_parser.add_argument("--service-names", dest="service_names", default=None,
                                 help="Comma-separated service names the app may manage (add)")
 
+    scan_parser = sub.add_parser("scan", help="Manage and run Zero-Breach-Toolkit endpoint scans")
+    scan_sub = scan_parser.add_subparsers(dest="scan_action")
+
+    scan_run_p = scan_sub.add_parser("run", help="Run an endpoint scan")
+    scan_run_p.add_argument("--device-id", default="local", help="Target device ID (default: local)")
+    scan_run_p.add_argument("--profile", choices=["quick", "full"], default="quick", help="Scan profile (default: quick)")
+    scan_run_p.add_argument("--no-feeds", action="store_true", help="Scan with built-in indicators only (offline)")
+
+    scan_status_p = scan_sub.add_parser("status", help="Show status of a scan")
+    scan_status_p.add_argument("scan_id", nargs="?", default=None, help="Scan ID (default: most recent)")
+
+    scan_list_p = scan_sub.add_parser("list", help="List recent scans")
+    scan_list_p.add_argument("--device-id", default=None, help="Filter by device ID")
+
+    scan_targets_p = scan_sub.add_parser("targets", help="List enrolled scan targets and auto-scan eligibility")
+
+    doctor_parser = sub.add_parser("doctor", help="Hardware, GPU, and runtime diagnostic inspector")
+    doctor_parser.add_argument("component", nargs="?", default="gpu", choices=["gpu"], help="Component to diagnose (default: gpu)")
+
     args = parser.parse_args()
 
     commands = {
@@ -88,6 +109,16 @@ def main():
         sys.exit(cmd_provider(args.action, args.name, args.value))
     elif args.command == "partner":
         sys.exit(cmd_partner(args.action, args.app_id, args.name, args.owner, args.service_names))
+    elif args.command == "scan":
+        sys.exit(cmd_scan(
+            args.scan_action,
+            device_id=getattr(args, "device_id", None),
+            profile=getattr(args, "profile", "quick"),
+            no_feeds=getattr(args, "no_feeds", False),
+            scan_id=getattr(args, "scan_id", None),
+        ))
+    elif args.command == "doctor":
+        sys.exit(cmd_doctor(getattr(args, "component", "gpu")))
     elif args.command in commands:
         sys.exit(commands[args.command]())
     else:

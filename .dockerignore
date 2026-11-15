@@ -44,3 +44,6 @@ WALKTHROUGH.md
 progress-log.md
 PROGRESS.md
 STATUS.md
+**/node_modules
+**/dist
+**/*.egg-info

@@ -15,6 +15,7 @@ WORKDIR /app
 # Install dependencies first for better layer caching.
 COPY pyproject.toml ./
 COPY auth ./auth
+COPY packages ./packages
 COPY registry ./registry
 COPY events ./events
 COPY llm ./llm
@@ -22,7 +23,12 @@ COPY ecosystem_client ./ecosystem_client
 COPY cli ./cli
 COPY ecosystem.yaml ./
 
-RUN pip install --upgrade pip && pip install -e .
+# The workspace packages are installed from this checkout in the same step, so
+# the image always matches the source (and builds before a release is on PyPI).
+RUN pip install --upgrade pip && pip install \
+        -e auth/python -e packages/ecosystem-ai -e packages/ecosystem-client \
+        -e packages/ecosystem-policy -e packages/ecosystem-hub -e packages/ecosystem-compute \
+        -e packages/ecosystem-voice -e .
 
 # Run as a non-root user.
 RUN useradd --create-home --uid 10001 ecosystem \

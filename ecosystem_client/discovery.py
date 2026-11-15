@@ -67,6 +67,8 @@ class DiscoveryManager:
         self._mode: DiscoveryMode | None = None
         self._peers: dict[str, dict[str, Any]] = {}
         self._mdns_peers: list[dict] = []
+        self.last_status_code: int | None = None
+        self.is_unauthorized: bool = False
 
     @property
     def mode(self) -> DiscoveryMode:
@@ -155,18 +157,25 @@ class DiscoveryManager:
 
     async def _fetch_registry_services(self) -> list[dict]:
         """Fetch all services from the registry, sorted by priority (highest first)."""
+        if self.is_unauthorized:
+            return []
         try:
             sign_request = _require_auth().sign_request
             url = f"{self.config.registry_url}/services"
             headers = sign_request("GET", url, self.config.hmac_secret)
             async with httpx.AsyncClient(timeout=self.config.request_timeout) as client:
                 resp = await client.get(url, headers=headers)
+                self.last_status_code = resp.status_code
                 resp.raise_for_status()
                 services = resp.json()
                 # Sort by priority descending so highest-priority peers are first
                 services.sort(key=lambda s: s.get("priority", 0), reverse=True)
                 return services
         except Exception as e:
+            if isinstance(e, httpx.HTTPStatusError):
+                self.last_status_code = e.response.status_code
+                if e.response.status_code == 401:
+                    self.is_unauthorized = True
             logger.warning(f"Failed to fetch services from registry: {e}")
             return []
 
@@ -202,10 +211,19 @@ class DiscoveryManager:
                     json=payload,
                     headers=headers,
                 )
+                self.last_status_code = resp.status_code
                 resp.raise_for_status()
+                self.is_unauthorized = False
                 logger.info(f"Registered with ecosystem registry as '{name}'")
                 return True
         except Exception as e:
+            if isinstance(e, httpx.HTTPStatusError):
+                self.last_status_code = e.response.status_code
+                if e.response.status_code == 401:
+                    self.is_unauthorized = True
+            elif isinstance(e, ValueError) and "secret" in str(e).lower():
+                self.is_unauthorized = True
+                self.last_status_code = 401
             logger.warning(f"Failed to register with registry: {e}")
             return False
 

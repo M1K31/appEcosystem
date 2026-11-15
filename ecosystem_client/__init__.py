@@ -16,7 +16,7 @@ from .peer import Peer
 # Keep in step with packages/ecosystem-client/pyproject.toml. This drifted to
 # 0.1.0 while pyproject said 0.3.1, so anything reporting the runtime version
 # (logs, diagnostics, compatibility checks) named a release that never shipped.
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 
 logger = logging.getLogger(__name__)
 
@@ -67,9 +67,33 @@ class EcosystemClient:
         self._refresh_task: asyncio.Task | None = None
         self._advertised_host: str | None = None  # last host we registered with
 
+        # Backoff tracking for registration failures (401 Unauthorized / offline)
+        self._consecutive_auth_failures: int = 0
+        self._next_register_time: float = 0.0
+        self._base_backoff: float = 10.0
+        self._max_backoff: float = 300.0
+
     @property
     def mode(self) -> DiscoveryMode:
         return self._discovery.mode
+
+    @property
+    def is_authenticated(self) -> bool:
+        """True if client is not currently backed off or rejected with 401."""
+        return not self._discovery.is_unauthorized and self._consecutive_auth_failures == 0
+
+    @property
+    def registration_backoff(self) -> float:
+        """Seconds remaining before next registration attempt, or 0.0."""
+        import time
+        return max(0.0, self._next_register_time - time.monotonic())
+
+    def reset_backoff(self) -> None:
+        """Reset exponential backoff so the next refresh attempts registration immediately."""
+        self._consecutive_auth_failures = 0
+        self._next_register_time = 0.0
+        self._discovery.is_unauthorized = False
+        self._discovery.last_status_code = None
 
     async def start(self) -> None:
         """Start the ecosystem client: detect mode, register, discover peers."""
@@ -80,7 +104,13 @@ class EcosystemClient:
         self._publisher._mode = mode
 
         if mode == DiscoveryMode.REGISTRY:
-            await self._register_self()
+            registered = await self._register_self(force=True)
+            if not registered and self._discovery.is_unauthorized:
+                logger.warning(
+                    f"Ecosystem registry rejected registration with 401 Unauthorized for '{self._service_name}'. "
+                    "Operating in standalone mode until credentials are valid."
+                )
+                self._publisher._mode = DiscoveryMode.STANDALONE
 
         # Discover peers
         await self._refresh_peers()
@@ -156,11 +186,26 @@ class EcosystemClient:
         except Exception:
             return self._get_local_ip()
 
-    async def _register_self(self) -> bool:
+    async def _register_self(self, force: bool = False) -> bool:
         """(Re-)register this service with the registry using the current
         advertise host. Idempotent — the registry upserts by name, so calling
         this on an interval acts as a heartbeat that keeps our IP and last-seen
-        fresh and re-adds us if we were pruned while unreachable."""
+        fresh and re-adds us if we were pruned while unreachable.
+
+        If a previous registration attempt failed with 401 Unauthorized,
+        respects exponential backoff (10s -> 20s -> 40s -> ... up to 300s max)
+        unless force=True.
+        """
+        import time
+        now = time.monotonic()
+        if not force and now < self._next_register_time:
+            remaining = int(self._next_register_time - now)
+            logger.debug(
+                f"Skipping registration heartbeat for '{self._service_name}': "
+                f"backing off for {remaining}s due to previous authentication failure"
+            )
+            return False
+
         host = await self._current_advertise_host()
         webhook_url = f"http://{host}:{self._service_port}{self._config.webhook_path}"
         all_subs = list(set(self._subscriptions + self._subscriber.subscriptions))
@@ -175,7 +220,24 @@ class EcosystemClient:
         )
         if ok:
             self._advertised_host = host
-        return ok
+            if self._consecutive_auth_failures > 0:
+                logger.info(
+                    f"Ecosystem registration recovered and authenticated for '{self._service_name}'"
+                )
+            self._consecutive_auth_failures = 0
+            self._next_register_time = 0.0
+            self._discovery.is_unauthorized = False
+            return True
+        else:
+            if self._discovery.is_unauthorized or self._discovery.last_status_code == 401:
+                self._consecutive_auth_failures += 1
+                backoff = min(self._base_backoff * (2 ** (self._consecutive_auth_failures - 1)), self._max_backoff)
+                self._next_register_time = now + backoff
+                logger.warning(
+                    f"Ecosystem registration 401 Unauthorized for '{self._service_name}'; "
+                    f"backing off retry for {backoff:.0f}s (failure count: {self._consecutive_auth_failures})"
+                )
+            return False
 
     async def _refresh_peers(self) -> None:
         """Refresh the peer list from discovery."""
@@ -214,14 +276,26 @@ class EcosystemClient:
                     )
                     self._publisher._mode = new_mode
                 if new_mode == DiscoveryMode.REGISTRY:
-                    prev = self._advertised_host
-                    await self._register_self()  # heartbeat / IP refresh
-                    if prev and prev != self._advertised_host:
-                        logger.info(
-                            f"Advertise host changed {prev} -> {self._advertised_host}; "
-                            "re-registered with the new address"
+                    if self._discovery.is_unauthorized and self.registration_backoff > 0:
+                        logger.debug(
+                            f"Periodic refresh: skipping registry heartbeat (backoff active: {self.registration_backoff:.1f}s remaining)"
                         )
-                await self._refresh_peers()
+                    else:
+                        prev = self._advertised_host
+                        registered = await self._register_self()  # heartbeat / IP refresh
+                        if registered:
+                            self._publisher._mode = DiscoveryMode.REGISTRY
+                            if prev and prev != self._advertised_host:
+                                logger.info(
+                                    f"Advertise host changed {prev} -> {self._advertised_host}; "
+                                    "re-registered with the new address"
+                                )
+                        else:
+                            if self._discovery.is_unauthorized:
+                                self._publisher._mode = DiscoveryMode.STANDALONE
+
+                if not self._discovery.is_unauthorized:
+                    await self._refresh_peers()
             except Exception as e:
                 logger.debug(f"Periodic refresh error: {e}")
 

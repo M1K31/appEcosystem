@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=77.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "appecosystem-voice"
+version = "0.1.0"
+description = "Tier-scaled local speech recognition and voice intent parsing for appEcosystem"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "Mikel Smart" }]
+dependencies = [
+    "fastapi>=0.100.0",   # service.py builds an APIRouter at import time
+]
+
+[project.optional-dependencies]
+# Local speech-to-text. Without it the service answers that voice is unavailable.
+stt = ["faster-whisper>=1.0"]
+# Policy-gated intents. Without it voice intents are parsed but never executed.
+policy = ["appecosystem-policy>=0.3.0"]
+
+[tool.setuptools.packages.find]
+include = ["ecosystem_voice*"]
+

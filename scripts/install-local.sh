@@ -65,11 +65,19 @@ mkdir -p "$PREFIX" "$DATA"
 "$VENV/bin/pip" install --upgrade pip wheel >/dev/null
 # Non-editable so the importable code lives on the internal disk, not the repo volume.
 "$VENV/bin/pip" install "$REPO" "$REPO/auth/python" \
-                        "$REPO/packages/ecosystem-ai" "$REPO/packages/ecosystem-client"
+                        "$REPO/packages/ecosystem-ai" "$REPO/packages/ecosystem-client" \
+                        "$REPO/packages/ecosystem-hub" "$REPO/packages/ecosystem-policy" \
+                        "$REPO/packages/ecosystem-compute" "$REPO/packages/ecosystem-voice"
 
-# Provision the shared secret (file-backed; reused if it already exists).
+# Provision the shared secret and config (file-backed; reused if it already exists).
 # HOME is pinned to the service account's home so a sudo install does not write
 # the secret into /root/.config, where the running service could not read it.
+mkdir -p "$RUN_HOME/.config/ecosystem"
+[ -f "$RUN_HOME/.config/ecosystem/ecosystem.yaml" ] || cp "$CONFIG" "$RUN_HOME/.config/ecosystem/ecosystem.yaml"
+# Seed static UI assets to internal disk for the Control Plane Web UI
+mkdir -p "$PREFIX/theme" "$PREFIX/packages/ecosystem-ui-controls/dist"
+[ -d "$REPO/theme" ] && cp -r "$REPO/theme/"* "$PREFIX/theme/" 2>/dev/null || true
+[ -d "$REPO/packages/ecosystem-ui-controls/dist" ] && cp -r "$REPO/packages/ecosystem-ui-controls/dist/"* "$PREFIX/packages/ecosystem-ui-controls/dist/" 2>/dev/null || true
 HOME="$RUN_HOME" "$VENV/bin/python" \
     -c "from ecosystem_auth.tokens import ensure_ecosystem_secret; ensure_ecosystem_secret()" \
     && echo "==> Shared secret ready ($RUN_HOME/.config/ecosystem/secret.env)"
@@ -169,7 +177,7 @@ esac
 # preferred security-analysis backend. Prepare its runtime so it is available
 # when wanted, but do NOT start it — launchd owns that service and enabling it
 # stays an explicit, separate step. Never fatal: the registry runs without it.
-HARNESS="${CYBER_HARNESS_PATH:-${ECOSYSTEM_BASE_PATH:-$REPO/..}/CybersecurityTeam/cyber-agents}"
+HARNESS="${CYBER_HARNESS_PATH:-${ECOSYSTEM_BASE_PATH:-$REPO/..}/cyber-agents}"
 if [ -n "${ECOSYSTEM_SKIP_HARNESS:-}" ]; then
     echo "==> ECOSYSTEM_SKIP_HARNESS=1 — skipping cyber-harness setup."
 elif [ -x "$HARNESS/scripts/install-local.sh" ]; then

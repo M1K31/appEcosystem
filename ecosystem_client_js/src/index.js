@@ -1,7 +1,32 @@
+"use strict";
+
 const { EcosystemConfig } = require("./config");
 const { DiscoveryManager, DiscoveryMode } = require("./discovery");
 const { EventPublisher, EventSubscriber } = require("./events");
 const { Peer } = require("./peer");
+const { AIProfileClient } = require("./ai_profile");
+const { HubClient, defaultJsOutboxPath } = require("./hub");
+const {
+    generateUlid,
+    isUlid,
+    ulidTimestampMs,
+    resolveDeviceId,
+} = require("./ulid");
+const {
+    SchemaValidationError,
+    EventType,
+    listSchemas,
+    loadSchema,
+    validateAgainstSchema,
+    assertValidSchema,
+    canonicalSignableEvent,
+    buildEventEnvelopeV2,
+    verifyEventEnvelope,
+    canonicalSignableCommand,
+    buildCommandEnvelope,
+    verifyCommandEnvelope,
+    buildNotificationEnvelope,
+} = require("./contracts");
 const os = require("os");
 
 class EcosystemClient {
@@ -68,8 +93,8 @@ class EcosystemClient {
         return null;
     }
 
-    async publish(eventType, data) {
-        return this._publisher.publish(eventType, data);
+    async publish(eventType, data, opts) {
+        return this._publisher.publish(eventType, data, opts);
     }
 
     on(eventPattern, handler) {
@@ -78,11 +103,24 @@ class EcosystemClient {
     }
 
     async handleWebhook(envelope) {
-        await this._subscriber.dispatch(envelope);
+        return this._subscriber.dispatch(envelope);
     }
 
     async _refreshPeers() {
         this._peers = await this._discovery.getPeers();
+        if (this._discovery.mode === DiscoveryMode.PEER_TO_PEER) {
+            const webhooks = {};
+            for (const [name, info] of Object.entries(this._peers)) {
+                const baseUrl = (info && info.base_url) || "";
+                if (baseUrl) {
+                    webhooks[name] = {
+                        webhook_url: `${baseUrl.replace(/\/+$/, "")}${this.config.webhookPath}`,
+                        subscriptions: info.subscriptions || ["*"],
+                    };
+                }
+            }
+            this._publisher.setPeerWebhooks(webhooks);
+        }
     }
 
     _getLocalIp() {
@@ -96,4 +134,32 @@ class EcosystemClient {
     }
 }
 
-module.exports = { EcosystemClient, DiscoveryMode };
+module.exports = {
+    EcosystemClient,
+    EcosystemConfig,
+    DiscoveryManager,
+    DiscoveryMode,
+    EventPublisher,
+    EventSubscriber,
+    Peer,
+    AIProfileClient,
+    HubClient,
+    defaultJsOutboxPath,
+    EventType,
+    SchemaValidationError,
+    generateUlid,
+    isUlid,
+    ulidTimestampMs,
+    resolveDeviceId,
+    listSchemas,
+    loadSchema,
+    validateAgainstSchema,
+    assertValidSchema,
+    canonicalSignableEvent,
+    buildEventEnvelopeV2,
+    verifyEventEnvelope,
+    canonicalSignableCommand,
+    buildCommandEnvelope,
+    verifyCommandEnvelope,
+    buildNotificationEnvelope,
+};

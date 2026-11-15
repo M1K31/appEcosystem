@@ -6,7 +6,7 @@
  * returns null when the registry is unreachable so the UI degrades gracefully.
  */
 
-const { signRequest } = require("@smartindustriesllc/ecosystem-auth");
+const { signRequest } = require("./_auth");
 
 class AIProfileClient {
   /**

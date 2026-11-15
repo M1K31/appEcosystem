@@ -109,7 +109,7 @@ class EventBus:
             "Content-Type": "application/json",
             "X-Ecosystem-Signature": event.signature or "",
             "X-Ecosystem-Event": event.type,
-            "X-Ecosystem-Source": event.source,
+            "X-Ecosystem-Source": str(event.source),
         }
 
         for attempt in range(1, self.retry_attempts + 1):

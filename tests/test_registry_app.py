@@ -166,6 +166,7 @@ class TestAIProfileSync:
         body = resp.json()
         assert body["default_provider"] == "ollama"
         assert body["selected_model"] == "auto"
+        assert body["allow_cloud_fallback"] is False
         assert body["version"] >= 1
 
     def test_put_requires_auth(self, client):
@@ -236,3 +237,25 @@ class TestDependencyGuards:
         with pytest.raises(HTTPException) as exc:
             get_registry(_Req())
         assert exc.value.status_code == 503
+
+
+class TestFailClosedStartup:
+    def test_refuses_to_start_without_secret(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("ECOSYSTEM_HMAC_SECRET", raising=False)
+        monkeypatch.setenv("ECOSYSTEM_SECRET_FILE", str(tmp_path / "missing_secret.env"))
+        monkeypatch.setenv("ECOSYSTEM_REGISTRY_FILE", str(tmp_path / "registry.json"))
+        monkeypatch.setenv("ECOSYSTEM_CONFIG", str(tmp_path / "missing.yaml"))
+        with pytest.raises(RuntimeError, match="No ecosystem secret found"):
+            with TestClient(app):
+                pass
+
+    def test_refuses_to_start_with_default_dev_secret(self, tmp_path, monkeypatch):
+        from ecosystem_auth.tokens import DEFAULT_DEV_SECRET
+
+        monkeypatch.setenv("ECOSYSTEM_HMAC_SECRET", DEFAULT_DEV_SECRET)
+        monkeypatch.setenv("ECOSYSTEM_SECRET_FILE", str(tmp_path / "missing_secret.env"))
+        monkeypatch.setenv("ECOSYSTEM_REGISTRY_FILE", str(tmp_path / "registry.json"))
+        monkeypatch.setenv("ECOSYSTEM_CONFIG", str(tmp_path / "missing.yaml"))
+        with pytest.raises(RuntimeError, match="Refusing the known development default secret"):
+            with TestClient(app):
+                pass
