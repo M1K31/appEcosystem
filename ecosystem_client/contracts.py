@@ -147,7 +147,15 @@ def _matches_json_type(value: Any, expected: str) -> bool:
     return True
 
 
-def _validate_node(value: Any, schema: dict[str, Any], path: str, errors: list[str]) -> None:
+def _validate_node(value: Any, schema: Any, path: str, errors: list[str]) -> None:
+    # Boolean schemas are schemas: true accepts every instance, false rejects every one.
+    if schema is True:
+        return
+    if schema is False:
+        errors.append(f"{path}: no value is allowed here")
+        return
+    if not isinstance(schema, dict):
+        return
     expected_type = schema.get("type")
     if expected_type is not None:
         allowed_types = expected_type if isinstance(expected_type, list) else [expected_type]
@@ -155,23 +163,19 @@ def _validate_node(value: Any, schema: dict[str, Any], path: str, errors: list[s
             errors.append(f"{path}: expected type {allowed_types}, got {type(value).__name__}")
             return
 
-    if value is None:
-        return
-
-    # Combinators: every branch is validated in a scratch list so a branch that
-    # fails reports only through the combinator's own message.
-    for i, sub in enumerate(schema.get("allOf") or []):
-        if isinstance(sub, dict):
-            _validate_node(value, sub, path, errors)
-    any_of = [s for s in (schema.get("anyOf") or []) if isinstance(s, dict)]
+    # Combinators apply to every instance, null included. Each branch is validated
+    # in a scratch list so a failing branch reports only through the combinator.
+    for sub in _subschemas(schema.get("allOf")):
+        _validate_node(value, sub, path, errors)
+    any_of = _subschemas(schema.get("anyOf"))
     if any_of and not any(_passes(value, sub, path) for sub in any_of):
         errors.append(f"{path}: matches none of the anyOf alternatives")
-    one_of = [s for s in (schema.get("oneOf") or []) if isinstance(s, dict)]
+    one_of = _subschemas(schema.get("oneOf"))
     if one_of:
         matched = sum(1 for sub in one_of if _passes(value, sub, path))
         if matched != 1:
             errors.append(f"{path}: must match exactly one oneOf alternative, matched {matched}")
-    if isinstance(schema.get("not"), dict) and _passes(value, schema["not"], path):
+    if "not" in schema and isinstance(schema["not"], (dict, bool)) and _passes(value, schema["not"], path):
         errors.append(f"{path}: must not match the 'not' schema")
 
     if "const" in schema and value != schema["const"]:
@@ -211,7 +215,7 @@ def _validate_node(value: Any, schema: dict[str, Any], path: str, errors: list[s
         if "maxItems" in schema and len(value) > int(schema["maxItems"]):
             errors.append(f"{path}: array has more than {schema['maxItems']} items")
         item_schema = schema.get("items")
-        if isinstance(item_schema, dict):
+        if isinstance(item_schema, (dict, bool)):
             for idx, item in enumerate(value):
                 _validate_node(item, item_schema, f"{path}[{idx}]", errors)
 
@@ -219,19 +223,31 @@ def _validate_node(value: Any, schema: dict[str, Any], path: str, errors: list[s
         for req_key in schema.get("required", []):
             if req_key not in value:
                 errors.append(f"{path}: missing required property {req_key!r}")
-        props = schema.get("properties", {})
-        # No properties declared + additionalProperties false means "no keys at
-        # all" (e.g. a command that takes no parameters), not "anything goes".
-        if schema.get("additionalProperties") is False:
-            for key in value:
-                if key not in props:
+        props = schema.get("properties") or {}
+        patterns = schema.get("patternProperties") or {}
+        additional = schema.get("additionalProperties", True)
+        for key, item in value.items():
+            if key in props:
+                _validate_node(item, props[key], f"{path}.{key}", errors)
+            matched = [sub for pattern, sub in patterns.items() if re.search(pattern, key)]
+            for sub in matched:
+                _validate_node(item, sub, f"{path}.{key}", errors)
+            if key not in props and not matched:
+                # A key no property or pattern names. With additionalProperties false,
+                # even when nothing is declared (a command that takes no parameters),
+                # it is not allowed; a schema there validates it instead.
+                if additional is False:
                     errors.append(f"{path}: unexpected property {key!r}")
-        for key, subschema in props.items():
-            if key in value and isinstance(subschema, dict):
-                _validate_node(value[key], subschema, f"{path}.{key}", errors)
+                elif isinstance(additional, dict):
+                    _validate_node(item, additional, f"{path}.{key}", errors)
 
 
-def _passes(value: Any, schema: dict[str, Any], path: str) -> bool:
+def _subschemas(items: Any) -> list[Any]:
+    """The usable subschemas of a combinator: objects and booleans, never silently dropped."""
+    return [s for s in (items or []) if isinstance(s, (dict, bool))]
+
+
+def _passes(value: Any, schema: Any, path: str) -> bool:
     """Whether `value` satisfies `schema`, without recording that schema's errors."""
     scratch: list[str] = []
     _validate_node(value, schema, path, scratch)
