@@ -34,7 +34,7 @@ from ecosystem_hub.command_common import (
     policy_target,
     request_digest,
 )
-from ecosystem_hub.command_store import CommandStore
+from ecosystem_hub.command_store import CommandStore, IdempotencyConflict
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,12 @@ PROVIDER_STATUSES = frozenset({"completed", "accepted", "failed", "denied"})
 DEFAULT_COMMAND_PATH = "/ecosystem/commands"
 DEFAULT_TIMEOUT_SECONDS = 30.0
 MAX_ENVELOPE_TTL_SECONDS = 300.0
+
+
+def _actor_key(actor: dict[str, Any]) -> tuple:
+    """The identity fields of an actor that an idempotency key is bound to."""
+    actor = actor or {}
+    return (actor.get("app"), actor.get("id"), actor.get("type"), actor.get("auth_method"))
 
 
 class InvalidCommand(ValueError):
@@ -192,6 +198,13 @@ class CommandDispatcher:
             detail={"identity": identity, "context": self._safe_context(actor, context)},
         )
         if not created:
+            # The idempotency key is bound to the actor as well as the request: a
+            # different caller cannot drive the retry of (for example) an
+            # operator's command by reusing its key.
+            if _actor_key(actor) != _actor_key(record.get("actor") or {}):
+                raise IdempotencyConflict(
+                    f"idempotency_key '{idempotency_key}' belongs to a different actor"
+                )
             # Same key, same request. Only an unknown outcome is worth asking about again;
             # the provider answers it from its replay store without running anything twice.
             if record["status"] == "failed" and record["outcome_unknown"] and record.get("provider_app"):
@@ -247,6 +260,24 @@ class CommandDispatcher:
                     )
                 )
             # Provisional containment: act now, the approval decides whether it stays.
+            # Re-read the approval right before forwarding: a deny or expiry in the
+            # window between opening it and here means nothing should be sent.
+            current = approval
+            lookup = getattr(self._approvals, "get", None)
+            if callable(lookup):
+                fetched = lookup(approval["approval_id"])
+                if isinstance(fetched, dict):
+                    current = fetched
+            if str(current.get("status")) not in ("pending", "approved"):
+                return self.public_view(
+                    self.store.update(
+                        command_id,
+                        status="denied",
+                        error=f"approval {current.get('status')} before the command was sent",
+                        event="denied",
+                        detail={"approval_id": approval["approval_id"]},
+                    )
+                )
             self.store.update(
                 command_id,
                 approval_id=approval["approval_id"],
