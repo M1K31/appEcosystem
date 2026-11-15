@@ -35,7 +35,7 @@ dependencies = [
 provider = ["fastapi>=0.100.0"]
 provider-aiohttp = ["aiohttp>=3.9.0"]
 provider-flask = ["flask>=2.3.0"]
-dev = ["pytest>=7.0", "pytest-asyncio>=0.21"]
+dev = ["pytest>=7.0", "pytest-asyncio>=0.21", "aiohttp>=3.9.0", "flask>=2.3.0"]
 
 [project.urls]
 Homepage = "https://github.com/M1K31/appEcosystem"

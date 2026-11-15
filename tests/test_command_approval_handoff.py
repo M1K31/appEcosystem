@@ -353,30 +353,66 @@ async def test_forged_incident_claim_sent_directly_is_dropped(hub):
 # ---- WP1b Task 1: the revert event names its command and provider --------------
 
 
-def test_revert_event_names_command_and_provider(hub):
-    provider = hub.add_verified_provider("aegissiem", "containment.block_ip", "contain")
+class _CapturingBus:
+    def __init__(self):
+        self.published = []
+
+    async def publish(self, envelope):
+        self.published.append(envelope)
+
+
+def _approval_service(tmp_path, bus):
+    from types import SimpleNamespace
+
+    from registry.approvals import ApprovalService
+
+    policy = SimpleNamespace(policy_version=3, mode="normal", frozen=False)
+    return ApprovalService(db_path=tmp_path / "approvals.db", step_up=SimpleNamespace(),
+                           policy_engine=policy, event_bus=bus)
+
+
+_REVERTED_RECORD = {
+    "approval_id": "APPROVAL1",
+    "requester_service": "ai_for_survival",
+    "action": "containment.block_ip",
+    "revert_plan": {"action": "revert_containment.block_ip"},
+    "status": "denied",
+}
+
+
+@pytest.mark.asyncio
+async def test_revert_event_names_command_and_provider(tmp_path):
+    bus = _CapturingBus()
+    svc = _approval_service(tmp_path, bus)
+    svc.command_lookup = lambda approval_id: ("01HCOMMANDID0000000000000A", "aegissiem")
+
+    await svc._broadcast_revert(dict(_REVERTED_RECORD))
+
+    reverted = [e for e in bus.published if getattr(e, "type", None) == "containment.reverted"]
+    assert len(reverted) == 1, "a containment.reverted event must be published"
+    assert reverted[0].data["command_id"] == "01HCOMMANDID0000000000000A"
+    assert reverted[0].data["provider"] == "aegissiem"
+
+
+@pytest.mark.asyncio
+async def test_revert_event_has_no_command_for_a_plain_approval(tmp_path):
+    bus = _CapturingBus()
+    svc = _approval_service(tmp_path, bus)
+    svc.command_lookup = lambda approval_id: None
+
+    await svc._broadcast_revert(dict(_REVERTED_RECORD))
+
+    reverted = [e for e in bus.published if getattr(e, "type", None) == "containment.reverted"]
+    assert len(reverted) == 1
+    assert reverted[0].data["command_id"] is None and reverted[0].data["provider"] is None
+
+
+def test_hub_wires_command_lookup_from_the_command_store(hub):
+    """End to end: the running hub resolves an approval to the command it gated."""
+    hub.add_verified_provider("aegissiem", "containment.block_ip", "contain")
     doc = hub.dispatch(
         hub.body("containment.block_ip", target={"scope": "local", "identifier": "203.0.113.9"}, parameters={})
     ).json()
     assert doc["status"] == "completed" and doc["approval_id"]
-
-    events = []
-    bus = hub.state.event_bus
-    if bus is not None:
-        orig = bus.publish
-
-        async def capture(envelope):
-            events.append(envelope)
-            return await orig(envelope)
-
-        bus.publish = capture
-
-    hub.deny(doc["approval_id"])
-    # The provisional containment's TTL expiry (or deny) reverts it; the broadcast
-    # must carry the command id and the provider so a provider can act on its own.
-    expired = hub.state.approval_service.expire_due(now=__import__("time").time() + 10 ** 7)
-    reverted = [e for e in events if getattr(e, "type", None) == "containment.reverted"]
-    if reverted:
-        data = reverted[-1].data
-        assert data["command_id"] == doc["command_id"]
-        assert data["provider"] == "aegissiem"
+    assert hub.state.approval_service.command_lookup(doc["approval_id"]) == (doc["command_id"], "aegissiem")
+    assert hub.state.approval_service.command_lookup("no-such-approval") is None

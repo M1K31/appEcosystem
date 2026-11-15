@@ -71,15 +71,16 @@ class FakeApprovals:
         self.requests: list = []
 
     async def create_request(self, payload):
-        self.requests.append(payload)
-        rec = {"approval_id": f"APPROVAL{len(self.requests)}", "status": "pending", **payload}
-        self.requests[-1] = rec
-        return rec
+        rec = {"approval_id": f"APPROVAL{len(self.requests) + 1}", "status": "pending", **payload}
+        self.requests.append(rec)
+        # Return a snapshot: changing the stored status later must only be visible
+        # through get(), so the dispatcher's pre-forward re-read is what catches it.
+        return dict(rec)
 
     def get(self, approval_id):
         for rec in self.requests:
             if rec.get("approval_id") == approval_id:
-                return rec
+                return dict(rec)
         return None
 
 

@@ -54,16 +54,25 @@ def build_flask_view(
     awaited there. A handler that does not answer within `timeout` returns a
     `failed` body with `outcome_unknown` and HTTP 504 — the command may still be
     running on the loop, so its outcome is genuinely unknown.
+
+    The coroutine is NOT cancelled on timeout: cancelling it would interrupt the
+    receiver after it has reserved its replay key but before it records the
+    outcome, leaving that key stuck as "still running". It is left to finish, so
+    the replay store records the real outcome and a retry with the same
+    idempotency key gets it.
     """
+    from concurrent.futures import TimeoutError as FutureTimeoutError
+
     from flask import request
 
     def view() -> tuple[dict[str, Any], int]:
         envelope = request.get_json(silent=True)
         future = asyncio.run_coroutine_threadsafe(receiver.handle(envelope), loop)
         try:
+            # concurrent.futures.TimeoutError is not a builtin TimeoutError on
+            # Python 3.10, so it is caught explicitly.
             status_code, body = future.result(timeout=timeout)
-        except TimeoutError:
-            future.cancel()
+        except FutureTimeoutError:
             command_id = envelope.get("id") if isinstance(envelope, dict) else None
             return (
                 {
@@ -117,7 +126,14 @@ def build_receiver_from_env(
 def _resolve_secret() -> str:
     try:
         from ecosystem_auth.tokens import get_ecosystem_secret
-
+    except ImportError:
+        # The auth library is not installed: fall back to the raw environment.
+        return os.environ.get("ECOSYSTEM_HMAC_SECRET", "") or ""
+    try:
         return get_ecosystem_secret() or ""
     except Exception:
-        return os.environ.get("ECOSYSTEM_HMAC_SECRET", "") or ""
+        # get_ecosystem_secret is fail-closed: it rejects a missing or invalid
+        # secret (e.g. the public dev default). Do not fall back to the raw
+        # environment value, which would defeat that check and build a receiver
+        # with an insecure secret; treat it as no secret configured.
+        return ""
