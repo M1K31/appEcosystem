@@ -157,6 +157,22 @@ def _validate_node(value: Any, schema: dict[str, Any], path: str, errors: list[s
     if value is None:
         return
 
+    # Combinators: every branch is validated in a scratch list so a branch that
+    # fails reports only through the combinator's own message.
+    for i, sub in enumerate(schema.get("allOf") or []):
+        if isinstance(sub, dict):
+            _validate_node(value, sub, path, errors)
+    any_of = [s for s in (schema.get("anyOf") or []) if isinstance(s, dict)]
+    if any_of and not any(_passes(value, sub, path) for sub in any_of):
+        errors.append(f"{path}: matches none of the anyOf alternatives")
+    one_of = [s for s in (schema.get("oneOf") or []) if isinstance(s, dict)]
+    if one_of:
+        matched = sum(1 for sub in one_of if _passes(value, sub, path))
+        if matched != 1:
+            errors.append(f"{path}: must match exactly one oneOf alternative, matched {matched}")
+    if isinstance(schema.get("not"), dict) and _passes(value, schema["not"], path):
+        errors.append(f"{path}: must not match the 'not' schema")
+
     if "const" in schema and value != schema["const"]:
         errors.append(f"{path}: expected const {schema['const']!r}, got {value!r}")
 
@@ -166,16 +182,26 @@ def _validate_node(value: Any, schema: dict[str, Any], path: str, errors: list[s
     if isinstance(value, str):
         if "minLength" in schema and len(value) < int(schema["minLength"]):
             errors.append(f"{path}: string shorter than minLength {schema['minLength']}")
+        if "maxLength" in schema and len(value) > int(schema["maxLength"]):
+            errors.append(f"{path}: string longer than maxLength {schema['maxLength']}")
         if "pattern" in schema and not re.search(schema["pattern"], value):
             errors.append(f"{path}: {value!r} does not match pattern {schema['pattern']!r}")
 
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         if "minimum" in schema and value < schema["minimum"]:
             errors.append(f"{path}: {value} < minimum {schema['minimum']}")
+        if "maximum" in schema and value > schema["maximum"]:
+            errors.append(f"{path}: {value} > maximum {schema['maximum']}")
+        if "exclusiveMinimum" in schema and value <= schema["exclusiveMinimum"]:
+            errors.append(f"{path}: {value} <= exclusiveMinimum {schema['exclusiveMinimum']}")
+        if "exclusiveMaximum" in schema and value >= schema["exclusiveMaximum"]:
+            errors.append(f"{path}: {value} >= exclusiveMaximum {schema['exclusiveMaximum']}")
 
     if isinstance(value, list):
         if "minItems" in schema and len(value) < int(schema["minItems"]):
             errors.append(f"{path}: array has fewer than {schema['minItems']} items")
+        if "maxItems" in schema and len(value) > int(schema["maxItems"]):
+            errors.append(f"{path}: array has more than {schema['maxItems']} items")
         item_schema = schema.get("items")
         if isinstance(item_schema, dict):
             for idx, item in enumerate(value):
@@ -186,13 +212,22 @@ def _validate_node(value: Any, schema: dict[str, Any], path: str, errors: list[s
             if req_key not in value:
                 errors.append(f"{path}: missing required property {req_key!r}")
         props = schema.get("properties", {})
-        if schema.get("additionalProperties") is False and props:
+        # No properties declared + additionalProperties false means "no keys at
+        # all" (e.g. a command that takes no parameters), not "anything goes".
+        if schema.get("additionalProperties") is False:
             for key in value:
                 if key not in props:
                     errors.append(f"{path}: unexpected property {key!r}")
         for key, subschema in props.items():
             if key in value and isinstance(subschema, dict):
                 _validate_node(value[key], subschema, f"{path}.{key}", errors)
+
+
+def _passes(value: Any, schema: dict[str, Any], path: str) -> bool:
+    """Whether `value` satisfies `schema`, without recording that schema's errors."""
+    scratch: list[str] = []
+    _validate_node(value, schema, path, scratch)
+    return not scratch
 
 
 def validate_against_schema(

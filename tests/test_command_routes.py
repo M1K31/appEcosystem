@@ -380,3 +380,26 @@ def test_owner_reads_every_command(hub):
     cid = hub.dispatch(hub.body()).json()["command_id"]
     path = f"/commands/{cid}"
     assert hub.client.get(path, headers=sign_request("GET", path, SECRET)).status_code == 200
+
+
+def test_inputs_schema_bounds_and_one_of_are_enforced_at_the_hub(hub):
+    """maximum, maxLength and oneOf in an inputs_schema are checked before anything is stored."""
+    provider = hub.add_provider(
+        "aegissiem", "threat_intel.lookup_ioc",
+        inputs_schema={
+            "type": "object",
+            "properties": {
+                "indicator": {"type": "string", "maxLength": 20},
+                "top_k": {"type": "integer", "minimum": 1, "maximum": 10},
+                "text": {"type": "string"},
+            },
+            "additionalProperties": False,
+            "oneOf": [{"required": ["indicator"]}, {"required": ["text"]}],
+        },
+    )
+    assert hub.dispatch(hub.body(parameters={"indicator": "x", "top_k": 11})).status_code == 422
+    assert hub.dispatch(hub.body(parameters={"indicator": "x" * 21})).status_code == 422
+    assert hub.dispatch(hub.body(parameters={"indicator": "x", "text": "both"})).status_code == 422
+    assert hub.dispatch(hub.body(parameters={})).status_code == 422
+    assert provider.envelopes == []
+    assert hub.dispatch(hub.body(parameters={"indicator": "x", "top_k": 10})).status_code == 200
