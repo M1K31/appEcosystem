@@ -380,3 +380,27 @@ def test_owner_reads_every_command(hub):
     cid = hub.dispatch(hub.body()).json()["command_id"]
     path = f"/commands/{cid}"
     assert hub.client.get(path, headers=sign_request("GET", path, SECRET)).status_code == 200
+
+
+def test_app_key_caller_needs_the_capabilitys_grant(hub):
+    """An app key must hold the manifest's required_grant in its scopes; nothing is stored or sent without it."""
+    provider = hub.add_provider("openeye", "camera.record_clip", required_grant="camera:record")
+    body = hub.body("camera.record_clip", actor={"app": "partner_svc"}, parameters={"camera_id": "front"})
+    key_id, secret = _enrol(hub, "partner", ["partner_svc"], ["commands:dispatch"])
+    refused = hub.dispatch(body, secret=secret, key_id=key_id)
+    assert refused.status_code == 403 and "camera:record" in refused.json()["detail"]
+    assert provider.envelopes == []
+    assert hub.client.get("/commands").json()["commands"] == []
+
+    key_id, secret = _enrol(hub, "partner2", ["partner_svc2"], ["commands:dispatch", "camera:record"])
+    ok = hub.dispatch(hub.body("camera.record_clip", actor={"app": "partner_svc2"},
+                               parameters={"camera_id": "front"}, idempotency_key="g-2"),
+                      secret=secret, key_id=key_id)
+    assert ok.status_code == 200
+
+
+def test_shared_secret_callers_hold_every_grant(hub):
+    """First-party apps share one secret and cannot be told apart; the grant check does not apply to them."""
+    hub.add_provider("openeye", "camera.record_clip", required_grant="camera:record")
+    resp = hub.dispatch(hub.body("camera.record_clip", parameters={"camera_id": "front"}))
+    assert resp.status_code == 200

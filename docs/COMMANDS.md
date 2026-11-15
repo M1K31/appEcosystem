@@ -78,7 +78,8 @@ Other responses: `401` unsigned, `403` not permitted to act as that app or as an
 
 - Dispatching always needs a signed request. There is no exemption for local processes.
 - An app with its own key needs the `commands:dispatch` scope and may only name a service it owns in `actor.app`. To read command records it needs `commands:read`, and it sees only commands it requested or was asked to run.
-- First-party apps sign with the shared secret, which the hub sees as one identity. For them `actor.app` is a claim; it must name a registered service, and the audit trail marks such commands `identity: "shared_secret"`.
+- First-party apps sign with the shared secret, which the hub sees as one identity. For them `actor.app` is a claim; it must name a registered service, and the audit trail marks such commands `identity: "shared_secret"`. Because the hub cannot tell them apart, they hold every capability's grant.
+- A capability's manifest names a `required_grant` (`camera:record`, `containment:block_ip`, …; `"none"` for none). An app key must hold it in its scopes (or `*`): without it the dispatch is refused with 403 before anything is stored or sent.
 - `actor.type: "operator"` is believed only with a valid step-up token, and the operator recorded is the one the token names.
 
 ### Reading the record
