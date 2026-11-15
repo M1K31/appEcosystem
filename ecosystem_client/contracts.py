@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import time
 from datetime import datetime, timezone
@@ -188,6 +189,13 @@ def _validate_node(value: Any, schema: dict[str, Any], path: str, errors: list[s
             errors.append(f"{path}: {value!r} does not match pattern {schema['pattern']!r}")
 
     if isinstance(value, (int, float)) and not isinstance(value, bool):
+        # NaN compares false against every bound and Infinity passes "type": "number";
+        # Python's json accepts both. A bounded number must be finite.
+        if isinstance(value, float) and not math.isfinite(value) and any(
+            k in schema for k in ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum")
+        ):
+            errors.append(f"{path}: {value} is not a finite number")
+            return
         if "minimum" in schema and value < schema["minimum"]:
             errors.append(f"{path}: {value} < minimum {schema['minimum']}")
         if "maximum" in schema and value > schema["maximum"]:

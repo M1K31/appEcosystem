@@ -42,3 +42,17 @@ def test_no_properties_and_additional_false_means_no_keys():
     schema = {"type": "object", "properties": {}, "additionalProperties": False}
     assert v({}, schema) == []
     assert v({"anything": 1}, schema)
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_numbers_do_not_slip_past_bounds(value):
+    schema = {"type": "number", "minimum": 1, "maximum": 10}
+    assert v(value, schema)
+
+
+def test_nan_through_json_is_refused():
+    import json
+
+    params = json.loads('{"top_k": NaN}')
+    schema = {"type": "object", "properties": {"top_k": {"type": "number", "minimum": 1, "maximum": 10}}}
+    assert v(params, schema)
