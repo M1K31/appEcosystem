@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 # PyPI organizations/namespaces are not available to this project yet. The
 # import name is unchanged: `pip install appecosystem-auth` -> `import ecosystem_auth`.
 name = "appecosystem-auth"
-version = "0.4.0"
+version = "0.4.1"
 description = "Shared HMAC-SHA256 request signing and verification for the appEcosystem service mesh"
 readme = "README.md"
 license = "MIT"

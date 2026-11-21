@@ -84,3 +84,268 @@ def test_remove(store):
 def test_default_path_env_override(monkeypatch, tmp_path):
     monkeypatch.setenv("ECOSYSTEM_APPS_FILE", str(tmp_path / "custom.json"))
     assert default_apps_path() == str(tmp_path / "custom.json")
+
+
+# ---- self-registration (approval-gated) and first-party keys -------------------------
+
+
+def test_register_self_creates_a_pending_inert_key(store):
+    rec, secret = store.register_self("org.widget", "Widget", owner="dev@widget",
+                                      requested_names=["widget_sensor"], requested_scopes=["commands:dispatch"])
+    assert rec["status"] == "pending"
+    assert rec["owned_names"] == [] and rec["scopes"] == []          # no grants yet
+    assert rec["requested_names"] == ["widget_sensor"]
+    assert rec["requested_scopes"] == ["commands:dispatch"]
+    assert rec["first_party"] is False
+    assert secret
+    # A pending key authenticates nothing until approved.
+    assert store.get_by_key_id(rec["key_id"]) is None
+
+
+def test_register_self_will_not_overwrite_an_existing_app(store):
+    store.add("org.widget", "Widget", "dev@widget", ["widget_sensor"])
+    with pytest.raises(ValueError):
+        store.register_self("org.widget", "Widget", requested_names=["widget_sensor"])
+
+
+def test_register_self_is_capped(store):
+    for i in range(store.MAX_PENDING):
+        store.register_self(f"org.p{i}", "P", requested_names=[f"p{i}"])
+    with pytest.raises(ValueError):
+        store.register_self("org.one-too-many", "P", requested_names=["ponemore"])
+
+
+def test_approve_grants_names_and_scopes_and_activates(store):
+    rec, _ = store.register_self("org.widget", "Widget", requested_names=["widget_sensor"],
+                                 requested_scopes=["commands:dispatch"])
+    approved = store.approve("org.widget", owned_names=["widget_sensor"],
+                             scopes=["commands:dispatch", "commands:read"])
+    assert approved["status"] == "approved"
+    assert approved["owned_names"] == ["widget_sensor"]
+    full = store.get_by_key_id(rec["key_id"])                        # now authenticates
+    assert full is not None and set(full["scopes"]) == {"commands:dispatch", "commands:read"}
+
+
+def test_approve_refuses_a_reserved_name_for_a_third_party(store):
+    store.register_self("org.evil", "Evil", requested_names=["openeye"])
+    with pytest.raises(ValueError):
+        store.approve("org.evil", owned_names=["openeye"], scopes=[])
+
+
+def test_reject_removes_the_pending_record(store):
+    rec, _ = store.register_self("org.widget", "Widget", requested_names=["widget_sensor"])
+    assert store.reject("org.widget") is True
+    assert store.get("org.widget") is None
+    assert store.reject("org.widget") is False
+
+
+def test_first_party_key_may_own_a_reserved_name(store):
+    rec, secret = store.add("aegissiem", "AegisSIEM", "owner", ["aegissiem"],
+                            scopes=["*"], first_party=True)
+    assert rec["first_party"] is True
+    assert rec["owned_names"] == ["aegissiem"]
+    full = store.get_by_key_id(rec["key_id"])
+    assert full["secret"] == secret
+
+
+def test_add_still_rejects_a_reserved_name_for_a_third_party(store):
+    with pytest.raises(ValueError):
+        store.add("org.evil", "Evil", "e@x", ["aegissiem"])   # not first_party
+
+
+def test_pending_lists_separately(store):
+    store.register_self("org.a", "A", requested_names=["a_svc"])
+    store.add("org.b", "B", "b@x", ["b_svc"])
+    pending = [a["app_id"] for a in store.list() if a["status"] == "pending"]
+    assert pending == ["org.a"]
+
+
+# ---- hardening: reserved ids and wildcard names (security review) --------------------
+
+
+@pytest.mark.parametrize("bad", ["__owner__", "__internal", "_leading", "", "has space",
+                                 "bad*glob", "org/widget", "x" * 129])
+def test_register_self_rejects_malformed_or_reserved_app_ids(store, bad):
+    with pytest.raises(ValueError):
+        store.register_self(bad, "X", requested_names=["ok_name"])
+
+
+def test_add_rejects_the_owner_app_id(store):
+    with pytest.raises(ValueError):
+        store.add("__owner__", "Spoof", "e@x", ["spoof_name"])
+
+
+@pytest.mark.parametrize("name", ["*", "a*", "a?b", "a[b]"])
+def test_owned_names_cannot_be_a_wildcard(store, name):
+    with pytest.raises(ValueError):
+        store.add("org.a", "A", "a@x", [name])
+    store.register_self("org.b", "B", requested_names=["ok"])
+    with pytest.raises(ValueError):
+        store.approve("org.b", owned_names=[name], scopes=[])
+
+
+# ---- review round 2: resume guard, quarantine, concurrency --------------------------
+
+
+def test_set_status_will_not_activate_a_pending_registration(store):
+    store.register_self("org.widget", "Widget", requested_names=["widget_sensor"])
+    with pytest.raises(ValueError):
+        store.set_status("org.widget", "approved")          # == `resume`
+    assert store.get("org.widget")["status"] == "pending"   # unchanged
+    # Suspend/resume of a properly approved app still works.
+    store.approve("org.widget", owned_names=["widget_sensor"], scopes=["commands:read"])
+    assert store.set_status("org.widget", "suspended") is True
+    assert store.set_status("org.widget", "approved") is True
+
+
+def test_get_by_key_id_quarantines_a_reserved_id_record(store, tmp_path):
+    import json
+    apps_file = tmp_path / "apps.json"
+    apps_file.write_text(json.dumps({"__owner__": {
+        "app_id": "__owner__", "key_id": "k_legacy", "secret": "s", "owned_names": ["*"],
+        "scopes": ["*"], "status": "approved",
+    }}))
+    s = AppStore(persistence_path=str(apps_file))
+    assert s.get_by_key_id("k_legacy") is None             # never resolved to the owner
+
+
+def test_a_concurrent_writer_is_not_clobbered(tmp_path):
+    path = str(tmp_path / "apps.json")
+    a = AppStore(persistence_path=path)
+    b = AppStore(persistence_path=path)
+    rec, _ = a.add("org.one", "One", "o", ["one_svc"])
+    b.set_status("org.one", "suspended")                   # another process suspends it
+    a.register_self("org.two", "Two", requested_names=["two_svc"])  # a's stale copy writes
+    # a's write ran under the lock with a fresh load, so b's suspension survived.
+    assert AppStore(persistence_path=path).get("org.one")["status"] == "suspended"
+    assert AppStore(persistence_path=path).get("org.two")["status"] == "pending"
+
+
+def test_concurrent_adds_do_not_lose_updates(tmp_path):
+    """A real race: N threads, each its own store on one file, add concurrently. The
+    per-path in-process lock plus the OS file lock must serialize them so none is lost."""
+    import threading
+    path = str(tmp_path / "apps.json")
+    n = 24
+    barrier = threading.Barrier(n)
+    errors = []
+
+    def worker(i):
+        s = AppStore(persistence_path=path)
+        barrier.wait()                       # release all at once to force overlap
+        try:
+            s.add(f"org.a{i}", "A", "o", [f"svc{i}"])
+        except Exception as e:               # pragma: no cover
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+    assert not errors
+    assert len(AppStore(persistence_path=path).list()) == n   # every add survived
+
+
+def _mp_add_worker(path, i):  # module-level so multiprocessing can pickle it
+    from registry.app_store import AppStore
+    AppStore(persistence_path=path).add(f"org.p{i}", "P", "o", [f"psvc{i}"])
+
+
+@pytest.mark.parametrize("start_method", ["spawn", "fork"])
+def test_separate_processes_do_not_lose_updates(tmp_path, start_method):
+    """True cross-process check: the OS file lock (fcntl/msvcrt) must serialize
+    writes from separate processes so none is lost.
+
+    Parametrised over every start method this platform supports, so `spawn` —
+    the only method on Windows — is covered too, not just `fork`. The
+    in-process lock does not span processes, so this exercises the OS lock.
+    """
+    import multiprocessing as mp
+    if start_method not in mp.get_all_start_methods():
+        pytest.skip(f"{start_method} start method not available")
+    ctx = mp.get_context(start_method)
+    path = str(tmp_path / "apps.json")
+    n = 10
+    procs = [ctx.Process(target=_mp_add_worker, args=(path, i)) for i in range(n)]
+    for p in procs:
+        p.start()
+    for p in procs:
+        p.join(60)
+    assert all(p.exitcode == 0 for p in procs)
+    assert len(AppStore(persistence_path=path).list()) == n   # every process's add survived
+
+
+def _mp_suspend(path, app_id):
+    from registry.app_store import AppStore
+    AppStore(persistence_path=path).set_status(app_id, "suspended")
+
+
+def _mp_register(path, i):
+    from registry.app_store import AppStore
+    AppStore(persistence_path=path).register_self(f"org.r{i}", "R", requested_names=[f"rsvc{i}"])
+
+
+@pytest.mark.parametrize("start_method", ["spawn", "fork"])
+def test_cross_process_registration_does_not_undo_a_suspend(tmp_path, start_method):
+    """The exact race from the finding: a registration in one process must not
+    restore a key another process suspended. Under the lock the suspend survives
+    and the suspended key stays unresolvable."""
+    import multiprocessing as mp
+    if start_method not in mp.get_all_start_methods():
+        pytest.skip(f"{start_method} start method not available")
+    ctx = mp.get_context(start_method)
+    path = str(tmp_path / "apps.json")
+    seed = AppStore(persistence_path=path)
+    rec, _ = seed.add("org.keep", "Keep", "o", ["keep_svc"])
+    key_id = rec["key_id"]
+
+    procs = [ctx.Process(target=_mp_suspend, args=(path, "org.keep"))]
+    procs += [ctx.Process(target=_mp_register, args=(path, i)) for i in range(8)]
+    for p in procs:
+        p.start()
+    for p in procs:
+        p.join(60)
+    assert all(p.exitcode == 0 for p in procs)
+
+    final = AppStore(persistence_path=path)
+    assert final.get("org.keep")["status"] == "suspended"          # the suspend was not clobbered back
+    assert final.get_by_key_id(key_id) is None                     # and the suspended key stays rejected
+    assert sum(1 for a in final.list() if a["status"] == "pending") == 8   # every registration survived too
+
+
+def test_write_lock_deterministically_serializes_a_second_writer(tmp_path):
+    """Luck-free proof of mutual exclusion: while one writer holds the lock, a
+    second writer on the same file cannot proceed, and does as soon as it is
+    released. No reliance on scheduler timing to hit the race window."""
+    import threading
+    path = str(tmp_path / "apps.json")
+    store = AppStore(persistence_path=path)
+    store.add("org.a", "A", "o", ["a_svc"])
+
+    holding = threading.Event()
+    release = threading.Event()
+    second_done = threading.Event()
+
+    def holder():
+        with store._write_lock():
+            holding.set()
+            release.wait(5)
+
+    def second():
+        holding.wait(5)
+        AppStore(persistence_path=path).add("org.b", "B", "o", ["b_svc"])
+        second_done.set()
+
+    t1 = threading.Thread(target=holder)
+    t2 = threading.Thread(target=second)
+    t1.start()
+    assert holding.wait(5)
+    t2.start()
+    # The second writer must be blocked while the first holds the lock.
+    assert not second_done.wait(0.3), "second writer ran while the lock was held"
+    release.set()
+    t1.join(5)
+    assert second_done.wait(5)                       # now it proceeds
+    t2.join(5)
+    assert AppStore(persistence_path=path).get("org.b") is not None

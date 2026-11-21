@@ -82,6 +82,14 @@ Other responses: `401` unsigned, `403` not permitted to act as that app or as an
 - A capability's manifest names a `required_grant` (`camera:record`, `containment:block_ip`, …; `"none"` for none). An app key must hold it in its scopes (or `*`): without it the dispatch is refused with 403 before anything is stored or sent.
 - `actor.type: "operator"` is believed only with a valid step-up token, and the operator recorded is the one the token names.
 
+### App keys and registration
+
+Every app that calls the hub has an identity. There are three ways to hold one:
+
+- **First-party apps** can each have their own key (`ecosystem partner add <app_id> --name <display> --owner <contact> --first-party --service-names <name> --scopes <grants>`), which lets the hub tell them apart, apply `required_grant` per app, and suspend one without the others. A first-party key may own a reserved service name (`openeye`, `aegissiem`, …). Apps that have not yet been given their own key fall back to signing with the shared ecosystem secret, which the hub sees as the single `__owner__` identity holding every grant.
+- **Third-party apps** register themselves: `ecosystem_client.registration.register_app(registry_url, app_id, requested_names=[...], requested_scopes=[...])` calls `POST /apps/register` and returns a key. That key is **pending** — it authenticates nothing until the owner approves it. This route needs no authentication (it only creates an inert record) and never overwrites an existing app.
+- **The owner** reviews pending registrations (`ecosystem partner list`, or `GET /apps` with the shared secret) and approves one with the names and scopes it may hold (`ecosystem partner approve <app_id> --service-names <name> --scopes commands:dispatch,commands:read`, or `POST /apps/{app_id}/approve`), or rejects it (`ecosystem partner reject <app_id>`). Approval is the trust boundary: nothing a self-registered app signs is honoured before it.
+
 ### Reading the record
 
 - `GET /commands/{command_id}` — the status document plus `action_class`, `requester_app`, `actor`, `target`, `parameters`, `digest`, `policy_context`, the approval record, and `events` (the ordered audit trail).
