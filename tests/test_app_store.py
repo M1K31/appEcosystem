@@ -164,7 +164,7 @@ def test_pending_lists_separately(store):
 
 
 @pytest.mark.parametrize("bad", ["__owner__", "__internal", "_leading", "", "has space",
-                                 "bad*glob", "x" * 129])
+                                 "bad*glob", "org/widget", "x" * 129])
 def test_register_self_rejects_malformed_or_reserved_app_ids(store, bad):
     with pytest.raises(ValueError):
         store.register_self(bad, "X", requested_names=["ok_name"])
@@ -245,3 +245,27 @@ def test_concurrent_adds_do_not_lose_updates(tmp_path):
         t.join(10)
     assert not errors
     assert len(AppStore(persistence_path=path).list()) == n   # every add survived
+
+
+def _mp_add_worker(path, i):  # module-level so multiprocessing can pickle it
+    from registry.app_store import AppStore
+    AppStore(persistence_path=path).add(f"org.p{i}", "P", "o", [f"psvc{i}"])
+
+
+def test_separate_processes_do_not_lose_updates(tmp_path):
+    """True cross-process check: the OS file lock (fcntl/msvcrt) must serialize
+    writes from separate processes so none is lost. Skipped where fork is
+    unavailable (there the in-process lock does not apply across processes)."""
+    import multiprocessing as mp
+    if "fork" not in mp.get_all_start_methods():   # pragma: no cover - non-fork platforms
+        pytest.skip("fork start method not available")
+    ctx = mp.get_context("fork")
+    path = str(tmp_path / "apps.json")
+    n = 10
+    procs = [ctx.Process(target=_mp_add_worker, args=(path, i)) for i in range(n)]
+    for p in procs:
+        p.start()
+    for p in procs:
+        p.join(30)
+    assert all(p.exitcode == 0 for p in procs)
+    assert len(AppStore(persistence_path=path).list()) == n   # every process's add survived
