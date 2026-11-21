@@ -312,3 +312,40 @@ def test_cross_process_registration_does_not_undo_a_suspend(tmp_path, start_meth
     assert final.get("org.keep")["status"] == "suspended"          # the suspend was not clobbered back
     assert final.get_by_key_id(key_id) is None                     # and the suspended key stays rejected
     assert sum(1 for a in final.list() if a["status"] == "pending") == 8   # every registration survived too
+
+
+def test_write_lock_deterministically_serializes_a_second_writer(tmp_path):
+    """Luck-free proof of mutual exclusion: while one writer holds the lock, a
+    second writer on the same file cannot proceed, and does as soon as it is
+    released. No reliance on scheduler timing to hit the race window."""
+    import threading
+    path = str(tmp_path / "apps.json")
+    store = AppStore(persistence_path=path)
+    store.add("org.a", "A", "o", ["a_svc"])
+
+    holding = threading.Event()
+    release = threading.Event()
+    second_done = threading.Event()
+
+    def holder():
+        with store._write_lock():
+            holding.set()
+            release.wait(5)
+
+    def second():
+        holding.wait(5)
+        AppStore(persistence_path=path).add("org.b", "B", "o", ["b_svc"])
+        second_done.set()
+
+    t1 = threading.Thread(target=holder)
+    t2 = threading.Thread(target=second)
+    t1.start()
+    assert holding.wait(5)
+    t2.start()
+    # The second writer must be blocked while the first holds the lock.
+    assert not second_done.wait(0.3), "second writer ran while the lock was held"
+    release.set()
+    t1.join(5)
+    assert second_done.wait(5)                       # now it proceeds
+    t2.join(5)
+    assert AppStore(persistence_path=path).get("org.b") is not None
