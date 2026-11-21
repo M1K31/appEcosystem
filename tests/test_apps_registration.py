@@ -162,3 +162,16 @@ def test_first_party_must_be_a_real_boolean(env):
                         headers=_owner("POST", "/apps/org.sneaky/approve", body))
         assert r.status_code == 422
         assert env["store"].get("org.sneaky")["status"] == "pending"
+
+
+def test_a_bearer_token_has_no_owner_access(env):
+    # A valid service bearer token is authenticated but is NOT the owner: owner-only
+    # routes return 403 (not 401), while the shared-secret HMAC owner gets through.
+    import json
+    from ecosystem_auth.tokens import create_ecosystem_token
+    token = json.dumps(create_ecosystem_token(OWNER_SECRET, "openeye"))
+    with TestClient(app) as client:
+        bearer = {"Authorization": f"Bearer {token}"}
+        assert client.get("/apps", headers=bearer).status_code == 403
+        assert client.post("/apps/x/approve", json={}, headers=bearer).status_code == 403
+        assert client.get("/apps", headers=_owner("GET", "/apps")).status_code == 200

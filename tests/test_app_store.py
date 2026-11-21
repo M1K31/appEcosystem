@@ -219,3 +219,29 @@ def test_a_concurrent_writer_is_not_clobbered(tmp_path):
     # a's write ran under the lock with a fresh load, so b's suspension survived.
     assert AppStore(persistence_path=path).get("org.one")["status"] == "suspended"
     assert AppStore(persistence_path=path).get("org.two")["status"] == "pending"
+
+
+def test_concurrent_adds_do_not_lose_updates(tmp_path):
+    """A real race: N threads, each its own store on one file, add concurrently. The
+    per-path in-process lock plus the OS file lock must serialize them so none is lost."""
+    import threading
+    path = str(tmp_path / "apps.json")
+    n = 24
+    barrier = threading.Barrier(n)
+    errors = []
+
+    def worker(i):
+        s = AppStore(persistence_path=path)
+        barrier.wait()                       # release all at once to force overlap
+        try:
+            s.add(f"org.a{i}", "A", "o", [f"svc{i}"])
+        except Exception as e:               # pragma: no cover
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+    assert not errors
+    assert len(AppStore(persistence_path=path).list()) == n   # every add survived

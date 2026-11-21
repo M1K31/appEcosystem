@@ -14,14 +14,57 @@ import os
 import re
 import secrets
 import tempfile
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Optional
 
 try:
     import fcntl
-except ImportError:  # pragma: no cover - POSIX only; Windows degrades to best-effort
+except ImportError:  # POSIX only
     fcntl = None  # type: ignore[assignment]
+try:
+    import msvcrt
+except ImportError:  # Windows only
+    msvcrt = None  # type: ignore[assignment]
+
+# One in-process lock per credential file, so threads of this process serialize
+# their read-modify-write even where no OS file lock is available.
+_process_locks: dict[str, threading.Lock] = {}
+_process_locks_guard = threading.Lock()
+_warned_no_os_lock = False
+
+
+def _process_lock_for(path: str) -> threading.Lock:
+    key = str(Path(path).resolve())
+    with _process_locks_guard:
+        return _process_locks.setdefault(key, threading.Lock())
+
+
+def _os_lock(handle) -> None:
+    """Take an exclusive OS lock on `handle` (cross-process). fcntl on POSIX, msvcrt on Windows."""
+    if fcntl is not None:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    elif msvcrt is not None:  # pragma: no cover - Windows
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+    else:  # pragma: no cover - no OS lock primitive
+        global _warned_no_os_lock
+        if not _warned_no_os_lock:
+            logger.warning("No OS file lock (fcntl/msvcrt) available; cross-process "
+                           "app-store writes are not serialized on this platform.")
+            _warned_no_os_lock = True
+
+
+def _os_unlock(handle) -> None:
+    if fcntl is not None:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    elif msvcrt is not None:  # pragma: no cover - Windows
+        handle.seek(0)
+        try:
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
 
 # App ids: a conservative, shell/URL-safe shape. A leading alphanumeric bars the
 # reserved `__owner__` principal (and any `__`-prefixed internal id) from being
@@ -125,30 +168,36 @@ class AppStore:
 
     @contextlib.contextmanager
     def _write_lock(self) -> Iterator[None]:
-        """Hold an exclusive cross-process lock and reload fresh for a read-modify-write.
+        """Hold an exclusive lock and reload fresh for a read-modify-write.
 
-        Every writer runs under this so a concurrent writer in another process
-        (the CLI vs the running registry) cannot interleave: the lock is taken,
-        the latest file is loaded inside it, the mutation and `_persist` run, then
-        the lock is released. Locking only the `os.replace` in `_persist` would
-        still let a stale in-memory copy overwrite another process's write.
+        Every writer runs under this so writers cannot interleave: the lock is
+        taken, the latest file is loaded inside it, the mutation and `_persist`
+        run, then the lock is released. Locking only the `os.replace` in
+        `_persist` would still let a stale in-memory copy overwrite another
+        writer's write.
+
+        Two layers, so the race is closed on every platform:
+        - an in-process lock (keyed by file path) serializes threads of this
+          process — the common case, since the registry runs writers on its
+          event loop's executor while the CLI may write too;
+        - an OS file lock (`fcntl.flock` on POSIX, `msvcrt.locking` on Windows)
+          serializes separate processes. If neither is available the in-process
+          lock still holds and a one-time warning is logged.
         """
-        if fcntl is None:  # Windows / no fcntl: best-effort, single-process correctness only
-            self._load()
-            yield
-            return
+        proc_lock = _process_lock_for(self._path)
         lock_path = Path(self._path).with_suffix(".lock")
         lock_path.parent.mkdir(parents=True, exist_ok=True)
-        handle = open(lock_path, "a+")
-        try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-            self._load()  # the authoritative on-disk state, under the lock
-            yield
-        finally:
+        with proc_lock:
+            handle = open(lock_path, "a+")
             try:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                _os_lock(handle)
+                self._load()  # the authoritative on-disk state, under the lock
+                yield
             finally:
-                handle.close()
+                try:
+                    _os_unlock(handle)
+                finally:
+                    handle.close()
 
     # ---- API -------------------------------------------------------------
     def _check_names(self, owned_names: list[str], *, first_party: bool, exclude_app_id: Optional[str] = None) -> None:
