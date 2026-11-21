@@ -252,20 +252,25 @@ def _mp_add_worker(path, i):  # module-level so multiprocessing can pickle it
     AppStore(persistence_path=path).add(f"org.p{i}", "P", "o", [f"psvc{i}"])
 
 
-def test_separate_processes_do_not_lose_updates(tmp_path):
+@pytest.mark.parametrize("start_method", ["spawn", "fork"])
+def test_separate_processes_do_not_lose_updates(tmp_path, start_method):
     """True cross-process check: the OS file lock (fcntl/msvcrt) must serialize
-    writes from separate processes so none is lost. Skipped where fork is
-    unavailable (there the in-process lock does not apply across processes)."""
+    writes from separate processes so none is lost.
+
+    Parametrised over every start method this platform supports, so `spawn` —
+    the only method on Windows — is covered too, not just `fork`. The
+    in-process lock does not span processes, so this exercises the OS lock.
+    """
     import multiprocessing as mp
-    if "fork" not in mp.get_all_start_methods():   # pragma: no cover - non-fork platforms
-        pytest.skip("fork start method not available")
-    ctx = mp.get_context("fork")
+    if start_method not in mp.get_all_start_methods():
+        pytest.skip(f"{start_method} start method not available")
+    ctx = mp.get_context(start_method)
     path = str(tmp_path / "apps.json")
     n = 10
     procs = [ctx.Process(target=_mp_add_worker, args=(path, i)) for i in range(n)]
     for p in procs:
         p.start()
     for p in procs:
-        p.join(30)
+        p.join(60)
     assert all(p.exitcode == 0 for p in procs)
     assert len(AppStore(persistence_path=path).list()) == n   # every process's add survived
