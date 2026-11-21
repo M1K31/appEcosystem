@@ -404,3 +404,37 @@ def test_shared_secret_callers_hold_every_grant(hub):
     hub.add_provider("openeye", "camera.record_clip", required_grant="camera:record")
     resp = hub.dispatch(hub.body("camera.record_clip", parameters={"camera_id": "front"}))
     assert resp.status_code == 200
+
+
+def test_inputs_schema_bounds_and_one_of_are_enforced_at_the_hub(hub):
+    """maximum, maxLength and oneOf in an inputs_schema are checked before anything is stored."""
+    provider = hub.add_provider(
+        "aegissiem", "threat_intel.lookup_ioc",
+        inputs_schema={
+            "type": "object",
+            "properties": {
+                "indicator": {"type": "string", "maxLength": 20},
+                "top_k": {"type": "integer", "minimum": 1, "maximum": 10},
+                "text": {"type": "string"},
+            },
+            "additionalProperties": False,
+            "oneOf": [{"required": ["indicator"]}, {"required": ["text"]}],
+        },
+    )
+    assert hub.dispatch(hub.body(parameters={"indicator": "x", "top_k": 11})).status_code == 422
+    assert hub.dispatch(hub.body(parameters={"indicator": "x" * 21})).status_code == 422
+    assert hub.dispatch(hub.body(parameters={"indicator": "x", "text": "both"})).status_code == 422
+    assert hub.dispatch(hub.body(parameters={})).status_code == 422
+    assert provider.envelopes == []
+    assert hub.dispatch(hub.body(parameters={"indicator": "x", "top_k": 10})).status_code == 200
+
+
+def test_null_parameters_cannot_bypass_an_any_of(hub):
+    provider = hub.add_provider(
+        "aegissiem", "threat_intel.lookup_ioc",
+        inputs_schema={"type": "object",
+                       "properties": {"indicator": {"anyOf": [{"type": "string"}, {"type": "integer"}]}},
+                       "additionalProperties": False},
+    )
+    assert hub.dispatch(hub.body(parameters={"indicator": None})).status_code == 422
+    assert provider.envelopes == []
