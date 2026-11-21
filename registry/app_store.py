@@ -6,6 +6,8 @@ by the running registry without a restart (e.g. `partner suspend` revokes
 immediately).
 """
 
+import contextlib
+import functools
 import json
 import logging
 import os
@@ -14,7 +16,12 @@ import secrets
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - POSIX only; Windows degrades to best-effort
+    fcntl = None  # type: ignore[assignment]
 
 # App ids: a conservative, shell/URL-safe shape. A leading alphanumeric bars the
 # reserved `__owner__` principal (and any `__`-prefixed internal id) from being
@@ -24,6 +31,15 @@ _APP_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 # particular is the shared-secret owner's "owns everything" marker and must
 # never be held by an app key.
 _WILDCARD_CHARS = set("*?[]")
+
+
+def _locked(method):
+    """Run a writer under the store's exclusive cross-process lock (fresh load inside it)."""
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._write_lock():
+            return method(self, *args, **kwargs)
+    return wrapper
 
 
 def validate_app_id(app_id: str) -> None:
@@ -107,6 +123,33 @@ class AppStore:
             if os.path.exists(tmp):
                 os.remove(tmp)
 
+    @contextlib.contextmanager
+    def _write_lock(self) -> Iterator[None]:
+        """Hold an exclusive cross-process lock and reload fresh for a read-modify-write.
+
+        Every writer runs under this so a concurrent writer in another process
+        (the CLI vs the running registry) cannot interleave: the lock is taken,
+        the latest file is loaded inside it, the mutation and `_persist` run, then
+        the lock is released. Locking only the `os.replace` in `_persist` would
+        still let a stale in-memory copy overwrite another process's write.
+        """
+        if fcntl is None:  # Windows / no fcntl: best-effort, single-process correctness only
+            self._load()
+            yield
+            return
+        lock_path = Path(self._path).with_suffix(".lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(lock_path, "a+")
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            self._load()  # the authoritative on-disk state, under the lock
+            yield
+        finally:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            finally:
+                handle.close()
+
     # ---- API -------------------------------------------------------------
     def _check_names(self, owned_names: list[str], *, first_party: bool, exclude_app_id: Optional[str] = None) -> None:
         """Reserved first-party names are refused unless `first_party`; names owned by another app are refused."""
@@ -121,6 +164,7 @@ class AppStore:
             if n in taken:
                 raise ValueError(f"service name '{n}' is already owned by another app")
 
+    @_locked
     def add(self, app_id: str, display_name: str, owner: str,
             owned_names: list[str], scopes: Optional[list[str]] = None,
             *, first_party: bool = False) -> tuple[dict, str]:
@@ -148,6 +192,7 @@ class AppStore:
         self._persist()
         return _public(record), secret
 
+    @_locked
     def register_self(self, app_id: str, display_name: str, owner: str = "",
                       requested_names: Optional[list[str]] = None,
                       requested_scopes: Optional[list[str]] = None) -> tuple[dict, str]:
@@ -186,6 +231,7 @@ class AppStore:
         self._persist()
         return _public(record), secret
 
+    @_locked
     def approve(self, app_id: str, owned_names: list[str], scopes: list[str],
                 *, first_party: bool = False) -> dict:
         """Owner action: grant a pending (or existing) app its names and scopes and activate it."""
@@ -213,24 +259,47 @@ class AppStore:
 
     def get_by_key_id(self, key_id: str) -> Optional[dict]:
         self._maybe_reload()
-        for rec in self._apps.values():
-            if rec.get("key_id") == key_id and rec.get("status") == "approved":
-                return dict(rec)  # full record incl. secret
+        for app_id, rec in self._apps.items():
+            if rec.get("key_id") != key_id or rec.get("status") != "approved":
+                continue
+            # Quarantine a record whose id is malformed or reserved: a legacy or
+            # hand-edited apps.json could carry an id like "__owner__" that the
+            # creation-time validation never saw, and resolving it would hand a
+            # key the owner principal. Such a record authenticates nothing.
+            try:
+                validate_app_id(app_id)
+                validate_app_id(str(rec.get("app_id", "")))
+            except ValueError:
+                logger.warning("Ignoring app record with an invalid id: %r", app_id)
+                return None
+            return dict(rec)  # full record incl. secret
         return None
 
     def list(self) -> list[dict]:
         self._maybe_reload()
         return [_public(r) for r in self._apps.values()]
 
+    @_locked
     def set_status(self, app_id: str, status: str) -> bool:
+        """Change an existing app's status (e.g. suspend/resume).
+
+        A pending registration is NOT activated this way: only `approve` grants
+        it names and scopes, which is where the owner reviews it. Resuming a
+        pending record would otherwise make it `approved` with no grants and no
+        review.
+        """
+        validate_app_id(app_id)
         self._maybe_reload()
         rec = self._apps.get(app_id)
         if not rec:
             return False
+        if rec.get("status") == "pending" and status != "pending":
+            raise ValueError("a pending registration must be approved (not resumed) to activate it")
         rec["status"] = status
         self._persist()
         return True
 
+    @_locked
     def remove(self, app_id: str) -> bool:
         self._maybe_reload()
         if app_id not in self._apps:

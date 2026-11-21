@@ -182,3 +182,40 @@ def test_owned_names_cannot_be_a_wildcard(store, name):
     store.register_self("org.b", "B", requested_names=["ok"])
     with pytest.raises(ValueError):
         store.approve("org.b", owned_names=[name], scopes=[])
+
+
+# ---- review round 2: resume guard, quarantine, concurrency --------------------------
+
+
+def test_set_status_will_not_activate_a_pending_registration(store):
+    store.register_self("org.widget", "Widget", requested_names=["widget_sensor"])
+    with pytest.raises(ValueError):
+        store.set_status("org.widget", "approved")          # == `resume`
+    assert store.get("org.widget")["status"] == "pending"   # unchanged
+    # Suspend/resume of a properly approved app still works.
+    store.approve("org.widget", owned_names=["widget_sensor"], scopes=["commands:read"])
+    assert store.set_status("org.widget", "suspended") is True
+    assert store.set_status("org.widget", "approved") is True
+
+
+def test_get_by_key_id_quarantines_a_reserved_id_record(store, tmp_path):
+    import json
+    apps_file = tmp_path / "apps.json"
+    apps_file.write_text(json.dumps({"__owner__": {
+        "app_id": "__owner__", "key_id": "k_legacy", "secret": "s", "owned_names": ["*"],
+        "scopes": ["*"], "status": "approved",
+    }}))
+    s = AppStore(persistence_path=str(apps_file))
+    assert s.get_by_key_id("k_legacy") is None             # never resolved to the owner
+
+
+def test_a_concurrent_writer_is_not_clobbered(tmp_path):
+    path = str(tmp_path / "apps.json")
+    a = AppStore(persistence_path=path)
+    b = AppStore(persistence_path=path)
+    rec, _ = a.add("org.one", "One", "o", ["one_svc"])
+    b.set_status("org.one", "suspended")                   # another process suspends it
+    a.register_self("org.two", "Two", requested_names=["two_svc"])  # a's stale copy writes
+    # a's write ran under the lock with a fresh load, so b's suspension survived.
+    assert AppStore(persistence_path=path).get("org.one")["status"] == "suspended"
+    assert AppStore(persistence_path=path).get("org.two")["status"] == "pending"

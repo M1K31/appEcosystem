@@ -10,7 +10,7 @@ may hold. After approval the app signs its requests with the returned
 
     creds = load_credentials(path)
     if creds is None:
-        creds = register_app("http://hub.local:8500", "org.widget",
+        creds = register_app("https://hub.local:8500", "org.widget",
                              requested_names=["widget_sensor"],
                              requested_scopes=["commands:dispatch"])
         save_credentials(path, creds)   # keep the secret; it is shown only once
@@ -27,6 +27,29 @@ from typing import Any, Callable, Optional
 __all__ = ["register_app", "save_credentials", "load_credentials"]
 
 
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]", ""}
+
+
+def _require_secure_transport(registry_url: str, *, allow_insecure: bool) -> None:
+    """Raise ValueError if the URL would send the secret in cleartext to a non-loopback host."""
+    if allow_insecure:
+        return
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(registry_url if "://" in registry_url else f"//{registry_url}")
+    scheme = (parts.scheme or "http").lower()
+    host = (parts.hostname or "").lower()
+    if scheme == "https":
+        return
+    if host in _LOOPBACK_HOSTS or host.endswith(".localhost"):
+        return
+    raise ValueError(
+        f"refusing to register over plaintext {scheme or 'http'}:// to non-loopback host "
+        f"{host!r}: the HMAC secret would be exposed on the wire. Use https://, or pass "
+        f"allow_insecure=True only on a trusted private network."
+    )
+
+
 def register_app(
     registry_url: str,
     app_id: str,
@@ -36,6 +59,7 @@ def register_app(
     requested_names: Optional[list[str]] = None,
     requested_scopes: Optional[list[str]] = None,
     timeout: float = 10.0,
+    allow_insecure: bool = False,
     client_factory: Optional[Callable[[], Any]] = None,
 ) -> dict[str, Any]:
     """Register `app_id` with the hub and return its credentials.
@@ -44,9 +68,17 @@ def register_app(
     The names and scopes are only a request for the owner to review; the key
     holds nothing until approved. Raises `httpx.HTTPStatusError` if the hub
     refuses (e.g. 409 when `app_id` already exists — it is never overwritten).
+
+    The response carries the app's reusable HMAC `secret`, so plaintext `http://`
+    to a non-loopback hub is refused (`ValueError`): on the wire the secret would
+    be readable by anyone on the path. Use `https://` for a remote hub. Plain
+    `http://localhost` / `127.0.0.1` / `[::1]` is allowed (the loopback never
+    leaves the machine); `allow_insecure=True` overrides the check for a trusted
+    private network and is not recommended.
     """
     import httpx
 
+    _require_secure_transport(registry_url, allow_insecure=allow_insecure)
     payload = {
         "app_id": app_id,
         "display_name": display_name or app_id,

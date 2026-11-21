@@ -341,7 +341,7 @@ def require_name_owner(name: str, auth: dict) -> None:
     # even a reserved first-party name — a first-party key is given its own
     # reserved name at approval. The reserved-name refusal is only for an app
     # that does NOT own it (a third party trying to claim it).
-    if owned == ["*"] or name in owned:
+    if auth.get("is_owner") or owned == ["*"] or name in owned:
         return
     if name in RESERVED_NAMES:
         raise HTTPException(
@@ -365,7 +365,7 @@ def require_owner(auth: dict) -> None:
     wildcard name could never be mistaken for the owner (and wildcard names are
     refused anyway).
     """
-    if auth.get("app_id") != "__owner__":
+    if not auth.get("is_owner"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="owner authentication (the shared ecosystem secret) is required",
@@ -508,7 +508,7 @@ async def update_ai_profile(
 
     Owner-only in Phase 1: the shared AI profile is a trust-critical surface, so
     third-party (enrolled) keys are rejected regardless of scope."""
-    if auth.get("app_id") != "__owner__":
+    if not auth.get("is_owner"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="AI profile changes are owner-only",
@@ -674,7 +674,11 @@ async def approve_app(app_id: str, request: Request, payload: dict = Body(defaul
         raise HTTPException(status_code=503, detail="app registration is not available")
     owned_names = _string_list((payload or {}).get("owned_names"), "owned_names")
     scopes = _string_list((payload or {}).get("scopes"), "scopes")
-    first_party = bool((payload or {}).get("first_party", False))
+    first_party = (payload or {}).get("first_party", False)
+    if not isinstance(first_party, bool):
+        # bool("false") is True — never coerce; a string here would silently let a
+        # reserved name through. Require a real JSON boolean.
+        raise HTTPException(status_code=422, detail="'first_party' must be a boolean")
     try:
         return store.approve(app_id, owned_names, scopes, first_party=first_party)
     except ValueError as exc:
@@ -1004,7 +1008,7 @@ async def upsert_notification_subscription(
 ):
     """Register or update a user/device notification subscription or federated mobile push sink."""
     sub_id = str(sub.get("subscriber_id") or sub.get("device") or "").strip()
-    if auth.get("owned_names") != ["*"]:
+    if not auth.get("is_owner"):
         require_name_owner(sub_id, auth)
     try:
         record = router.upsert_subscription(sub)
@@ -1028,7 +1032,7 @@ async def delete_notification_subscription(
     auth: dict = Depends(require_registry_auth),
     router=Depends(get_notification_router),
 ):
-    if auth.get("owned_names") != ["*"]:
+    if not auth.get("is_owner"):
         require_name_owner(subscriber_id, auth)
     removed = router.delete_subscription(subscriber_id)
     if not removed:

@@ -75,6 +75,10 @@ async def authenticate_request(
                 "app_id": principal["app_id"],
                 "scopes": list(principal.get("scopes", [])),
                 "owned_names": list(principal.get("owned_names", [])),
+                # Never the owner: this principal is built from a stored app
+                # record, which cannot set this field. Only the shared-secret
+                # path below marks is_owner=True.
+                "is_owner": False,
                 "payload": body_obj,
             }
 
@@ -93,6 +97,7 @@ async def authenticate_request(
             "app_id": "__owner__",
             "scopes": ["*"],
             "owned_names": ["*"],
+            "is_owner": True,
             "payload": body_obj,
         }
 

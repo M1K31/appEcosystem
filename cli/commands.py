@@ -697,10 +697,15 @@ def cmd_partner(action: str, app_id: str | None = None, name: str | None = None,
         if not app_id:
             print(f"Usage: ecosystem partner {action} <app_id>")
             return 1
-        if action == "remove":
-            ok = store.remove(app_id)
-        else:
-            ok = store.set_status(app_id, "suspended" if action == "suspend" else "approved")
+        try:
+            if action == "remove":
+                ok = store.remove(app_id)
+            else:
+                ok = store.set_status(app_id, "suspended" if action == "suspend" else "approved")
+        except ValueError as e:
+            # e.g. trying to `resume` a pending registration — use `approve`.
+            print(f"Error: {e}")
+            return 1
         if not ok:
             print(f"No such partner app: {app_id}")
             return 1

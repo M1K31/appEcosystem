@@ -284,3 +284,13 @@ def test_partner_add_first_party_may_own_reserved_name(monkeypatch, tmp_path, ca
     assert rc == 0
     rec = AppStore(persistence_path=str(tmp_path / "apps.json")).get("aegissiem.node1")
     assert rec["first_party"] is True and rec["owned_names"] == ["aegissiem"]
+
+
+def test_partner_resume_refuses_a_pending_registration(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("ECOSYSTEM_APPS_FILE", str(tmp_path / "apps.json"))
+    from cli.commands import cmd_partner
+    from registry.app_store import AppStore
+    AppStore(persistence_path=str(tmp_path / "apps.json")).register_self(
+        "org.widget", "Widget", requested_names=["widget_sensor"])
+    rc = cmd_partner("resume", app_id="org.widget")
+    assert rc == 1 and "approve" in capsys.readouterr().out.lower()

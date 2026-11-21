@@ -152,3 +152,13 @@ def test_owner_cannot_approve_a_wildcard_name(env):
                         headers=_owner("POST", "/apps/org.greedy/approve", body))
         assert r.status_code == 400
         assert env["store"].get("org.greedy")["status"] == "pending"
+
+
+def test_first_party_must_be_a_real_boolean(env):
+    with TestClient(app) as client:
+        client.post("/apps/register", json={"app_id": "org.sneaky", "requested_names": ["openeye"]})
+        body = {"owned_names": ["openeye"], "scopes": [], "first_party": "false"}
+        r = client.post("/apps/org.sneaky/approve", json=body,
+                        headers=_owner("POST", "/apps/org.sneaky/approve", body))
+        assert r.status_code == 422
+        assert env["store"].get("org.sneaky")["status"] == "pending"
