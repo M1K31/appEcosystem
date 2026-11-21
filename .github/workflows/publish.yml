@@ -73,7 +73,6 @@ jobs:
           - { package: auth,     environment: pypi-auth }
           - { package: client,   environment: pypi-client }
           - { package: ai,       environment: pypi-ai }
-          - { package: umbrella, environment: pypi-umbrella }
     environment: ${{ matrix.environment }}
     permissions:
       id-token: write
@@ -85,9 +84,31 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/${{ matrix.package }}
-          # These four version independently, so most tags bump only some of
-          # them. Without this, every release fails on the packages whose
-          # version has not changed. Note the trade-off: a package you MEANT to
-          # bump but forgot will now skip silently rather than fail loudly, so
-          # check the job summaries against what you intended to ship.
+          # These version independently, so most tags bump only some of them.
+          # Without this, every release fails on the packages whose version has
+          # not changed. Note the trade-off: a package you MEANT to bump but
+          # forgot will now skip silently rather than fail loudly, so check the
+          # job summaries against what you intended to ship.
+          skip-existing: true
+
+  pypi-umbrella:
+    name: "PyPI: umbrella"
+    # The umbrella (appecosystem) depends on the libraries above (e.g.
+    # appecosystem-auth>=0.4.1 for the is_owner owner gate). It must publish
+    # only AFTER they are on PyPI, so a fresh `pip install appecosystem` can
+    # always resolve its dependencies — the matrix jobs run in parallel and
+    # could otherwise put the umbrella up before a bumped library.
+    needs: pypi
+    runs-on: ubuntu-latest
+    environment: pypi-umbrella
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/umbrella
           skip-existing: true
