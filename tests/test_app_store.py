@@ -84,3 +84,77 @@ def test_remove(store):
 def test_default_path_env_override(monkeypatch, tmp_path):
     monkeypatch.setenv("ECOSYSTEM_APPS_FILE", str(tmp_path / "custom.json"))
     assert default_apps_path() == str(tmp_path / "custom.json")
+
+
+# ---- self-registration (approval-gated) and first-party keys -------------------------
+
+
+def test_register_self_creates_a_pending_inert_key(store):
+    rec, secret = store.register_self("org.widget", "Widget", owner="dev@widget",
+                                      requested_names=["widget_sensor"], requested_scopes=["commands:dispatch"])
+    assert rec["status"] == "pending"
+    assert rec["owned_names"] == [] and rec["scopes"] == []          # no grants yet
+    assert rec["requested_names"] == ["widget_sensor"]
+    assert rec["requested_scopes"] == ["commands:dispatch"]
+    assert rec["first_party"] is False
+    assert secret
+    # A pending key authenticates nothing until approved.
+    assert store.get_by_key_id(rec["key_id"]) is None
+
+
+def test_register_self_will_not_overwrite_an_existing_app(store):
+    store.add("org.widget", "Widget", "dev@widget", ["widget_sensor"])
+    with pytest.raises(ValueError):
+        store.register_self("org.widget", "Widget", requested_names=["widget_sensor"])
+
+
+def test_register_self_is_capped(store):
+    for i in range(store.MAX_PENDING):
+        store.register_self(f"org.p{i}", "P", requested_names=[f"p{i}"])
+    with pytest.raises(ValueError):
+        store.register_self("org.one-too-many", "P", requested_names=["ponemore"])
+
+
+def test_approve_grants_names_and_scopes_and_activates(store):
+    rec, _ = store.register_self("org.widget", "Widget", requested_names=["widget_sensor"],
+                                 requested_scopes=["commands:dispatch"])
+    approved = store.approve("org.widget", owned_names=["widget_sensor"],
+                             scopes=["commands:dispatch", "commands:read"])
+    assert approved["status"] == "approved"
+    assert approved["owned_names"] == ["widget_sensor"]
+    full = store.get_by_key_id(rec["key_id"])                        # now authenticates
+    assert full is not None and set(full["scopes"]) == {"commands:dispatch", "commands:read"}
+
+
+def test_approve_refuses_a_reserved_name_for_a_third_party(store):
+    store.register_self("org.evil", "Evil", requested_names=["openeye"])
+    with pytest.raises(ValueError):
+        store.approve("org.evil", owned_names=["openeye"], scopes=[])
+
+
+def test_reject_removes_the_pending_record(store):
+    rec, _ = store.register_self("org.widget", "Widget", requested_names=["widget_sensor"])
+    assert store.reject("org.widget") is True
+    assert store.get("org.widget") is None
+    assert store.reject("org.widget") is False
+
+
+def test_first_party_key_may_own_a_reserved_name(store):
+    rec, secret = store.add("aegissiem", "AegisSIEM", "owner", ["aegissiem"],
+                            scopes=["*"], first_party=True)
+    assert rec["first_party"] is True
+    assert rec["owned_names"] == ["aegissiem"]
+    full = store.get_by_key_id(rec["key_id"])
+    assert full["secret"] == secret
+
+
+def test_add_still_rejects_a_reserved_name_for_a_third_party(store):
+    with pytest.raises(ValueError):
+        store.add("org.evil", "Evil", "e@x", ["aegissiem"])   # not first_party
+
+
+def test_pending_lists_separately(store):
+    store.register_self("org.a", "A", requested_names=["a_svc"])
+    store.add("org.b", "B", "b@x", ["b_svc"])
+    pending = [a["app_id"] for a in store.list() if a["status"] == "pending"]
+    assert pending == ["org.a"]

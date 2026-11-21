@@ -337,7 +337,11 @@ async def require_registry_auth(
 def require_name_owner(name: str, auth: dict) -> None:
     """403 unless the caller owns `name` (owner may use any non-collision name)."""
     owned = auth.get("owned_names", [])
-    if owned == ["*"]:
+    # The owner (shared secret) or an app explicitly granted this name may use it,
+    # even a reserved first-party name — a first-party key is given its own
+    # reserved name at approval. The reserved-name refusal is only for an app
+    # that does NOT own it (a third party trying to claim it).
+    if owned == ["*"] or name in owned:
         return
     if name in RESERVED_NAMES:
         raise HTTPException(
@@ -349,6 +353,25 @@ def require_name_owner(name: str, auth: dict) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"app '{auth.get('app_id')}' does not own service name '{name}'",
         )
+
+
+def require_owner(auth: dict) -> None:
+    """403 unless the caller is the owner (shared-secret / `__owner__`, scopes `*`)."""
+    if auth.get("owned_names") != ["*"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="owner authentication (the shared ecosystem secret) is required",
+        )
+
+
+def _string_list(value, field: str, *, max_items: int = 50, max_len: int = 128) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise HTTPException(status_code=422, detail=f"'{field}' must be a list of strings")
+    if len(value) > max_items or any(len(v) > max_len for v in value):
+        raise HTTPException(status_code=422, detail=f"'{field}' is too large")
+    return list(value)
 
 
 async def require_read_auth(
@@ -584,6 +607,77 @@ async def register_service(
     require_name_owner(registration.name, auth)
     record = registry.register(registration)
     return record
+
+
+@app.post("/apps/register", status_code=status.HTTP_201_CREATED)
+async def register_app(request: Request, payload: dict = Body(...)):
+    """Self-service third-party registration. No authentication: it returns a key
+    that is PENDING and authenticates nothing until the owner approves it.
+
+    The owner reviews pending registrations (`GET /apps`) and approves one with
+    the names and scopes it may hold (`POST /apps/{app_id}/approve`). An existing
+    app_id is never overwritten here.
+    """
+    store = getattr(request.app.state, "app_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="app registration is not available")
+    app_id = str(payload.get("app_id") or "").strip()
+    if not app_id or len(app_id) > 128:
+        raise HTTPException(status_code=422, detail="'app_id' is required")
+    display_name = str(payload.get("display_name") or app_id).strip()[:128]
+    owner = str(payload.get("owner") or "").strip()[:256]
+    requested_names = _string_list(payload.get("requested_names"), "requested_names")
+    requested_scopes = _string_list(payload.get("requested_scopes"), "requested_scopes")
+    try:
+        rec, secret = store.register_self(
+            app_id, display_name, owner=owner,
+            requested_names=requested_names, requested_scopes=requested_scopes,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {
+        "app_id": rec["app_id"],
+        "key_id": rec["key_id"],
+        "secret": secret,
+        "status": "pending",
+        "message": "Registered. The owner must approve this app before its key can authenticate.",
+    }
+
+
+@app.get("/apps")
+async def list_apps_credentials(request: Request, auth: dict = Depends(require_registry_auth)):
+    """List app credentials (pending and approved). Owner only."""
+    require_owner(auth)
+    store = getattr(request.app.state, "app_store", None)
+    return {"apps": store.list() if store else []}
+
+
+@app.post("/apps/{app_id}/approve")
+async def approve_app(app_id: str, request: Request, payload: dict = Body(default={}),
+                      auth: dict = Depends(require_registry_auth)):
+    """Approve a registered app, granting it names and scopes. Owner only."""
+    require_owner(auth)
+    store = getattr(request.app.state, "app_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="app registration is not available")
+    owned_names = _string_list((payload or {}).get("owned_names"), "owned_names")
+    scopes = _string_list((payload or {}).get("scopes"), "scopes")
+    first_party = bool((payload or {}).get("first_party", False))
+    try:
+        return store.approve(app_id, owned_names, scopes, first_party=first_party)
+    except ValueError as exc:
+        detail = str(exc)
+        raise HTTPException(status_code=404 if "not found" in detail else 400, detail=detail)
+
+
+@app.post("/apps/{app_id}/reject")
+async def reject_app(app_id: str, request: Request, auth: dict = Depends(require_registry_auth)):
+    """Reject (remove) a registered app. Owner only."""
+    require_owner(auth)
+    store = getattr(request.app.state, "app_store", None)
+    if store is None or not store.reject(app_id):
+        raise HTTPException(status_code=404, detail=f"app '{app_id}' not found")
+    return {"status": "rejected", "app_id": app_id}
 
 
 @app.delete("/deregister/{name}")

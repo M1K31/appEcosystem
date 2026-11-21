@@ -253,3 +253,34 @@ def test_cmd_start_refuses_without_secret(monkeypatch, tmp_path, capsys):
         assert rc == 1
         mock_popen.assert_not_called()
     assert "No ecosystem secret found" in capsys.readouterr().err
+
+
+def test_partner_approve_and_reject(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("ECOSYSTEM_APPS_FILE", str(tmp_path / "apps.json"))
+    from cli.commands import cmd_partner
+    from registry.app_store import AppStore
+    store = AppStore(persistence_path=str(tmp_path / "apps.json"))
+    store.register_self("org.widget", "Widget", requested_names=["widget_sensor"])
+
+    assert cmd_partner("approve", app_id="org.widget", service_names="widget_sensor",
+                       scopes="commands:dispatch,commands:read") == 0
+    out = capsys.readouterr().out
+    assert "Approved" in out and "widget_sensor" in out
+    store2 = AppStore(persistence_path=str(tmp_path / "apps.json"))
+    rec = store2.get("org.widget")
+    assert rec["status"] == "approved" and set(rec["scopes"]) == {"commands:dispatch", "commands:read"}
+
+    store2.register_self("org.spam", "Spam", requested_names=["spam_svc"])
+    assert cmd_partner("reject", app_id="org.spam") == 0
+    assert AppStore(persistence_path=str(tmp_path / "apps.json")).get("org.spam") is None
+
+
+def test_partner_add_first_party_may_own_reserved_name(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("ECOSYSTEM_APPS_FILE", str(tmp_path / "apps.json"))
+    from cli.commands import cmd_partner
+    from registry.app_store import AppStore
+    rc = cmd_partner("add", app_id="aegissiem.node1", name="AegisSIEM", owner="me",
+                     service_names="aegissiem", first_party=True)
+    assert rc == 0
+    rec = AppStore(persistence_path=str(tmp_path / "apps.json")).get("aegissiem.node1")
+    assert rec["first_party"] is True and rec["owned_names"] == ["aegissiem"]

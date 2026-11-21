@@ -58,12 +58,18 @@ def main():
 
     partner_parser = sub.add_parser("partner", help="Manage third-party partner app credentials")
     partner_parser.add_argument("action",
-                                choices=["add", "list", "show", "suspend", "resume", "remove"])
+                                choices=["add", "approve", "reject", "list", "show",
+                                         "suspend", "resume", "remove"])
     partner_parser.add_argument("app_id", nargs="?", default=None)
     partner_parser.add_argument("--name", default=None, help="Display name (add)")
     partner_parser.add_argument("--owner", default=None, help="Owner contact (add)")
     partner_parser.add_argument("--service-names", dest="service_names", default=None,
-                                help="Comma-separated service names the app may manage (add)")
+                                help="Comma-separated service names the app may manage (add/approve)")
+    partner_parser.add_argument("--scopes", default=None,
+                                help="Comma-separated scopes to grant (add/approve), e.g. "
+                                     "commands:dispatch,commands:read,camera:record")
+    partner_parser.add_argument("--first-party", dest="first_party", action="store_true",
+                                help="Treat as a first-party app: may own a reserved service name (add/approve)")
 
     scan_parser = sub.add_parser("scan", help="Manage and run Zero-Breach-Toolkit endpoint scans")
     scan_sub = scan_parser.add_subparsers(dest="scan_action")
@@ -108,7 +114,9 @@ def main():
     elif args.command == "provider":
         sys.exit(cmd_provider(args.action, args.name, args.value))
     elif args.command == "partner":
-        sys.exit(cmd_partner(args.action, args.app_id, args.name, args.owner, args.service_names))
+        sys.exit(cmd_partner(args.action, args.app_id, args.name, args.owner, args.service_names,
+                             scopes=getattr(args, "scopes", None),
+                             first_party=getattr(args, "first_party", False)))
     elif args.command == "scan":
         sys.exit(cmd_scan(
             args.scan_action,

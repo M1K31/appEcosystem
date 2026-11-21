@@ -606,26 +606,60 @@ def cmd_apps(as_json: bool = False) -> int:
 
 
 def cmd_partner(action: str, app_id: str | None = None, name: str | None = None,
-                owner: str | None = None, service_names: str | None = None) -> int:
-    """Manage third-party partner app credentials (per-app HMAC keys)."""
+                owner: str | None = None, service_names: str | None = None,
+                scopes: str | None = None, first_party: bool = False) -> int:
+    """Manage third-party partner and first-party app credentials (per-app HMAC keys)."""
     from registry.app_store import AppStore
     store = AppStore()
+
+    def _csv(value: str | None) -> list[str]:
+        return [v.strip() for v in (value or "").split(",") if v.strip()]
 
     if action == "add":
         if not (app_id and name and owner and service_names):
             print("Usage: ecosystem partner add <app_id> --name <display> "
-                  "--owner <contact> --service-names a,b")
+                  "--owner <contact> --service-names a,b [--scopes commands:dispatch,commands:read] "
+                  "[--first-party]")
             return 1
-        names = [n.strip() for n in service_names.split(",") if n.strip()]
+        names = _csv(service_names)
+        scope_list = _csv(scopes) or (["*"] if first_party else None)
         try:
-            rec, secret = store.add(app_id, name, owner, names)
+            rec, secret = store.add(app_id, name, owner, names, scopes=scope_list, first_party=first_party)
         except ValueError as e:
             print(f"Error: {e}")
             return 1
-        print(f"Created partner app '{rec['app_id']}' (owns: {', '.join(rec['owned_names'])})")
+        kind = "first-party" if first_party else "partner"
+        print(f"Created {kind} app '{rec['app_id']}' (owns: {', '.join(rec['owned_names'])}; "
+              f"scopes: {', '.join(rec['scopes'])})")
         print("Copy these now — the secret is shown only once:")
         print(f"  key_id: {rec['key_id']}")
         print(f"  secret: {secret}")
+        return 0
+
+    if action == "approve":
+        if not (app_id and service_names):
+            print("Usage: ecosystem partner approve <app_id> --service-names a,b "
+                  "[--scopes commands:dispatch,...] [--first-party]")
+            return 1
+        names = _csv(service_names)
+        scope_list = _csv(scopes) or (["*"] if first_party else [])
+        try:
+            rec = store.approve(app_id, names, scope_list, first_party=first_party)
+        except ValueError as e:
+            print(f"Error: {e}")
+            return 1
+        print(f"Approved '{rec['app_id']}' (owns: {', '.join(rec['owned_names'])}; "
+              f"scopes: {', '.join(rec['scopes'])}).")
+        return 0
+
+    if action == "reject":
+        if not app_id:
+            print("Usage: ecosystem partner reject <app_id>")
+            return 1
+        if not store.reject(app_id):
+            print(f"No such app: {app_id}")
+            return 1
+        print(f"Rejected and removed '{app_id}'.")
         return 0
 
     if action == "list":
@@ -635,8 +669,12 @@ def cmd_partner(action: str, app_id: str | None = None, name: str | None = None,
             return 0
         print(f"Partner apps ({len(apps)}):\n")
         for a in apps:
+            owns = ",".join(a.get("owned_names") or [])
+            if a.get("status") == "pending":
+                owns = "requested=" + ",".join(a.get("requested_names") or [])
+            tag = " [first-party]" if a.get("first_party") else ""
             print(f"  {a['status']:<9} {a['app_id']:<24} {a['display_name']:<18} "
-                  f"owns={','.join(a['owned_names'])}  created={a['created_at']}")
+                  f"{owns}{tag}  created={a['created_at']}")
         return 0
 
     if action == "show":
@@ -667,7 +705,8 @@ def cmd_partner(action: str, app_id: str | None = None, name: str | None = None,
         print(f"Partner app '{app_id}' {past}.")
         return 0
 
-    print(f"Unknown partner action: {action} (use add|list|show|suspend|resume|remove)")
+    print(f"Unknown partner action: {action} "
+          "(use add|approve|reject|list|show|suspend|resume|remove)")
     return 1
 
 
