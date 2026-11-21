@@ -42,7 +42,7 @@ dependencies = [
     # tool.setuptools.packages.find below): registry/app.py imports it, and
     # ecosystem_auth is imported throughout the registry and CLI.
     "appecosystem-client>=0.4.2",  # 0.4.2: self-registration helper (ecosystem_client.registration)
-    "appecosystem-auth>=0.4.0",
+    "appecosystem-auth>=0.4.1",  # 0.4.1: owner principal carries is_owner (registry owner gates need it)
     # The registry imports these at module scope (policy engine, capability
     # registry, voice router); they were previously only available from a
     # checkout, so a PyPI install of the registry could not start.
