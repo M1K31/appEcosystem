@@ -15,7 +15,7 @@ from ecosystem_client.contracts import load_schema, validate_against_schema
 from ecosystem_hub.command_common import json_too_large
 from ecosystem_hub.command_store import IdempotencyConflict
 
-from .commands import CommandDispatcher, InvalidCommand
+from .commands import CommandDispatcher, InvalidCommand, MissingGrant
 
 router = APIRouter(tags=["commands"])
 
@@ -183,6 +183,8 @@ async def dispatch_command(request: Request, payload: dict[str, Any] = Body(...)
         raise _invalid("'context' must be an object")
 
     actor, identity = _resolve_actor(request, payload, auth)
+    # An app key carries its grants as scopes; the shared secret holds them all.
+    granted = None if identity == "shared_secret" else set(auth.get("scopes") or [])
 
     try:
         return await dispatcher.dispatch(
@@ -196,7 +198,10 @@ async def dispatch_command(request: Request, payload: dict[str, Any] = Body(...)
             idempotency_key=idempotency_key,
             correlation_id=correlation_id,
             context=context,
+            granted=granted,
         )
+    except MissingGrant as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     except InvalidCommand as exc:
         raise _invalid(str(exc))
     except IdempotencyConflict as exc:

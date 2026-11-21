@@ -50,6 +50,10 @@ def _actor_key(actor: dict[str, Any]) -> tuple:
     return (actor.get("app"), actor.get("id"), actor.get("type"), actor.get("auth_method"))
 
 
+class MissingGrant(PermissionError):
+    """The requester's app key does not hold the grant the capability's manifest requires."""
+
+
 class InvalidCommand(ValueError):
     """The request cannot be dispatched as written; nothing was stored."""
 
@@ -164,8 +168,16 @@ class CommandDispatcher:
         idempotency_key: str,
         correlation_id: str | None = None,
         context: dict[str, Any] | None = None,
+        granted: set[str] | None = None,
     ) -> dict[str, Any]:
-        """Run one capability request to a final or waiting status. Raises IdempotencyConflict."""
+        """Run one capability request to a final or waiting status. Raises IdempotencyConflict.
+
+        `granted` is what the requester's credential holds: an app key's scopes.
+        None means the shared ecosystem secret, which every first-party app
+        signs with and which therefore cannot be told apart per app; it holds
+        every grant. An app key must hold the manifest's `required_grant` (or
+        "*"), else MissingGrant, before anything is stored or sent.
+        """
         target = dict(target or {})
         parameters = dict(parameters or {})
         if actor.get("app") != requester_app:
@@ -175,6 +187,11 @@ class CommandDispatcher:
         if json_too_large(parameters):
             raise InvalidCommand("parameters are larger than 64 KiB")
         provider, unavailable_reason = self._select_provider(capability, target)
+        required_grant = ((provider or {}).get("manifest") or {}).get("required_grant")
+        if required_grant in (None, "", "none"):
+            required_grant = None  # the manifest asks for no grant
+        if granted is not None and required_grant and required_grant not in granted and "*" not in granted:
+            raise MissingGrant(f"'{capability}' requires the '{required_grant}' grant, which this app key does not hold")
         action_class = provider["action_class"] if provider else "unknown"
         inputs_schema = ((provider or {}).get("manifest") or {}).get("inputs_schema")
         if isinstance(inputs_schema, dict) and inputs_schema:
