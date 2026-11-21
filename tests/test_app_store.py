@@ -274,3 +274,41 @@ def test_separate_processes_do_not_lose_updates(tmp_path, start_method):
         p.join(60)
     assert all(p.exitcode == 0 for p in procs)
     assert len(AppStore(persistence_path=path).list()) == n   # every process's add survived
+
+
+def _mp_suspend(path, app_id):
+    from registry.app_store import AppStore
+    AppStore(persistence_path=path).set_status(app_id, "suspended")
+
+
+def _mp_register(path, i):
+    from registry.app_store import AppStore
+    AppStore(persistence_path=path).register_self(f"org.r{i}", "R", requested_names=[f"rsvc{i}"])
+
+
+@pytest.mark.parametrize("start_method", ["spawn", "fork"])
+def test_cross_process_registration_does_not_undo_a_suspend(tmp_path, start_method):
+    """The exact race from the finding: a registration in one process must not
+    restore a key another process suspended. Under the lock the suspend survives
+    and the suspended key stays unresolvable."""
+    import multiprocessing as mp
+    if start_method not in mp.get_all_start_methods():
+        pytest.skip(f"{start_method} start method not available")
+    ctx = mp.get_context(start_method)
+    path = str(tmp_path / "apps.json")
+    seed = AppStore(persistence_path=path)
+    rec, _ = seed.add("org.keep", "Keep", "o", ["keep_svc"])
+    key_id = rec["key_id"]
+
+    procs = [ctx.Process(target=_mp_suspend, args=(path, "org.keep"))]
+    procs += [ctx.Process(target=_mp_register, args=(path, i)) for i in range(8)]
+    for p in procs:
+        p.start()
+    for p in procs:
+        p.join(60)
+    assert all(p.exitcode == 0 for p in procs)
+
+    final = AppStore(persistence_path=path)
+    assert final.get("org.keep")["status"] == "suspended"          # the suspend was not clobbered back
+    assert final.get_by_key_id(key_id) is None                     # and the suspended key stays rejected
+    assert sum(1 for a in final.list() if a["status"] == "pending") == 8   # every registration survived too
