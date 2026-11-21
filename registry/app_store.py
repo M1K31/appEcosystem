@@ -9,11 +9,30 @@ immediately).
 import json
 import logging
 import os
+import re
 import secrets
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+# App ids: a conservative, shell/URL-safe shape. A leading alphanumeric bars the
+# reserved `__owner__` principal (and any `__`-prefixed internal id) from being
+# claimed by a registered or self-registered app.
+_APP_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+# Characters that would turn an owned service name into a wildcard. `*` in
+# particular is the shared-secret owner's "owns everything" marker and must
+# never be held by an app key.
+_WILDCARD_CHARS = set("*?[]")
+
+
+def validate_app_id(app_id: str) -> None:
+    """Raise ValueError unless `app_id` is well-formed and not a reserved internal id."""
+    if not isinstance(app_id, str) or not _APP_ID_RE.match(app_id) or app_id.startswith("__"):
+        raise ValueError(
+            "app_id must be 1–128 chars of letters, digits, '.', '_' or '-', start alphanumeric, "
+            "and not begin with '__'"
+        )
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +113,9 @@ class AppStore:
         taken = {n for app_id, rec in self._apps.items()
                  if app_id != exclude_app_id for n in rec.get("owned_names", [])}
         for n in owned_names:
+            if not n or set(n) & _WILDCARD_CHARS:
+                # '*' is the shared-secret owner's wildcard; an app key must never hold it.
+                raise ValueError(f"service name {n!r} may not be empty or contain a wildcard")
             if n in RESERVED_NAMES and not first_party:
                 raise ValueError(f"'{n}' is a reserved first-party service name")
             if n in taken:
@@ -103,6 +125,7 @@ class AppStore:
             owned_names: list[str], scopes: Optional[list[str]] = None,
             *, first_party: bool = False) -> tuple[dict, str]:
         """Create an approved app key. `first_party=True` lets it own a reserved name (it IS that app)."""
+        validate_app_id(app_id)
         self._maybe_reload()
         if app_id in self._apps:
             raise ValueError(f"app_id '{app_id}' already exists")
@@ -137,6 +160,7 @@ class AppStore:
         existing app_id is never overwritten here, so the open route cannot
         reset an approved app's key.
         """
+        validate_app_id(app_id)
         self._maybe_reload()
         if app_id in self._apps:
             raise ValueError(f"app_id '{app_id}' already exists")

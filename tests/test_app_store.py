@@ -158,3 +158,27 @@ def test_pending_lists_separately(store):
     store.add("org.b", "B", "b@x", ["b_svc"])
     pending = [a["app_id"] for a in store.list() if a["status"] == "pending"]
     assert pending == ["org.a"]
+
+
+# ---- hardening: reserved ids and wildcard names (security review) --------------------
+
+
+@pytest.mark.parametrize("bad", ["__owner__", "__internal", "_leading", "", "has space",
+                                 "bad*glob", "x" * 129])
+def test_register_self_rejects_malformed_or_reserved_app_ids(store, bad):
+    with pytest.raises(ValueError):
+        store.register_self(bad, "X", requested_names=["ok_name"])
+
+
+def test_add_rejects_the_owner_app_id(store):
+    with pytest.raises(ValueError):
+        store.add("__owner__", "Spoof", "e@x", ["spoof_name"])
+
+
+@pytest.mark.parametrize("name", ["*", "a*", "a?b", "a[b]"])
+def test_owned_names_cannot_be_a_wildcard(store, name):
+    with pytest.raises(ValueError):
+        store.add("org.a", "A", "a@x", [name])
+    store.register_self("org.b", "B", requested_names=["ok"])
+    with pytest.raises(ValueError):
+        store.approve("org.b", owned_names=[name], scopes=[])

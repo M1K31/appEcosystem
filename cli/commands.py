@@ -622,7 +622,9 @@ def cmd_partner(action: str, app_id: str | None = None, name: str | None = None,
                   "[--first-party]")
             return 1
         names = _csv(service_names)
-        scope_list = _csv(scopes) or (["*"] if first_party else None)
+        # No implicit "*": even a first-party app gets only the scopes named, or
+        # the store's minimal default (register:self) when none are given.
+        scope_list = _csv(scopes) or None
         try:
             rec, secret = store.add(app_id, name, owner, names, scopes=scope_list, first_party=first_party)
         except ValueError as e:
@@ -642,7 +644,8 @@ def cmd_partner(action: str, app_id: str | None = None, name: str | None = None,
                   "[--scopes commands:dispatch,...] [--first-party]")
             return 1
         names = _csv(service_names)
-        scope_list = _csv(scopes) or (["*"] if first_party else [])
+        # No implicit "*": the owner grants exactly the scopes named (empty if none).
+        scope_list = _csv(scopes)
         try:
             rec = store.approve(app_id, names, scope_list, first_party=first_party)
         except ValueError as e:

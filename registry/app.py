@@ -356,8 +356,16 @@ def require_name_owner(name: str, auth: dict) -> None:
 
 
 def require_owner(auth: dict) -> None:
-    """403 unless the caller is the owner (shared-secret / `__owner__`, scopes `*`)."""
-    if auth.get("owned_names") != ["*"]:
+    """403 unless the caller is the owner.
+
+    The owner is the shared-secret principal, which the auth layer alone marks
+    with ``app_id == "__owner__"`` — a value no app key can hold, since that id
+    is reserved at registration. Keying off `app_id` rather than
+    ``owned_names == ["*"]`` means an app the owner accidentally granted a
+    wildcard name could never be mistaken for the owner (and wildcard names are
+    refused anyway).
+    """
+    if auth.get("app_id") != "__owner__":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="owner authentication (the shared ecosystem secret) is required",
@@ -621,9 +629,13 @@ async def register_app(request: Request, payload: dict = Body(...)):
     store = getattr(request.app.state, "app_store", None)
     if store is None:
         raise HTTPException(status_code=503, detail="app registration is not available")
+    from .app_store import validate_app_id
+
     app_id = str(payload.get("app_id") or "").strip()
-    if not app_id or len(app_id) > 128:
-        raise HTTPException(status_code=422, detail="'app_id' is required")
+    try:
+        validate_app_id(app_id)   # rejects empty, oversized, reserved (__owner__), and malformed ids
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     display_name = str(payload.get("display_name") or app_id).strip()[:128]
     owner = str(payload.get("owner") or "").strip()[:256]
     requested_names = _string_list(payload.get("requested_names"), "requested_names")

@@ -135,3 +135,20 @@ def test_an_approved_non_owner_app_still_cannot_approve_others(env):
         # The owner listing is likewise forbidden to the partner key.
         assert client.get("/apps", headers=sign_request("GET", "http://testserver/apps", secret,
                                                         key_id=rec["key_id"])).status_code == 403
+
+
+def test_cannot_self_register_as_the_owner(env):
+    with TestClient(app) as client:
+        r = client.post("/apps/register", json={"app_id": "__owner__"})
+        assert r.status_code == 422
+        assert env["store"].get("__owner__") is None
+
+
+def test_owner_cannot_approve_a_wildcard_name(env):
+    with TestClient(app) as client:
+        client.post("/apps/register", json={"app_id": "org.greedy", "requested_names": ["x"]})
+        body = {"owned_names": ["*"], "scopes": ["commands:dispatch"]}
+        r = client.post("/apps/org.greedy/approve", json=body,
+                        headers=_owner("POST", "/apps/org.greedy/approve", body))
+        assert r.status_code == 400
+        assert env["store"].get("org.greedy")["status"] == "pending"
