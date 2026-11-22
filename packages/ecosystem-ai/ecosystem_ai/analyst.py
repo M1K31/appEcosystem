@@ -19,9 +19,18 @@ from .router import ProviderRouter
 
 @dataclass
 class AnalystReply:
+    """Raw analyst output plus provenance.
+
+    ``model`` is the REQUESTED/resolved analyst pick. ``served_model`` and
+    ``provider`` are what ACTUALLY served this reply; they may differ from
+    ``model`` until WP3 forces the resolved model to run and rejects mismatches.
+    """
+
     text: str
     model: str
     source: str  # "stock" here; "forged" for a forged model
+    served_model: str = ""
+    provider: str = ""
 
 
 def _render_user_message(request: str, context: dict) -> str:
@@ -45,4 +54,10 @@ async def propose(
         ChatMessage(role="user", content=_render_user_message(request, context)),
     ]
     result = await router.chat(messages, task="security_analyst")
-    return AnalystReply(text=result.text, model=model, source="stock")
+    return AnalystReply(
+        text=result.text,
+        model=model,
+        source="stock",
+        served_model=result.model,
+        provider=result.provider,
+    )

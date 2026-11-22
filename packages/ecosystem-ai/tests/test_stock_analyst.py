@@ -50,3 +50,20 @@ async def test_propose_output_round_trips_through_parse_proposals():
     out = await propose("x", {}, router=router, profile=AIProfile(selected_model="m"), hw=_hw(ram_gb=8))
     from ecosystem_client.contracts import parse_proposals
     assert len(parse_proposals(out.text)) == 1
+
+
+class _ServesOtherModelRouter(_FakeRouter):
+    async def chat(self, messages, task="chat", *, tools=None):
+        await super().chat(messages, task, tools=tools)
+        return ChatResult(text=self.reply, model="llama3.2:3b", provider="ollama-fake")
+
+
+@pytest.mark.asyncio
+async def test_reply_reports_served_model_distinct_from_requested():
+    router = _ServesOtherModelRouter(reply='{"proposals": []}')
+    out = await propose("x", {}, router=router,
+                        profile=AIProfile(selected_model="mistral:7b"), hw=_hw(ram_gb=8))
+    assert out.model == "mistral:7b"
+    assert out.served_model == "llama3.2:3b"
+    assert out.provider == "ollama-fake"
+    assert out.model != out.served_model
