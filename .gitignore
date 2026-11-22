@@ -8,6 +8,7 @@ data/
 !ecosystem_client/schemas/*.json
 !ecosystem_client_js/schemas/*.json
 !packages/ecosystem-ui-controls/*.json
+!packages/ecosystem-ai/tests/fixtures/forged/*.json
 
 # Python
 __pycache__/

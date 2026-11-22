@@ -12,6 +12,7 @@ import binascii
 import hashlib
 import json
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -19,8 +20,12 @@ from typing import Callable
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
+from ecosystem_ai.analyst_prompt import build_analyst_modelfile
+
 # Fields covered by the signature. Mirrors Model Forge's payload exactly:
 # includes eval_scores; excludes signer_fingerprint and signature.
+# NOTE: signer_fingerprint is UNSIGNED metadata and must NEVER be used for a
+# trust decision; trust comes only from the caller-pinned public_key_b64.
 _SIGNED_FIELDS = (
     "model_id",
     "base_model",
@@ -79,21 +84,16 @@ def _default_ollama_create(model_id: str, modelfile_path: Path) -> None:
             check=True,
             capture_output=True,
             text=True,
+            timeout=600,
         )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("ollama create timed out after 600s") from exc
     except FileNotFoundError as exc:
         raise RuntimeError("the 'ollama' binary was not found on PATH") from exc
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(
             f"ollama create failed (exit {exc.returncode}): {(exc.stderr or '').strip()}"
         ) from exc
-
-
-def _sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def register_forged_model(
@@ -120,16 +120,26 @@ def register_forged_model(
     if not isinstance(gguf_name, str) or Path(gguf_name).name != gguf_name:
         raise ValueError("gguf_file must be a bare filename")
     try:
-        actual = _sha256_file(output_dir / gguf_name)
+        gguf_bytes = (output_dir / gguf_name).read_bytes()  # read exactly once
     except OSError as exc:
         raise ValueError(f"cannot read model file: {gguf_name}") from exc
-    if actual != manifest["sha256"]:
+    if hashlib.sha256(gguf_bytes).hexdigest() != manifest["sha256"]:
         raise ValueError("model file digest does not match the signed manifest")
 
-    try:
-        ollama_create(manifest["model_id"], output_dir / "Modelfile")
-    except FileNotFoundError as exc:
-        raise RuntimeError("the 'ollama' binary was not found on PATH") from exc
+    # Register only the verified bytes, from a private dir. Nothing in
+    # output_dir (the Modelfile, or the gguf after hashing) is trusted past
+    # this point: the Modelfile is generated in-process from verified data.
+    with tempfile.TemporaryDirectory(prefix="forge-register-") as tmp:
+        private_gguf = Path(tmp).resolve() / gguf_name
+        private_gguf.write_bytes(gguf_bytes)
+        modelfile_path = Path(tmp).resolve() / "Modelfile"
+        modelfile_path.write_text(
+            build_analyst_modelfile(str(private_gguf)), encoding="utf-8"
+        )
+        try:
+            ollama_create(manifest["model_id"], modelfile_path)
+        except FileNotFoundError as exc:
+            raise RuntimeError("the 'ollama' binary was not found on PATH") from exc
 
     return RegisteredModel(
         model_id=manifest["model_id"],
