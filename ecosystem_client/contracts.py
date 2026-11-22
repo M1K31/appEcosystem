@@ -5,6 +5,7 @@ import json
 import math
 import re
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -269,6 +270,102 @@ def assert_valid_schema(instance: Any, schema: str | dict[str, Any]) -> None:
     errors = validate_against_schema(instance, schema)
     if errors:
         raise SchemaValidationError("; ".join(errors))
+
+
+class UnusableModelOutput(ValueError):
+    """Model output could not be turned into a valid list of action proposals."""
+
+
+@dataclass(frozen=True)
+class Proposal:
+    """A schema-valid action proposal (action-proposal.v1). Shape only: the
+    action_class is NOT cross-checked against the action here."""
+
+    action: str
+    action_class: str
+    target: str
+    parameters: dict
+    rationale: str
+    confidence: float
+
+
+def _extract_json_payload(text: str) -> Any:
+    """Return the single JSON object/array in ``text`` (bare or prose-wrapped).
+
+    Zero or multiple candidate payloads raise UnusableModelOutput.
+    """
+    if not isinstance(text, str):
+        raise UnusableModelOutput("model output is not text")
+    stripped = text.strip()
+    try:
+        whole = json.loads(stripped)
+    except ValueError:
+        whole = None
+    else:
+        if isinstance(whole, (dict, list)):
+            return whole
+    decoder = json.JSONDecoder()
+    candidates: list[Any] = []
+    i = 0
+    while i < len(stripped):
+        if stripped[i] in "{[":
+            try:
+                obj, end = decoder.raw_decode(stripped, i)
+            except ValueError:
+                i += 1
+                continue
+            candidates.append(obj)
+            i = end
+        else:
+            i += 1
+    if not candidates:
+        raise UnusableModelOutput("no JSON payload found in model output")
+    if len(candidates) > 1:
+        raise UnusableModelOutput(
+            f"ambiguous model output: {len(candidates)} JSON payloads found"
+        )
+    return candidates[0]
+
+
+def parse_proposals(
+    text: str, *, known_capabilities: set[str] | None = None
+) -> list[Proposal]:
+    """Parse model output into validated Proposals (shape only).
+
+    Accepts ``{"proposals": [...]}`` or a bare array. When ``known_capabilities``
+    is given, any ``action`` outside it is rejected.
+    """
+    payload = _extract_json_payload(text)
+    if isinstance(payload, dict):
+        if set(payload) != {"proposals"} or not isinstance(payload["proposals"], list):
+            raise UnusableModelOutput(
+                'expected {"proposals": [...]} or a bare array of proposals'
+            )
+        items = payload["proposals"]
+    else:
+        items = payload
+    schema = load_schema("action-proposal.v1")
+    proposals: list[Proposal] = []
+    for idx, item in enumerate(items):
+        errors: list[str] = []
+        _validate_node(item, schema, f"$[{idx}]", errors)
+        if errors:
+            raise UnusableModelOutput("; ".join(errors))
+        if known_capabilities is not None and item["action"] not in known_capabilities:
+            raise UnusableModelOutput(
+                f"proposal {idx}: unknown action {item['action']!r}"
+            )
+        proposals.append(
+            Proposal(
+                action=item["action"],
+                action_class=item["action_class"],
+                target=item["target"],
+                parameters=item["parameters"],
+                rationale=item["rationale"],
+                confidence=float(item["confidence"]),
+            )
+        )
+    return proposals
 
 
 def _norm_ts(value: Any) -> Any:
