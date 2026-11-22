@@ -49,7 +49,7 @@ dependencies = [
     "appecosystem-policy>=0.3.0",
     "appecosystem-hub>=0.2.0",
     "appecosystem-voice>=0.1.0",
-    "appecosystem-ai>=0.1.1",
+    "appecosystem-ai>=0.2.0",
     "appecosystem-compute>=0.1.0",
 ]
 
