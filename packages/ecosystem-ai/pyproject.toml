@@ -29,6 +29,7 @@ classifiers = [
 ]
 dependencies = [
     "httpx>=0.24.0",
+    "cryptography>=42",
 ]
 
 [project.urls]

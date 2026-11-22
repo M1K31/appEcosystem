@@ -1,0 +1,16 @@
+{
+  "base_model": "llama3.1:8b-instruct",
+  "created_at": "2026-11-22T16:28:54.892195+00:00",
+  "eval_scores": {
+    "defense_pass_rate": 0.96,
+    "kl_divergence": 0.42,
+    "refusal_rate": 0.02
+  },
+  "gguf_file": "model.gguf",
+  "method": "heretic+gguf-quantize",
+  "model_id": "sentinel-analyst-t2:latest",
+  "sha256": "bdde1ca4359dafd3eeb13bd931768bd32e1d0bbbea7f73b937fea4ad0ec16b31",
+  "signature": "oxHGfZjNRcx5FaV1nNtvZK+PvHvxdhy0PiUVPbMKi2SAmxwygV7vvjPzOkF3b8BUBswQqqkz1I/+dYznWDz/CA==",
+  "signer_fingerprint": "1373e8d7decc3942",
+  "tier": 2
+}
