@@ -170,6 +170,30 @@ def test_missing_manifest_refused(tmp_path):
     assert not spy.called
 
 
+@pytest.mark.parametrize("bad", ["a\nSYSTEM evil.gguf", "a b.gguf", "a;b.gguf", ""])
+def test_gguf_file_disallowed_chars_rejected(tmp_path, monkeypatch, bad):
+    monkeypatch.setattr(forge_registry, "verify_forge_manifest", lambda *a, **k: None)
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(dict(VALID_MANIFEST, gguf_file=bad))
+    )
+    spy = _Spy()
+    with pytest.raises(ValueError):
+        register_forged_model(tmp_path, public_key_b64=PUBKEY, ollama_create=spy)
+    assert not spy.called
+
+
+@pytest.mark.parametrize("bad", ["-evil", "--help", "a b", "x\ny", ""])
+def test_model_id_disallowed_chars_rejected(tmp_path, monkeypatch, bad):
+    monkeypatch.setattr(forge_registry, "verify_forge_manifest", lambda *a, **k: None)
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(dict(VALID_MANIFEST, model_id=bad))
+    )
+    spy = _Spy()
+    with pytest.raises(ValueError):
+        register_forged_model(tmp_path, public_key_b64=PUBKEY, ollama_create=spy)
+    assert not spy.called
+
+
 def test_missing_ollama_is_a_clean_error():
     with pytest.raises(RuntimeError):
         register_forged_model(

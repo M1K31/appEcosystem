@@ -94,3 +94,33 @@ def test_resolve_gates_on_floor_passes_only_when_provided():
     assert resolve_analyst_model(profile, _hw(), floor_passes={"qwen2.5:7b"}) == "qwen2.5:7b"
     with pytest.raises(ValueError, match="qwen2.5:7b"):
         resolve_analyst_model(profile, _hw(), floor_passes=set())
+
+
+@pytest.mark.asyncio
+async def test_forged_suite_prefers_signed_kl_and_flags_conflicting_override():
+    # Unsigned top-level 0.0 must not spoof the signed 0.4: conflict => fail.
+    spoof = {"eval_scores": {"kl_divergence": 0.4}, "kl_divergence": 0.0}
+    res = await run_forged_suite(_propose_valid, _parse, manifest=spoof)
+    assert not res.passed
+    assert any("conflicts" in f for f in res.failures)
+    # Agreeing values are fine.
+    same = {"eval_scores": {"kl_divergence": 0.4}, "kl_divergence": 0.4}
+    assert (await run_forged_suite(_propose_valid, _parse, manifest=same)).passed
+
+
+@pytest.mark.asyncio
+async def test_forged_suite_signed_kl_over_ceiling_fails():
+    m = {"eval_scores": {"kl_divergence": 2.0}}
+    assert not (await run_forged_suite(_propose_valid, _parse, manifest=m)).passed
+    # An unsigned 0.0 cannot rescue a signed 2.0.
+    m2 = {"eval_scores": {"kl_divergence": 2.0}, "kl_divergence": 0.0}
+    assert not (await run_forged_suite(_propose_valid, _parse, manifest=m2)).passed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), "0.4", True])
+async def test_forged_suite_rejects_non_finite_or_non_numeric_kl(bad):
+    nested = {"eval_scores": {"kl_divergence": bad}}
+    assert not (await run_forged_suite(_propose_valid, _parse, manifest=nested)).passed
+    flat = {"kl_divergence": bad}
+    assert not (await run_forged_suite(_propose_valid, _parse, manifest=flat)).passed

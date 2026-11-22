@@ -11,6 +11,7 @@ import base64
 import binascii
 import hashlib
 import json
+import re
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -21,6 +22,10 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from ecosystem_ai.analyst_prompt import build_analyst_modelfile
+
+# Signed names are still character-validated before use (Modelfile / CLI safety).
+_GGUF_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$")
 
 # Fields covered by the signature. Mirrors Model Forge's payload exactly:
 # includes eval_scores; excludes signer_fingerprint and signature.
@@ -119,6 +124,11 @@ def register_forged_model(
     gguf_name = manifest["gguf_file"]
     if not isinstance(gguf_name, str) or Path(gguf_name).name != gguf_name:
         raise ValueError("gguf_file must be a bare filename")
+    if not _GGUF_NAME_RE.fullmatch(gguf_name):
+        raise ValueError("gguf_file contains disallowed characters")
+    model_id = manifest["model_id"]
+    if not isinstance(model_id, str) or not _MODEL_ID_RE.fullmatch(model_id):
+        raise ValueError("model_id contains disallowed characters")
     try:
         gguf_bytes = (output_dir / gguf_name).read_bytes()  # read exactly once
     except OSError as exc:

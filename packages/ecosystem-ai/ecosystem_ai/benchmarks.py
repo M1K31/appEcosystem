@@ -14,6 +14,7 @@ Calling convention (injected, so this module never imports ``ecosystem_client``)
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Sequence
 
@@ -91,11 +92,25 @@ async def run_forged_suite(
     """
     base = await run_floor_suite(propose, validate)
     failures = list(base.failures)
-    kl = manifest.get("kl_divergence")
-    if kl is None:
-        kl = (manifest.get("eval_scores") or {}).get("kl_divergence")
+    # Prefer the SIGNED source (eval_scores is in Model Forge's signed payload);
+    # a top-level kl_divergence is unsigned and only a fallback. If both exist
+    # and disagree, treat the unsigned override as an attack signal.
+    signed = manifest.get("eval_scores")
+    signed_kl = signed.get("kl_divergence") if isinstance(signed, dict) else None
+    flat_kl = manifest.get("kl_divergence")
+    if signed_kl is not None and flat_kl is not None and signed_kl != flat_kl:
+        failures.append(
+            "manifest kl_divergence conflicts with signed eval_scores.kl_divergence"
+        )
+    kl = signed_kl if signed_kl is not None else flat_kl
     if kl is None:
         failures.append("manifest records no kl_divergence")
+    elif not (
+        isinstance(kl, (int, float))
+        and not isinstance(kl, bool)
+        and math.isfinite(kl)
+    ):
+        failures.append(f"kl_divergence {kl!r} is not a finite number")
     elif kl > KL_DIVERGENCE_CEILING:
         failures.append(
             f"kl_divergence {kl} exceeds ceiling {KL_DIVERGENCE_CEILING}"
