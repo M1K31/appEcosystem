@@ -272,6 +272,9 @@ def assert_valid_schema(instance: Any, schema: str | dict[str, Any]) -> None:
         raise SchemaValidationError("; ".join(errors))
 
 
+_MAX_PROPOSAL_TEXT_BYTES = 65536  # fail closed on oversized untrusted model output
+
+
 class UnusableModelOutput(ValueError):
     """Model output could not be turned into a valid list of action proposals."""
 
@@ -296,10 +299,12 @@ def _extract_json_payload(text: str) -> Any:
     """
     if not isinstance(text, str):
         raise UnusableModelOutput("model output is not text")
+    if len(text) > _MAX_PROPOSAL_TEXT_BYTES:
+        raise UnusableModelOutput("model output exceeds the maximum accepted size")
     stripped = text.strip()
     try:
         whole = json.loads(stripped)
-    except ValueError:
+    except Exception:  # ValueError, RecursionError: unparseable untrusted text
         whole = None
     else:
         if isinstance(whole, (dict, list)):
@@ -311,10 +316,12 @@ def _extract_json_payload(text: str) -> Any:
         if stripped[i] in "{[":
             try:
                 obj, end = decoder.raw_decode(stripped, i)
-            except ValueError:
+            except Exception:  # not a usable candidate (incl. RecursionError)
                 i += 1
                 continue
             candidates.append(obj)
+            if len(candidates) > 1:
+                break
             i = end
         else:
             i += 1

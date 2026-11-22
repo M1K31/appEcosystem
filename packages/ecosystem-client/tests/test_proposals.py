@@ -46,3 +46,15 @@ def test_unknown_capability_rejected_when_registry_supplied():
 
 def test_empty_proposal_list_is_valid():
     assert parse_proposals('{"proposals": []}') == []
+
+
+def test_oversized_input_is_unusable():
+    from ecosystem_client import contracts
+
+    with pytest.raises(UnusableModelOutput):
+        parse_proposals(" " * (contracts._MAX_PROPOSAL_TEXT_BYTES + 1))
+
+
+def test_deeply_nested_payload_is_unusable():
+    with pytest.raises(UnusableModelOutput):
+        parse_proposals("[" * 20000 + "]" * 20000)
