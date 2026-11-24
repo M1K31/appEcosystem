@@ -32,9 +32,14 @@ def load_recorded_floor_passes(path: Path | str | None = None) -> set[str]:
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
         if isinstance(data, list):
-            return {str(item) for item in data}
+            if all(isinstance(item, str) for item in data):
+                return set(data)
+            return set()
         if isinstance(data, dict):
-            return {str(item) for item in data.get("passes", [])}
+            passes_val = data.get("passes")
+            if isinstance(passes_val, list) and all(isinstance(item, str) for item in passes_val):
+                return set(passes_val)
+            return set()
     except Exception as exc:
         logger.warning("Could not read floor passes from %s: %s", p, exc)
     return set()
@@ -42,11 +47,29 @@ def load_recorded_floor_passes(path: Path | str | None = None) -> set[str]:
 
 def record_floor_pass(model: str, path: Path | str | None = None) -> None:
     """Record that a model has passed the floor benchmark suite."""
+    import tempfile
+
     p = Path(path) if path is not None else get_floor_passes_path()
     passes = load_recorded_floor_passes(p)
     passes.add(model)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(sorted(passes), indent=2), encoding="utf-8")
+
+    content = json.dumps(sorted(passes), indent=2)
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile("w", dir=p.parent, delete=False, encoding="utf-8") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+            tmp_path = Path(f.name)
+        os.replace(tmp_path, p)
+    except Exception:
+        if tmp_path is not None and tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+        raise
 
 
 def clear_recorded_floor_passes(path: Path | str | None = None) -> None:

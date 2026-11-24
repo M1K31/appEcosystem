@@ -62,3 +62,28 @@ async def test_propose_rejects_served_model_mismatch():
             hw=_hw(),
             floor_passes={"test-analyst:7b"},
         )
+
+
+@pytest.mark.asyncio
+async def test_explicit_model_override_does_not_fall_back_to_other_installed_model():
+    from ecosystem_ai.providers.base import AIProvider
+    from ecosystem_ai.router import ProviderError, ProviderRouter
+
+    class FakeLocalProvider(AIProvider):
+        name = "ollama"
+
+        async def available(self):
+            return True
+
+        async def models(self):
+            return ["other-installed:7b"]
+
+        async def chat(self, messages, *, model=None, tools=None):
+            return None
+
+    fake = FakeLocalProvider()
+    profile = AIProfile(default_provider="ollama")
+    router = ProviderRouter(profile=profile, providers={"ollama": fake})
+
+    with pytest.raises(ProviderError, match="explicit model override 'verified-target:7b' is not installed"):
+        await router.pick("security_analyst", model="verified-target:7b")

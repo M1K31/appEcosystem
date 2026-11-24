@@ -46,3 +46,32 @@ def test_env_override_path(monkeypatch, tmp_path):
     assert get_floor_passes_path() == env_file
     record_floor_pass("model-from-env", env_file)
     assert "model-from-env" in load_recorded_floor_passes()
+
+
+def test_load_floor_passes_rejects_dict_passes_mapping_shape(tmp_path):
+    store_file = tmp_path / "dict_passes.json"
+    store_file.write_text(json.dumps({"passes": {"qwen2.5:7b": False}}), encoding="utf-8")
+    assert load_recorded_floor_passes(store_file) == set()
+
+
+def test_load_floor_passes_rejects_non_string_items(tmp_path):
+    store_file = tmp_path / "non_string.json"
+    store_file.write_text(json.dumps({"passes": [123, None, True]}), encoding="utf-8")
+    assert load_recorded_floor_passes(store_file) == set()
+
+
+def test_record_floor_pass_atomic_write_preserves_on_failure(tmp_path, monkeypatch):
+    import os
+
+    store_file = tmp_path / "floor_passes.json"
+    record_floor_pass("model-safe:latest", store_file)
+    assert load_recorded_floor_passes(store_file) == {"model-safe:latest"}
+
+    def fake_replace(src, dst):
+        raise OSError("Disk failure during replace")
+
+    monkeypatch.setattr(os, "replace", fake_replace)
+    with pytest.raises(OSError, match="Disk failure during replace"):
+        record_floor_pass("model-broken:latest", store_file)
+
+    assert load_recorded_floor_passes(store_file) == {"model-safe:latest"}

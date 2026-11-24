@@ -190,8 +190,19 @@ class ProviderRouter:
                     if cfg and cfg.model and model is None:
                         chosen_model = cfg.model
                     return provider, chosen_model
-                # Local provider: the tier's recommended model may not actually
-                # be installed, which would 404 on every call.
+                # Local provider:
+                if model is not None:
+                    # Explicit model override: verify against installed models or dispatch
+                    # unchanged. Never substitute a different installed model.
+                    models_fn = getattr(provider, "models", None)
+                    if callable(models_fn):
+                        installed = await models_fn()
+                        if installed and model not in installed:
+                            raise ProviderError(
+                                f"explicit model override {model!r} is not installed on provider {name!r}"
+                            )
+                    return provider, self._warn_if_weak(model, task)
+                # The tier's recommended model may not actually be installed, which would 404 on every call.
                 chosen_model = await self._ensure_local_model(provider, chosen_model, task)
                 return provider, chosen_model
 

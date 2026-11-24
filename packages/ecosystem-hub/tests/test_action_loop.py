@@ -39,12 +39,13 @@ class FakeHub:
         self._responses = list(responses or [])
         self.invocations = []
 
-    async def invoke(self, capability, target, parameters=None, rationale=None):
+    async def invoke(self, capability, target, parameters=None, rationale=None, idempotency_key=None, **kwargs):
         self.invocations.append({
             "capability": capability,
             "target": target,
             "parameters": parameters,
             "rationale": rationale,
+            "idempotency_key": idempotency_key,
         })
         if self._responses:
             resp = self._responses.pop(0)
@@ -391,3 +392,171 @@ async def test_timeline_and_step_to_dict_serialization():
     tl_dict = tl.to_dict()
     assert tl_dict["session_id"] == "sess-1"
     assert len(tl_dict["steps"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_action_loop_with_real_policy_engine():
+    from ecosystem_policy.engine import PolicyEngine
+
+    pe = PolicyEngine()
+    assert isinstance(pe.frozen, bool)
+    assert pe.frozen is False
+
+    rounds = 0
+
+    async def analyst(req, ctx):
+        nonlocal rounds
+        rounds += 1
+        if rounds == 1:
+            return json.dumps({
+                "proposals": [
+                    {
+                        "action": "threat_intel.lookup_ioc",
+                        "action_class": "observe",
+                        "target": "192.168.1.20",
+                        "parameters": {},
+                        "rationale": "Internal audit",
+                        "confidence": 0.9,
+                    }
+                ]
+            })
+        return json.dumps({"proposals": []})
+
+    hub = FakeHub()
+    tl = await run_action_loop("Check local device", analyst=analyst, policy=pe, hub=hub)
+    assert tl.completed is True
+    assert len(tl.steps) == 1
+    assert tl.steps[0].decision in ("allow", "allow_and_notify")
+
+    pe.freeze(initiated_by="admin", reason="Test emergency")
+    assert pe.frozen is True
+    tl_frozen = await run_action_loop("Check local device", analyst=analyst, policy=pe, hub=hub)
+    assert tl_frozen.completed is True
+    assert tl_frozen.stopped_reason == "frozen"
+
+
+@pytest.mark.asyncio
+async def test_action_loop_normalizes_command_target_with_scope_and_identifier():
+    rounds = 0
+
+    async def analyst(req, ctx):
+        nonlocal rounds
+        rounds += 1
+        if rounds == 1:
+            return json.dumps({
+                "proposals": [
+                    {
+                        "action": "threat_intel.lookup_ioc",
+                        "action_class": "observe",
+                        "target": "203.0.113.19",
+                        "parameters": {},
+                        "rationale": "Check external IP",
+                        "confidence": 0.9,
+                    }
+                ]
+            })
+        return json.dumps({"proposals": []})
+
+    policy = FakePolicy()
+    hub = FakeHub()
+
+    tl = await run_action_loop("Check 203.0.113.19", analyst=analyst, policy=policy, hub=hub)
+    assert tl.completed is True
+    assert len(hub.invocations) == 1
+    dispatched_target = hub.invocations[0]["target"]
+    assert dispatched_target["scope"] == "external"
+    assert dispatched_target["identifier"] == "203.0.113.19"
+    assert "target" not in dispatched_target
+
+    req = policy.recorded_requests[0]
+    assert req.target["is_external"] is True
+    assert req.target["host"] == "203.0.113.19"
+
+
+@pytest.mark.asyncio
+async def test_action_loop_creates_approval_queue_record_on_require_approval(tmp_path, monkeypatch):
+    from ecosystem_policy.approval_queue import LocalApprovalQueue, default_approval_db_path
+
+    monkeypatch.setenv("ECOSYSTEM_DATA_DIR", str(tmp_path))
+
+    rounds = 0
+
+    async def analyst(req, ctx):
+        nonlocal rounds
+        rounds += 1
+        if rounds == 1:
+            return json.dumps({
+                "proposals": [
+                    {
+                        "action": "system.reboot",
+                        "action_class": "remediate",
+                        "target": "server-1",
+                        "parameters": {},
+                        "rationale": "Emergency reboot",
+                        "confidence": 0.85,
+                    }
+                ]
+            })
+        return json.dumps({"proposals": []})
+
+    policy_dec = PolicyDecision(
+        result="require_approval",
+        reason="Reboot requires human authorization",
+        policy_version=3,
+        mode="normal",
+        restrictions="on",
+        frozen=False,
+    )
+    policy = FakePolicy(decisions=[policy_dec])
+    hub = FakeHub()
+
+    tl = await run_action_loop("Reboot", analyst=analyst, policy=policy, hub=hub)
+    assert tl.completed is True
+    step = tl.steps[0]
+    assert step.decision == "require_approval"
+    assert step.status == "pending_approval"
+    assert step.approval_id is not None
+    assert len(step.approval_id) > 10
+
+    # LocalApprovalQueue uses default_approval_db_path("action_loop") or ("hub")
+    q = LocalApprovalQueue(db_path=default_approval_db_path("hub"))
+    rec = q.get(step.approval_id)
+    assert rec is not None
+    assert rec["action"] == "system.reboot"
+    assert rec["status"] == "pending"
+    assert len(hub.invocations) == 0
+
+
+@pytest.mark.asyncio
+async def test_action_loop_halts_on_outcome_unknown_for_reconciliation():
+    async def analyst(req, ctx):
+        return json.dumps({
+            "proposals": [
+                {
+                    "action": "containment.block_ip",
+                    "action_class": "contain",
+                    "target": "203.0.113.55",
+                    "parameters": {},
+                    "rationale": "Block attacker",
+                    "confidence": 0.9,
+                }
+            ]
+        })
+
+    policy = FakePolicy()
+    hub = FakeHub(responses=[{
+        "status": "failed",
+        "command_id": "cmd-unk-1",
+        "outcome_unknown": True,
+        "error": "Timeout while waiting for provider ACK",
+    }])
+
+    tl = await run_action_loop("Block attacker", analyst=analyst, policy=policy, hub=hub)
+    assert tl.completed is True
+    assert tl.stopped_reason == "reconciliation_needed"
+    assert "unknown outcome" in tl.error
+    assert len(tl.steps) == 1
+    step = tl.steps[0]
+    assert step.outcome_unknown is True
+    assert step.status == "failed"
+    assert step.idempotency_key is not None

@@ -12,6 +12,7 @@ Invariants enforced:
 from __future__ import annotations
 
 import inspect
+import logging
 import time
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -19,6 +20,10 @@ from typing import Any
 from ecosystem_client.contracts import Proposal, UnusableModelOutput, parse_proposals
 from ecosystem_client.ulid import generate_ulid
 from ecosystem_policy.models import ActionRequest
+
+from .command_common import is_internal_subject, policy_target
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -34,6 +39,8 @@ class ActionStep:
     result: Any = None
     error: str | None = None
     approval_id: str | None = None
+    outcome_unknown: bool = False
+    idempotency_key: str | None = None
     timestamp: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict[str, Any]:
@@ -48,6 +55,8 @@ class ActionStep:
             "result": self.result,
             "error": self.error,
             "approval_id": self.approval_id,
+            "outcome_unknown": self.outcome_unknown,
+            "idempotency_key": self.idempotency_key,
             "timestamp": self.timestamp,
         }
 
@@ -60,7 +69,7 @@ class ActionTimeline:
     request: str
     steps: list[ActionStep] = field(default_factory=list)
     completed: bool = False
-    stopped_reason: str = ""  # "completed" | "frozen" | "max_steps_exceeded" | "no_more_proposals" | "unusable_model_output" | "error"
+    stopped_reason: str = ""  # "completed" | "frozen" | "max_steps_exceeded" | "no_more_proposals" | "unusable_model_output" | "reconciliation_needed" | "error"
     error: str | None = None
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
@@ -78,12 +87,24 @@ class ActionTimeline:
         }
 
 
-def _target_to_dict(target: Any) -> dict[str, Any]:
-    if isinstance(target, dict):
-        return target
-    if isinstance(target, str):
-        return {"target": target}
-    return {"raw": str(target)}
+def _normalize_command_target(raw: Any) -> dict[str, Any]:
+    """Convert proposal target into canonical command schema target {scope, identifier, ...}."""
+    if isinstance(raw, dict):
+        scope = raw.get("scope")
+        identifier = raw.get("identifier") or raw.get("target") or raw.get("host")
+        if not scope:
+            scope = "external" if (identifier and not is_internal_subject(identifier)) else "local"
+        res: dict[str, Any] = {"scope": scope}
+        for k in ("device_id", "service"):
+            if raw.get(k) is not None:
+                res[k] = raw[k]
+        if identifier is not None:
+            res["identifier"] = str(identifier)
+        return res
+    if isinstance(raw, str):
+        scope = "external" if not is_internal_subject(raw) else "local"
+        return {"scope": scope, "identifier": raw}
+    return {"scope": "local"}
 
 
 async def _call_analyst(analyst: Any, request: str, context: dict[str, Any]) -> list[Proposal]:
@@ -116,11 +137,18 @@ async def _decide(policy: Any, req: ActionRequest) -> Any:
 
 
 async def _is_frozen(policy: Any) -> bool:
+    if hasattr(policy, "is_frozen"):
+        f = policy.is_frozen
+        val = f() if callable(f) else f
+        if inspect.isawaitable(val):
+            return await val
+        return bool(val)
     if hasattr(policy, "frozen"):
-        f = policy.frozen()
-        if inspect.isawaitable(f):
-            return await f
-        return bool(f)
+        f = policy.frozen
+        val = f() if callable(f) else f
+        if inspect.isawaitable(val):
+            return await val
+        return bool(val)
     return False
 
 
@@ -209,12 +237,13 @@ async def run_action_loop(
                 timeline.completed = True
                 break
 
-            target_dict = _target_to_dict(proposal.target)
+            cmd_target = _normalize_command_target(proposal.target)
+            req_target = policy_target(cmd_target, proposal.action_class, proposal.parameters)
             req = ActionRequest(
                 actor=actor,
                 action=proposal.action,
                 action_class=proposal.action_class,
-                target=target_dict,
+                target=req_target,
                 rationale=proposal.rationale,
                 context=current_context,
             )
@@ -222,10 +251,60 @@ async def run_action_loop(
             decision = await _decide(policy, req)
             decision_result = getattr(decision, "result", "deny")
             decision_reason = getattr(decision, "reason", "")
-            grant_id = getattr(decision, "grant_id", None)
 
             # Invariant 1: Denied or approval-pending proposals are never dispatched
             if decision_result in ("deny", "require_approval"):
+                appr_id = None
+                if decision_result == "require_approval":
+                    if hasattr(hub, "request_approval") and callable(hub.request_approval):
+                        try:
+                            resp = hub.request_approval(
+                                capability=proposal.action,
+                                action_class=proposal.action_class,
+                                target=cmd_target,
+                                rationale=proposal.rationale,
+                                decision=decision,
+                            )
+                            if inspect.isawaitable(resp):
+                                resp = await resp
+                            if isinstance(resp, dict):
+                                appr_id = resp.get("approval_id")
+                        except Exception as exc:
+                            logger.warning("hub.request_approval failed: %s", exc)
+                    elif hasattr(policy, "create_approval_request") and callable(policy.create_approval_request):
+                        try:
+                            resp = policy.create_approval_request(req, decision)
+                            if inspect.isawaitable(resp):
+                                resp = await resp
+                            if isinstance(resp, dict):
+                                appr_id = resp.get("approval_id")
+                        except Exception as exc:
+                            logger.warning("policy.create_approval_request failed: %s", exc)
+                    elif getattr(decision, "approval_id", None):
+                        appr_id = getattr(decision, "approval_id")
+                    elif getattr(decision, "grant_id", None):
+                        appr_id = getattr(decision, "grant_id")
+
+                    if not appr_id:
+                        try:
+                            from ecosystem_policy.approval_queue import LocalApprovalQueue
+
+                            q = LocalApprovalQueue()
+                            rec = q.request_approval(
+                                requester_service=actor,
+                                actor=actor,
+                                action=proposal.action,
+                                action_class=proposal.action_class,
+                                target=cmd_target,
+                                summary=proposal.rationale or f"{actor}: {proposal.action}",
+                                policy_version=getattr(decision, "policy_version", 3),
+                                mode=getattr(decision, "mode", "normal"),
+                                ttl_seconds=getattr(decision, "ttl_seconds", 3600),
+                            )
+                            appr_id = rec.get("approval_id")
+                        except Exception as exc:
+                            logger.warning("Failed creating approval queue record: %s", exc)
+
                 timeline.steps.append(
                     ActionStep(
                         step_number=step_num,
@@ -233,7 +312,7 @@ async def run_action_loop(
                         decision=decision_result,
                         decision_reason=decision_reason,
                         status="denied" if decision_result == "deny" else "pending_approval",
-                        approval_id=grant_id,
+                        approval_id=appr_id,
                     )
                 )
                 continue
@@ -254,19 +333,31 @@ async def run_action_loop(
                 break
 
             # Dispatch allowed proposal through hub
+            step_key = generate_ulid()
             cmd_id = None
             status = "completed"
             result = None
             error = None
             appr_id = None
+            outcome_unknown = False
 
             try:
-                invoke_out = hub.invoke(
-                    capability=proposal.action,
-                    target=target_dict,
-                    parameters=proposal.parameters,
-                    rationale=proposal.rationale,
-                )
+                invoke_kwargs: dict[str, Any] = {
+                    "capability": proposal.action,
+                    "target": cmd_target,
+                    "parameters": proposal.parameters,
+                    "rationale": proposal.rationale,
+                }
+                try:
+                    sig = inspect.signature(hub.invoke)
+                    if "idempotency_key" in sig.parameters or any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+                    ):
+                        invoke_kwargs["idempotency_key"] = step_key
+                except (ValueError, TypeError):
+                    invoke_kwargs["idempotency_key"] = step_key
+
+                invoke_out = hub.invoke(**invoke_kwargs)
                 if inspect.isawaitable(invoke_out):
                     invoke_out = await invoke_out
 
@@ -276,6 +367,7 @@ async def run_action_loop(
                     result = invoke_out.get("result")
                     error = invoke_out.get("error")
                     appr_id = invoke_out.get("approval_id")
+                    outcome_unknown = bool(invoke_out.get("outcome_unknown", False))
                 else:
                     result = invoke_out
                 dispatched_in_round += 1
@@ -295,10 +387,18 @@ async def run_action_loop(
                     result=result,
                     error=error,
                     approval_id=appr_id,
+                    outcome_unknown=outcome_unknown,
+                    idempotency_key=step_key,
                 )
             )
 
-        if timeline.stopped_reason in ("frozen", "max_steps_exceeded", "unusable_model_output", "error"):
+            if outcome_unknown:
+                timeline.stopped_reason = "reconciliation_needed"
+                timeline.error = f"Step {step_num} ({proposal.action}) resulted in an unknown outcome; stopping for reconciliation."
+                timeline.completed = True
+                break
+
+        if timeline.stopped_reason in ("frozen", "max_steps_exceeded", "unusable_model_output", "reconciliation_needed", "error"):
             break
 
         # Follow-up round setup: feed step results into context
@@ -309,6 +409,7 @@ async def run_action_loop(
                 "status": step.status,
                 "result": step.result,
                 "error": step.error,
+                "outcome_unknown": step.outcome_unknown,
             })
 
         # If no allowed actions were executed, no need for another follow-up round
