@@ -560,3 +560,43 @@ async def test_action_loop_halts_on_outcome_unknown_for_reconciliation():
     assert step.outcome_unknown is True
     assert step.status == "failed"
     assert step.idempotency_key is not None
+
+
+@pytest.mark.asyncio
+async def test_action_loop_invokes_step_callback():
+    async def analyst(req, ctx):
+        if ctx.get("prior_steps"):
+            return json.dumps({"proposals": []})
+        return json.dumps({
+            "proposals": [
+                {
+                    "action": "threat_intel.lookup_ioc",
+                    "action_class": "observe",
+                    "target": "192.168.1.10",
+                    "parameters": {},
+                    "rationale": "Lookup",
+                    "confidence": 0.9,
+                }
+            ]
+        })
+
+    policy = FakePolicy()
+    hub = FakeHub(responses=[{"status": "completed", "result": {"verdict": "suspicious"}}])
+
+    recorded_steps = []
+
+    def callback(step):
+        recorded_steps.append(step)
+
+    tl = await run_action_loop(
+        "Lookup IP",
+        analyst=analyst,
+        policy=policy,
+        hub=hub,
+        step_callback=callback,
+    )
+    assert tl.completed is True
+    assert len(recorded_steps) == 1
+    assert recorded_steps[0].proposal.action == "threat_intel.lookup_ioc"
+    assert recorded_steps[0].status == "completed"
+
