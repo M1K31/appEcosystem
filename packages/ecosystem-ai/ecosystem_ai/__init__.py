@@ -6,6 +6,11 @@ and gates features that won't run. A shared AIProfile (held by the registry)
 keeps LLM selections consistent across every app.
 """
 
+from .floor_store import (
+    clear_recorded_floor_passes,
+    load_recorded_floor_passes,
+    record_floor_pass,
+)
 from .profile import AIProfile, CloudProvider, default_profile
 from .hardware import (
     CapabilityTier,
@@ -37,9 +42,12 @@ from .providers import (
     ProviderError,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 __all__ = [
+    "clear_recorded_floor_passes",
+    "load_recorded_floor_passes",
+    "record_floor_pass",
     "AIProfile",
     "CloudProvider",
     "default_profile",

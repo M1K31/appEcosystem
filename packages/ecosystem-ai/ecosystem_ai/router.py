@@ -69,7 +69,7 @@ class ProviderRouter:
 
     # Tasks whose output a user is likely to act on as if it were expert
     # judgement. A too-small model still answers these, which is the hazard.
-    _JUDGEMENT_TASKS = ("security",)
+    _JUDGEMENT_TASKS = ("security", "security_analyst")
 
     def _warn_if_weak(self, model: str, task: str) -> str:
         """Log loudly when a fallback lands on a model too small for the task.
@@ -159,8 +159,14 @@ class ProviderRouter:
         await pull(wanted)
         return wanted
 
-    async def pick(self, task: str = "chat") -> tuple[AIProvider, str]:
-        """Choose an available provider + model for the task."""
+    async def pick(
+        self, task: str = "chat", *, model: Optional[str] = None
+    ) -> tuple[AIProvider, str]:
+        """Choose an available provider + model for the task.
+
+        If ``model`` is explicitly specified, it overrides the profile's resolved
+        model for the task.
+        """
         order = self._ordered_providers(task)
         allow_fallback = self.profile.allow_cloud_fallback
         first_choice = order[0] if order else None
@@ -173,7 +179,7 @@ class ProviderRouter:
             if idx > 0 and not allow_fallback:
                 break
             if await provider.available():
-                model = self.resolve_model(task)
+                chosen_model = model if model is not None else self.resolve_model(task)
                 # Classify by membership in the cloud map, NOT by "differs from
                 # default_provider": with per-task pinning a user can pin the
                 # local provider for one task while the default is a cloud one,
@@ -181,13 +187,24 @@ class ProviderRouter:
                 # the installed-model check below.
                 if name in self.profile.cloud:
                     cfg = self.profile.cloud.get(name)
-                    if cfg and cfg.model:
-                        model = cfg.model
-                    return provider, model
-                # Local provider: the tier's recommended model may not actually
-                # be installed, which would 404 on every call.
-                model = await self._ensure_local_model(provider, model, task)
-                return provider, model
+                    if cfg and cfg.model and model is None:
+                        chosen_model = cfg.model
+                    return provider, chosen_model
+                # Local provider:
+                if model is not None:
+                    # Explicit model override: verify against installed models or dispatch
+                    # unchanged. Never substitute a different installed model.
+                    models_fn = getattr(provider, "models", None)
+                    if callable(models_fn):
+                        installed = await models_fn()
+                        if installed and model not in installed:
+                            raise ProviderError(
+                                f"explicit model override {model!r} is not installed on provider {name!r}"
+                            )
+                    return provider, self._warn_if_weak(model, task)
+                # The tier's recommended model may not actually be installed, which would 404 on every call.
+                chosen_model = await self._ensure_local_model(provider, chosen_model, task)
+                return provider, chosen_model
 
         raise ProviderError(
             f"no available provider for task '{task}' "
@@ -199,7 +216,8 @@ class ProviderRouter:
         messages: list[ChatMessage],
         task: str = "chat",
         *,
+        model: Optional[str] = None,
         tools: Optional[list[dict]] = None,
     ) -> ChatResult:
-        provider, model = await self.pick(task)
-        return await provider.chat(messages, model=model, tools=tools)
+        provider, resolved_model = await self.pick(task, model=model)
+        return await provider.chat(messages, model=resolved_model, tools=tools)

@@ -15,20 +15,29 @@ def _hw(ram_gb=8, has_gpu=False, vram_gb=0.0, cpu_cores=8, arch="x86_64",
     )
 
 
+@pytest.fixture(autouse=True)
+def allow_all_analyst_models(monkeypatch):
+    """In pure stock analyst wrapper tests, bypass floor store check."""
+    import ecosystem_ai.analyst_select as a
+    monkeypatch.setattr(a, "can_select_as_analyst", lambda model, passes: True)
+
+
 class _FakeRouter:
-    """Mirrors ProviderRouter.chat(messages, task="chat", *, tools=None)."""
+    """Mirrors ProviderRouter.chat(messages, task="chat", *, model=None, tools=None)."""
 
     def __init__(self, reply: str):
         self.reply = reply
         self.last_system = None
         self.last_user = None
         self.last_task = None
+        self.last_model = None
 
-    async def chat(self, messages, task="chat", *, tools=None):
+    async def chat(self, messages, task="chat", *, model=None, tools=None):
         self.last_system = next(m.content for m in messages if m.role == "system")
         self.last_user = next(m.content for m in messages if m.role == "user")
         self.last_task = task
-        return ChatResult(text=self.reply, model="fake-model", provider="fake")
+        self.last_model = model
+        return ChatResult(text=self.reply, model=model or "fake-model", provider="fake")
 
 
 @pytest.mark.asyncio
@@ -53,17 +62,14 @@ async def test_propose_output_round_trips_through_parse_proposals():
 
 
 class _ServesOtherModelRouter(_FakeRouter):
-    async def chat(self, messages, task="chat", *, tools=None):
-        await super().chat(messages, task, tools=tools)
+    async def chat(self, messages, task="chat", *, model=None, tools=None):
+        await super().chat(messages, task, model=model, tools=tools)
         return ChatResult(text=self.reply, model="llama3.2:3b", provider="ollama-fake")
 
 
 @pytest.mark.asyncio
-async def test_reply_reports_served_model_distinct_from_requested():
+async def test_propose_rejects_when_served_model_distinct_from_requested():
     router = _ServesOtherModelRouter(reply='{"proposals": []}')
-    out = await propose("x", {}, router=router,
-                        profile=AIProfile(selected_model="mistral:7b"), hw=_hw(ram_gb=8))
-    assert out.model == "mistral:7b"
-    assert out.served_model == "llama3.2:3b"
-    assert out.provider == "ollama-fake"
-    assert out.model != out.served_model
+    with pytest.raises(ValueError, match="does not match resolved analyst model"):
+        await propose("x", {}, router=router,
+                      profile=AIProfile(selected_model="mistral:7b"), hw=_hw(ram_gb=8))
