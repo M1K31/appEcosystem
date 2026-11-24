@@ -152,6 +152,17 @@ async def _is_frozen(policy: Any) -> bool:
     return False
 
 
+async def _record_step(timeline: ActionTimeline, step: ActionStep, callback: Any | None) -> None:
+    timeline.steps.append(step)
+    if callback is not None:
+        try:
+            res = callback(step)
+            if inspect.isawaitable(res):
+                await res
+        except Exception as exc:
+            logger.warning("step_callback error: %s", exc)
+
+
 async def run_action_loop(
     request: str,
     context: dict[str, Any] | None = None,
@@ -162,6 +173,7 @@ async def run_action_loop(
     max_steps: int = 5,
     max_rounds: int | None = None,
     actor: str = "action_loop",
+    step_callback: Any | None = None,
 ) -> ActionTimeline:
     """Run the shared action loop with fail-closed guardrails.
 
@@ -224,14 +236,16 @@ async def run_action_loop(
 
             # Invariant 2: Mid-loop Freeze immediately halts remaining steps
             if await _is_frozen(policy):
-                timeline.steps.append(
+                await _record_step(
+                    timeline,
                     ActionStep(
                         step_number=step_num,
                         proposal=proposal,
                         decision="frozen",
                         decision_reason="System is in emergency freeze",
                         status="skipped_frozen",
-                    )
+                    ),
+                    step_callback,
                 )
                 timeline.stopped_reason = "frozen"
                 timeline.completed = True
@@ -305,7 +319,8 @@ async def run_action_loop(
                         except Exception as exc:
                             logger.warning("Failed creating approval queue record: %s", exc)
 
-                timeline.steps.append(
+                await _record_step(
+                    timeline,
                     ActionStep(
                         step_number=step_num,
                         proposal=proposal,
@@ -313,20 +328,23 @@ async def run_action_loop(
                         decision_reason=decision_reason,
                         status="denied" if decision_result == "deny" else "pending_approval",
                         approval_id=appr_id,
-                    )
+                    ),
+                    step_callback,
                 )
                 continue
 
             # Policy allowed: double check freeze before dispatch
             if await _is_frozen(policy):
-                timeline.steps.append(
+                await _record_step(
+                    timeline,
                     ActionStep(
                         step_number=step_num,
                         proposal=proposal,
                         decision="frozen",
                         decision_reason="System froze before dispatch",
                         status="skipped_frozen",
-                    )
+                    ),
+                    step_callback,
                 )
                 timeline.stopped_reason = "frozen"
                 timeline.completed = True
@@ -376,7 +394,8 @@ async def run_action_loop(
                 status = "failed"
                 error = str(exc)
 
-            timeline.steps.append(
+            await _record_step(
+                timeline,
                 ActionStep(
                     step_number=step_num,
                     proposal=proposal,
@@ -389,7 +408,8 @@ async def run_action_loop(
                     approval_id=appr_id,
                     outcome_unknown=outcome_unknown,
                     idempotency_key=step_key,
-                )
+                ),
+                step_callback,
             )
 
             if outcome_unknown:
