@@ -47,13 +47,18 @@ async def propose(
     router: ProviderRouter,
     profile: AIProfile,
     hw: HardwareInfo,
+    floor_passes: set[str] | None = None,
 ) -> AnalystReply:
-    model = resolve_analyst_model(profile, hw)
+    model = resolve_analyst_model(profile, hw, floor_passes=floor_passes)
     messages = [
         ChatMessage(role="system", content=ANALYST_SYSTEM_PROMPT),
         ChatMessage(role="user", content=_render_user_message(request, context)),
     ]
-    result = await router.chat(messages, task="security_analyst")
+    result = await router.chat(messages, task="security_analyst", model=model)
+    if result.model != model:
+        raise ValueError(
+            f"served model {result.model!r} does not match resolved analyst model {model!r}"
+        )
     return AnalystReply(
         text=result.text,
         model=model,

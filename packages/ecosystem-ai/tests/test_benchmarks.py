@@ -88,9 +88,13 @@ def _hw():
                         has_gpu=False, vram_gb=0.0, free_disk_gb=100.0)
 
 
-def test_resolve_gates_on_floor_passes_only_when_provided():
+def test_resolve_defaults_to_floor_store_and_fails_closed(monkeypatch):
     profile = AIProfile(selected_model="qwen2.5:7b")
-    assert resolve_analyst_model(profile, _hw()) == "qwen2.5:7b"
+    # Missing/empty store refuses selection by default (fail-closed)
+    monkeypatch.setenv("ECOSYSTEM_FLOOR_PASSES_PATH", "/nonexistent/floor_passes.json")
+    with pytest.raises(ValueError, match="qwen2.5:7b"):
+        resolve_analyst_model(profile, _hw())
+    # Explicit pass succeeds
     assert resolve_analyst_model(profile, _hw(), floor_passes={"qwen2.5:7b"}) == "qwen2.5:7b"
     with pytest.raises(ValueError, match="qwen2.5:7b"):
         resolve_analyst_model(profile, _hw(), floor_passes=set())

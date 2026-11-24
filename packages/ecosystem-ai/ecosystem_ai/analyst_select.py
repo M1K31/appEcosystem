@@ -6,6 +6,7 @@ path (including an unknown tier, which falls back to the T0 model).
 """
 from __future__ import annotations
 
+from .floor_store import load_recorded_floor_passes
 from .hardware import CapabilityTier, HardwareInfo, tier_for
 from .profile import AIProfile
 
@@ -34,8 +35,14 @@ def resolve_analyst_model(
     hw: HardwareInfo,
     floor_passes: set[str] | None = None,
 ) -> str:
-    """Resolve the analyst model. ``floor_passes=None`` means no gating; when
-    given, a model without a recorded floor pass is refused."""
+    """Resolve the analyst model.
+
+    If ``floor_passes`` is None, it defaults to the loaded recorded floor passes.
+    A missing record returns an empty set, which fails closed and refuses to select.
+    """
+    if floor_passes is None:
+        floor_passes = load_recorded_floor_passes()
+
     explicit = profile.task_models.get("security_analyst")
     if _is_set(explicit):
         model = explicit
@@ -43,7 +50,7 @@ def resolve_analyst_model(
         model = profile.selected_model
     else:
         model = TIER_ANALYST_MODELS.get(tier_for(hw), _SAFE_FALLBACK)
-    if floor_passes is not None and not can_select_as_analyst(model, floor_passes):
+    if not can_select_as_analyst(model, floor_passes):
         raise ValueError(
             f"analyst model {model!r} has no recorded floor pass; refusing to select it"
         )

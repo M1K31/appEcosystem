@@ -1,6 +1,15 @@
+import pytest
+
 from ecosystem_ai.analyst_select import TIER_ANALYST_MODELS, resolve_analyst_model
 from ecosystem_ai.hardware import CapabilityTier, HardwareInfo
 from ecosystem_ai.profile import AIProfile
+
+
+@pytest.fixture(autouse=True)
+def allow_all_analyst_models(monkeypatch):
+    """In pure mapping tests, bypass the floor-pass store to test resolution tiers."""
+    import ecosystem_ai.analyst_select as a
+    monkeypatch.setattr(a, "can_select_as_analyst", lambda model, passes: True)
 
 
 def _hw(ram_gb=8, has_gpu=False, vram_gb=0.0, cpu_cores=8, arch="x86_64",
@@ -47,3 +56,11 @@ def test_no_tinyllama_in_map_and_unknown_tier_safe(monkeypatch):
     import ecosystem_ai.analyst_select as a
     monkeypatch.setattr(a, "tier_for", lambda hw: None)
     assert resolve_analyst_model(AIProfile(), _hw()) == "llama3.2:1b"
+
+
+def test_fails_closed_when_model_has_no_recorded_floor_pass(monkeypatch):
+    import ecosystem_ai.analyst_select as a
+    monkeypatch.setattr(a, "can_select_as_analyst", lambda model, passes: model in passes)
+    monkeypatch.setattr(a, "load_recorded_floor_passes", lambda path=None: set())
+    with pytest.raises(ValueError, match="has no recorded floor pass"):
+        resolve_analyst_model(AIProfile(), _hw())
