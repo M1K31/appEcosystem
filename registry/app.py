@@ -804,7 +804,7 @@ async def publish_event(request: Request, envelope: dict = Body(...)):
         event = EventEnvelope(**envelope)
     except Exception:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=getattr(status, "HTTP_422_UNPROCESSABLE_CONTENT", 422),
             detail="invalid event envelope",
         )
 

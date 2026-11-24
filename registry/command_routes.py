@@ -65,8 +65,11 @@ def _visible(record: dict[str, Any], names: Optional[set[str]]) -> bool:
     return names is None or record.get("requester_app") in names or record.get("provider_app") in names
 
 
+HTTP_422 = getattr(status, "HTTP_422_UNPROCESSABLE_CONTENT", 422)
+
+
 def _invalid(detail: str) -> HTTPException:
-    return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail)
+    return HTTPException(status_code=HTTP_422, detail=detail)
 
 
 def _is_owner(auth: dict[str, Any]) -> bool:

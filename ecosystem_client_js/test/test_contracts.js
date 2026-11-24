@@ -38,8 +38,9 @@ test("ULID generation is monotonic, 26-char Crockford Base32, and preserves time
     assert.strictEqual(isUlid("8ZZZZZZZZZZZZZZZZZZZZZZZZZ"), false);
 });
 
-test("All 5 canonical schemas load and validate v2 EventEnvelope", () => {
+test("All canonical schemas load and validate v2 EventEnvelope and action proposal", () => {
     assert.deepStrictEqual(listSchemas(), [
+        "action-proposal.v1",
         "capability-manifest.v1",
         "command-envelope.v1",
         "event-envelope.v2",
@@ -57,6 +58,16 @@ test("All 5 canonical schemas load and validate v2 EventEnvelope", () => {
     assertValidSchema(env, "event-envelope.v2");
     assert.strictEqual(verifyEventEnvelope(env, SECRET), true);
     assert.strictEqual(verifyEventEnvelope(env, "wrong-secret"), false);
+
+    const proposal = {
+        action: "quarantine_host",
+        action_class: "contain",
+        target: "edge-pi",
+        parameters: { host: "edge-pi", reason: "beaconing" },
+        rationale: "Host detected exhibiting malicious beaconing pattern",
+        confidence: 0.95,
+    };
+    assertValidSchema(proposal, "action-proposal.v1");
 });
 
 test("EventSubscriber accepts both v2 and legacy v1 signed envelopes", async () => {
