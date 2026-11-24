@@ -129,19 +129,29 @@ def register_forged_model(
     model_id = manifest["model_id"]
     if not isinstance(model_id, str) or not _MODEL_ID_RE.fullmatch(model_id):
         raise ValueError("model_id contains disallowed characters")
-    try:
-        gguf_bytes = (output_dir / gguf_name).read_bytes()  # read exactly once
-    except OSError as exc:
-        raise ValueError(f"cannot read model file: {gguf_name}") from exc
-    if hashlib.sha256(gguf_bytes).hexdigest() != manifest["sha256"]:
-        raise ValueError("model file digest does not match the signed manifest")
+    source_gguf = output_dir / gguf_name
+    if not source_gguf.is_file():
+        raise ValueError(f"cannot read model file: {gguf_name}")
 
-    # Register only the verified bytes, from a private dir. Nothing in
-    # output_dir (the Modelfile, or the gguf after hashing) is trusted past
-    # this point: the Modelfile is generated in-process from verified data.
+    # Register only the verified bytes, from a private staging dir.
+    # Stream the file in bounded 1 MiB chunks to compute SHA-256 while staging,
+    # avoiding a full multi-gigabyte GGUF memory allocation in Python RAM.
+    # Nothing in output_dir (the Modelfile, or the source gguf after hashing)
+    # is trusted past this point: the Modelfile is generated in-process from verified data.
     with tempfile.TemporaryDirectory(prefix="forge-register-") as tmp:
         private_gguf = Path(tmp).resolve() / gguf_name
-        private_gguf.write_bytes(gguf_bytes)
+        hasher = hashlib.sha256()
+        try:
+            with open(source_gguf, "rb") as src, open(private_gguf, "wb") as dst:
+                while chunk := src.read(1024 * 1024):
+                    hasher.update(chunk)
+                    dst.write(chunk)
+        except OSError as exc:
+            raise ValueError(f"cannot read model file: {gguf_name}") from exc
+
+        if hasher.hexdigest() != manifest["sha256"]:
+            raise ValueError("model file digest does not match the signed manifest")
+
         modelfile_path = Path(tmp).resolve() / "Modelfile"
         modelfile_path.write_text(
             build_analyst_modelfile(str(private_gguf)), encoding="utf-8"
