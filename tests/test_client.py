@@ -276,3 +276,67 @@ class TestEcosystemClient:
             services = await dm._fetch_registry_services()
             assert services == []
             mock_get.assert_not_called()
+
+
+# ---- third-party self-registration helper ------------------------------------------
+
+
+def test_register_app_posts_and_returns_pending_credentials(tmp_path):
+    import httpx
+
+    from ecosystem_client.registration import register_app, save_credentials, load_credentials
+
+    seen = {}
+
+    def handler(request):
+        import json as _json
+        seen["url"] = str(request.url)
+        seen["payload"] = _json.loads(request.content)
+        return httpx.Response(201, json={"app_id": "org.widget", "key_id": "k_abc",
+                                         "secret": "s3cr3t", "status": "pending"})
+
+    creds = register_app("https://hub.local:8500/", "org.widget",
+                         requested_names=["widget_sensor"], requested_scopes=["commands:dispatch"],
+                         client_factory=lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+    assert creds["status"] == "pending" and creds["key_id"] == "k_abc"
+    assert seen["url"] == "https://hub.local:8500/apps/register"
+    assert seen["payload"]["requested_names"] == ["widget_sensor"]
+
+    path = tmp_path / "creds.json"
+    save_credentials(path, creds)
+    import stat as _stat
+    assert _stat.S_IMODE(path.stat().st_mode) == 0o600          # holds a secret
+    loaded = load_credentials(path)
+    assert loaded == {"app_id": "org.widget", "key_id": "k_abc", "secret": "s3cr3t"}
+    assert load_credentials(tmp_path / "absent.json") is None
+
+
+def test_register_app_raises_when_the_app_id_exists(tmp_path):
+    import httpx
+
+    from ecosystem_client.registration import register_app
+
+    def handler(request):
+        return httpx.Response(409, json={"detail": "app_id 'org.widget' already exists"})
+
+    with pytest.raises(httpx.HTTPStatusError):
+        register_app("https://hub.local:8500", "org.widget",
+                     client_factory=lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+
+
+def test_register_app_refuses_plaintext_to_a_remote_host():
+    import httpx, pytest
+    from ecosystem_client.registration import register_app
+
+    called = []
+    cf = lambda: httpx.Client(transport=httpx.MockTransport(lambda r: called.append(1) or httpx.Response(201, json={})))
+    with pytest.raises(ValueError, match="plaintext"):
+        register_app("http://hub.remote:8500", "org.widget", client_factory=cf)
+    assert called == []                                      # nothing sent
+
+    # Loopback http is fine, and https to a remote host is fine.
+    ok = lambda: httpx.Client(transport=httpx.MockTransport(
+        lambda r: httpx.Response(201, json={"app_id": "x", "key_id": "k", "secret": "s", "status": "pending"})))
+    assert register_app("http://127.0.0.1:8500", "org.widget", client_factory=ok)["status"] == "pending"
+    assert register_app("https://hub.remote:8500", "org.widget", client_factory=ok)["status"] == "pending"
+    assert register_app("http://hub.remote:8500", "org.widget", allow_insecure=True, client_factory=ok)["status"] == "pending"

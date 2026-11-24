@@ -337,7 +337,11 @@ async def require_registry_auth(
 def require_name_owner(name: str, auth: dict) -> None:
     """403 unless the caller owns `name` (owner may use any non-collision name)."""
     owned = auth.get("owned_names", [])
-    if owned == ["*"]:
+    # The owner (shared secret) or an app explicitly granted this name may use it,
+    # even a reserved first-party name — a first-party key is given its own
+    # reserved name at approval. The reserved-name refusal is only for an app
+    # that does NOT own it (a third party trying to claim it).
+    if auth.get("is_owner") or owned == ["*"] or name in owned:
         return
     if name in RESERVED_NAMES:
         raise HTTPException(
@@ -349,6 +353,33 @@ def require_name_owner(name: str, auth: dict) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"app '{auth.get('app_id')}' does not own service name '{name}'",
         )
+
+
+def require_owner(auth: dict) -> None:
+    """403 unless the caller is the owner.
+
+    The owner is the shared-secret principal, which the auth layer alone marks
+    with ``app_id == "__owner__"`` — a value no app key can hold, since that id
+    is reserved at registration. Keying off `app_id` rather than
+    ``owned_names == ["*"]`` means an app the owner accidentally granted a
+    wildcard name could never be mistaken for the owner (and wildcard names are
+    refused anyway).
+    """
+    if not auth.get("is_owner"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="owner authentication (the shared ecosystem secret) is required",
+        )
+
+
+def _string_list(value, field: str, *, max_items: int = 50, max_len: int = 128) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise HTTPException(status_code=422, detail=f"'{field}' must be a list of strings")
+    if len(value) > max_items or any(len(v) > max_len for v in value):
+        raise HTTPException(status_code=422, detail=f"'{field}' is too large")
+    return list(value)
 
 
 async def require_read_auth(
@@ -477,7 +508,7 @@ async def update_ai_profile(
 
     Owner-only in Phase 1: the shared AI profile is a trust-critical surface, so
     third-party (enrolled) keys are rejected regardless of scope."""
-    if auth.get("app_id") != "__owner__":
+    if not auth.get("is_owner"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="AI profile changes are owner-only",
@@ -584,6 +615,85 @@ async def register_service(
     require_name_owner(registration.name, auth)
     record = registry.register(registration)
     return record
+
+
+@app.post("/apps/register", status_code=status.HTTP_201_CREATED)
+async def register_app(request: Request, payload: dict = Body(...)):
+    """Self-service third-party registration. No authentication: it returns a key
+    that is PENDING and authenticates nothing until the owner approves it.
+
+    The owner reviews pending registrations (`GET /apps`) and approves one with
+    the names and scopes it may hold (`POST /apps/{app_id}/approve`). An existing
+    app_id is never overwritten here.
+    """
+    store = getattr(request.app.state, "app_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="app registration is not available")
+    from .app_store import validate_app_id
+
+    app_id = str(payload.get("app_id") or "").strip()
+    try:
+        validate_app_id(app_id)   # rejects empty, oversized, reserved (__owner__), and malformed ids
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    display_name = str(payload.get("display_name") or app_id).strip()[:128]
+    owner = str(payload.get("owner") or "").strip()[:256]
+    requested_names = _string_list(payload.get("requested_names"), "requested_names")
+    requested_scopes = _string_list(payload.get("requested_scopes"), "requested_scopes")
+    try:
+        rec, secret = store.register_self(
+            app_id, display_name, owner=owner,
+            requested_names=requested_names, requested_scopes=requested_scopes,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {
+        "app_id": rec["app_id"],
+        "key_id": rec["key_id"],
+        "secret": secret,
+        "status": "pending",
+        "message": "Registered. The owner must approve this app before its key can authenticate.",
+    }
+
+
+@app.get("/apps")
+async def list_apps_credentials(request: Request, auth: dict = Depends(require_registry_auth)):
+    """List app credentials (pending and approved). Owner only."""
+    require_owner(auth)
+    store = getattr(request.app.state, "app_store", None)
+    return {"apps": store.list() if store else []}
+
+
+@app.post("/apps/{app_id}/approve")
+async def approve_app(app_id: str, request: Request, payload: dict = Body(default={}),
+                      auth: dict = Depends(require_registry_auth)):
+    """Approve a registered app, granting it names and scopes. Owner only."""
+    require_owner(auth)
+    store = getattr(request.app.state, "app_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="app registration is not available")
+    owned_names = _string_list((payload or {}).get("owned_names"), "owned_names")
+    scopes = _string_list((payload or {}).get("scopes"), "scopes")
+    first_party = (payload or {}).get("first_party", False)
+    if not isinstance(first_party, bool):
+        # bool("false") is True — never coerce; a string here would silently let a
+        # reserved name through. Require a real JSON boolean.
+        raise HTTPException(status_code=422, detail="'first_party' must be a boolean")
+    try:
+        return store.approve(app_id, owned_names, scopes, first_party=first_party)
+    except ValueError as exc:
+        detail = str(exc)
+        raise HTTPException(status_code=404 if "not found" in detail else 400, detail=detail)
+
+
+@app.post("/apps/{app_id}/reject")
+async def reject_app(app_id: str, request: Request, auth: dict = Depends(require_registry_auth)):
+    """Reject (remove) a registered app. Owner only."""
+    require_owner(auth)
+    store = getattr(request.app.state, "app_store", None)
+    if store is None or not store.reject(app_id):
+        raise HTTPException(status_code=404, detail=f"app '{app_id}' not found")
+    return {"status": "rejected", "app_id": app_id}
 
 
 @app.delete("/deregister/{name}")
@@ -898,7 +1008,7 @@ async def upsert_notification_subscription(
 ):
     """Register or update a user/device notification subscription or federated mobile push sink."""
     sub_id = str(sub.get("subscriber_id") or sub.get("device") or "").strip()
-    if auth.get("owned_names") != ["*"]:
+    if not auth.get("is_owner"):
         require_name_owner(sub_id, auth)
     try:
         record = router.upsert_subscription(sub)
@@ -922,7 +1032,7 @@ async def delete_notification_subscription(
     auth: dict = Depends(require_registry_auth),
     router=Depends(get_notification_router),
 ):
-    if auth.get("owned_names") != ["*"]:
+    if not auth.get("is_owner"):
         require_name_owner(subscriber_id, auth)
     removed = router.delete_subscription(subscriber_id)
     if not removed:
