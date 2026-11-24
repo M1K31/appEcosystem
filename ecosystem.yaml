@@ -64,6 +64,7 @@ ai:
     chat: auto
     embed: nomic-embed-text
     vision: auto
+    security_analyst: auto
   cloud:
     anthropic: { enabled: false, model: "" }
     openai: { enabled: false, model: "" }

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "action-proposal.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["action", "action_class", "target", "parameters", "rationale", "confidence"],
+  "properties": {
+    "action": {"type": "string", "minLength": 1, "maxLength": 128},
+    "action_class": {"enum": ["observe", "investigate", "contain", "remediate", "data_release", "system_change"]},
+    "target": {"type": "string", "maxLength": 512},
+    "parameters": {"type": "object"},
+    "rationale": {"type": "string", "maxLength": 2048},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+  }
+}

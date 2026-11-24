@@ -57,6 +57,7 @@ class TestUlid:
 
 class TestSchemaParityAndValidation:
     EXPECTED_SCHEMAS = [
+        "action-proposal.v1",
         "capability-manifest.v1",
         "command-envelope.v1",
         "event-envelope.v2",
@@ -64,7 +65,7 @@ class TestSchemaParityAndValidation:
         "policy-state.v1",
     ]
 
-    def test_all_five_schemas_present_and_mirrored_identically(self):
+    def test_all_six_schemas_present_and_mirrored_identically(self):
         assert list_schemas() == self.EXPECTED_SCHEMAS
         canonical_dir = REPO_ROOT / "contracts" / "schemas"
         py_dir = REPO_ROOT / "ecosystem_client" / "schemas"

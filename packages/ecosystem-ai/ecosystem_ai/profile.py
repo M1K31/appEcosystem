@@ -35,7 +35,7 @@ class AIProfile:
 
     # Per task-class model overrides ("auto" => tier default / provider default).
     task_models: dict[str, str] = field(
-        default_factory=lambda: {"chat": "auto", "embed": "nomic-embed-text", "vision": "auto"}
+        default_factory=lambda: {"chat": "auto", "embed": "nomic-embed-text", "vision": "auto", "security_analyst": "auto"}
     )
 
     # Opt-in cloud/agentic providers (keys come from env/secrets, never here).
