@@ -1,3 +1,4 @@
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock
 
@@ -563,7 +564,8 @@ async def test_action_loop_halts_on_outcome_unknown_for_reconciliation():
 
 
 @pytest.mark.asyncio
-async def test_action_loop_invokes_step_callback():
+@pytest.mark.parametrize("is_async", [False, True])
+async def test_action_loop_invokes_step_callback(is_async: bool):
     async def analyst(req, ctx):
         if ctx.get("prior_steps"):
             return json.dumps({"proposals": []})
@@ -585,8 +587,13 @@ async def test_action_loop_invokes_step_callback():
 
     recorded_steps = []
 
-    def callback(step):
-        recorded_steps.append(step)
+    if is_async:
+        async def callback(step):
+            await asyncio.sleep(0)
+            recorded_steps.append(step)
+    else:
+        def callback(step):
+            recorded_steps.append(step)
 
     tl = await run_action_loop(
         "Lookup IP",
