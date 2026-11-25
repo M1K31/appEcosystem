@@ -27,6 +27,7 @@ import json
 import logging
 import os
 import re
+import signal
 import sys
 import threading
 from dataclasses import dataclass, field
@@ -40,7 +41,7 @@ _VALID_PROFILES = frozenset({"quick", "standard", "full"})
 _VALID_STATUSES = frozenset({"clean", "findings", "partial", "error", "skipped_frozen"})
 _VALID_SEVERITIES = frozenset({"low", "medium", "high", "critical"})
 _HOST_PATH_RE = re.compile(
-    r"\\\\[^\s'\"]+|[A-Za-z]:\\[^\s'\"]+|(?<![A-Za-z0-9_:])/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*"
+    r"\\\\[^\s'\"]+|[A-Za-z]:\\[^\s'\"]+|(?<![\w:])/[^\s'\"/\\]+(?:/[^\s'\"/\\]+)*"
 )
 _MAX_SCRIPT_STDOUT_BYTES = 256 * 1024
 _MAX_SCRIPT_STDERR_BYTES = 64 * 1024
@@ -255,8 +256,23 @@ class ScriptScannerExtension(ScannerExtension):
             total += len(chunk)
         return b"".join(chunks), exceeded
 
-    async def run(self, ctx: ExtensionContext) -> ExtensionResult:
+    def _revalidate_script(self) -> None:
+        """Re-check symlink, directory confinement, and pinned SHA-256 right before execution."""
+        if self.script_path.is_symlink():
+            raise PermissionError(f"Extension script became a symlink: {self.extension_id!r}")
+        resolved = self.script_path.resolve()
+        if not resolved.is_file():
+            raise FileNotFoundError(f"Extension script missing: {self.extension_id!r}")
+        try:
+            resolved.relative_to(self.extensions_dir)
+        except ValueError as exc:
+            raise PermissionError(
+                f"Extension script {self.extension_id!r} escaped allowed extensions_dir"
+            ) from exc
         self._verify_sha256()
+
+    async def run(self, ctx: ExtensionContext) -> ExtensionResult:
+        self._revalidate_script()
         ctx_payload = json.dumps(
             {
                 "scan_id": ctx.scan_id,
@@ -271,38 +287,49 @@ class ScriptScannerExtension(ScannerExtension):
             if self.script_path.suffix == ".py"
             else [str(self.script_path), "--context-json", ctx_payload]
         )
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=self._scrubbed_env(),
-        )
+        spawn_kwargs: dict[str, Any] = {
+            "stdout": asyncio.subprocess.PIPE,
+            "stderr": asyncio.subprocess.PIPE,
+            "env": self._scrubbed_env(),
+        }
+        if os.name == "posix":
+            spawn_kwargs["start_new_session"] = True
+        proc = await asyncio.create_subprocess_exec(*cmd, **spawn_kwargs)
 
         async def _kill_and_reap() -> None:
             if proc.returncode is None:
+                if os.name == "posix":
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except (ProcessLookupError, PermissionError, OSError):
+                        try:
+                            proc.kill()
+                        except ProcessLookupError:
+                            pass
+                else:
+                    try:
+                        proc.kill()
+                    except ProcessLookupError:
+                        pass
                 try:
-                    proc.kill()
-                except ProcessLookupError:
-                    pass
-                try:
-                    await proc.wait()
+                    await asyncio.wait_for(proc.wait(), timeout=2.0)
                 except Exception:
                     pass
 
         try:
-            (stdout_bytes, stdout_exceeded), (_stderr_bytes, _stderr_exceeded) = await asyncio.wait_for(
+            (stdout_bytes, stdout_exceeded), (_stderr_bytes, stderr_exceeded) = await asyncio.wait_for(
                 asyncio.gather(
                     self._read_stream_bounded(proc.stdout, _MAX_SCRIPT_STDOUT_BYTES),
                     self._read_stream_bounded(proc.stderr, _MAX_SCRIPT_STDERR_BYTES),
                 ),
                 timeout=self.timeout_seconds,
             )
-            if stdout_exceeded:
+            if stdout_exceeded or stderr_exceeded:
                 await _kill_and_reap()
                 return ExtensionResult(
                     extension_id=self.extension_id,
                     status="error",
-                    summary="Extension stdout exceeded 256 KiB safety limit",
+                    summary="Extension output exceeded safety size limit",
                 )
             await asyncio.wait_for(proc.wait(), timeout=5.0)
         except asyncio.TimeoutError:

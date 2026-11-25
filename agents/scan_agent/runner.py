@@ -678,8 +678,14 @@ class ScanRunner:
                     share_data["extensions"] = [r.to_public_summary() for r in ext_results]
                     if any(r.status == "findings" for r in ext_results) and status == "clean":
                         status = "findings"
+                        share_data["verdict"] = "findings"
                     elif any(r.status in ("partial", "error", "skipped_frozen") for r in ext_results) and status == "clean":
                         status = "partial"
+                        share_data["verdict"] = "partial"
+                    try:
+                        share_json_path.write_text(json.dumps(share_data, indent=2), encoding="utf-8")
+                    except Exception as exc:
+                        logger.warning("Failed updating share.json with extension summaries: %r", exc)
 
             completed_at = _iso_utc()
             duration = round(time.time() - start_ts, 2)
