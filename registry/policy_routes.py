@@ -497,6 +497,57 @@ async def verify_totp_code(
     return res
 
 
+def _resolve_webauthn_rp_id(request: Request, payload: dict[str, Any]) -> str:
+    """Resolve the WebAuthn RP ID from payload or request Host header (defaults to localhost)."""
+    explicit = str(payload.get("rp_id") or "").strip().lower()
+    if explicit:
+        return explicit
+    host_header = (request.headers.get("host") or "").strip().lower()
+    if host_header:
+        if host_header.startswith("["):
+            hostname = host_header[1:].split("]", 1)[0]
+        else:
+            hostname = host_header.rsplit(":", 1)[0]
+        if hostname in ("127.0.0.1", "::1", "localhost", "testserver"):
+            return "localhost"
+        if hostname:
+            return hostname
+    return "localhost"
+
+
+@router.get("/auth/step-up/passkey/list")
+async def list_passkeys(
+    operator_id: str = "admin",
+    step_up=Depends(get_step_up),
+):
+    return {"operator_id": operator_id, "passkeys": step_up.list_passkeys(operator_id)}
+
+
+@router.post("/auth/step-up/passkey/register/options")
+async def passkey_register_options(
+    request: Request,
+    payload: dict[str, Any] = Body(default={}),
+    step_up=Depends(get_step_up),
+):
+    if request.headers.get("x-forwarded-for"):
+        raise HTTPException(status_code=404, detail="Not Found")
+    host = (request.client.host if request.client else "") or ""
+    if host not in ("127.0.0.1", "::1", "localhost", "testclient"):
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    operator_id = str(payload.get("operator_id") or "admin").strip()
+    existing = step_up.has_enrolled_factors(operator_id)
+    if any(existing.values()):
+        _resolve_step_up_claims(step_up, payload, request)
+    rp_id = _resolve_webauthn_rp_id(request, payload)
+    return step_up.create_passkey_registration_options(
+        operator_id,
+        rp_id=rp_id,
+        rp_name=str(payload.get("rp_name") or "appEcosystem"),
+        display_name=payload.get("display_name"),
+    )
+
+
 @router.post("/auth/step-up/passkey/register")
 async def register_passkey(
     request: Request,
@@ -512,37 +563,66 @@ async def register_passkey(
     operator_id = str(payload.get("operator_id") or "admin").strip()
     cred_id = str(payload.get("credential_id") or "").strip()
     pub_key = str(payload.get("public_key") or "").strip()
-    if not cred_id or not pub_key:
-        raise HTTPException(status_code=400, detail="credential_id and public_key are required")
+    pub_key_spki = str(payload.get("public_key_spki_b64") or "").strip() or None
+    if not cred_id or (not pub_key and not pub_key_spki):
+        raise HTTPException(
+            status_code=400,
+            detail="credential_id and public_key (or public_key_spki_b64) are required",
+        )
     # Registering (or rotating) a passkey when the operator already has ANY
     # enrolled factor requires proving current step-up — mirrors enroll_totp and
     # closes the "register your own passkey without authentication" bypass.
     existing = step_up.has_enrolled_factors(operator_id)
     if any(existing.values()):
         _resolve_step_up_claims(step_up, payload, request)
-    return step_up.register_passkey(
-        operator_id,
-        cred_id,
-        pub_key,
-        algorithm=str(payload.get("algorithm") or "ES256"),
-        label=str(payload.get("label") or "Operator Passkey"),
-    )
+    try:
+        return step_up.register_passkey(
+            operator_id,
+            cred_id,
+            pub_key,
+            algorithm=str(payload.get("algorithm") or "ES256"),
+            label=str(payload.get("label") or "Operator Passkey"),
+            public_key_spki_b64=pub_key_spki,
+            rp_id=_resolve_webauthn_rp_id(request, payload),
+            transports=payload.get("transports") if isinstance(payload.get("transports"), list) else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
-@router.post("/auth/step-up/passkey/challenge")
-async def create_passkey_challenge(
+@router.post("/auth/step-up/passkey/authenticate/options")
+async def passkey_authenticate_options(
+    request: Request,
     payload: dict[str, Any] = Body(default={}),
     step_up=Depends(get_step_up),
 ):
     operator_id = str(payload.get("operator_id") or "admin").strip()
-    return step_up.create_challenge(operator_id)
+    rp_id = _resolve_webauthn_rp_id(request, payload)
+    return step_up.create_passkey_authentication_options(operator_id, rp_id=rp_id)
+
+
+@router.post("/auth/step-up/passkey/challenge")
+async def create_passkey_challenge(
+    request: Request,
+    payload: dict[str, Any] = Body(default={}),
+    step_up=Depends(get_step_up),
+):
+    operator_id = str(payload.get("operator_id") or "admin").strip()
+    return step_up.create_challenge(operator_id, rp_id=_resolve_webauthn_rp_id(request, payload))
 
 
 @router.post("/auth/step-up/passkey/verify")
 async def verify_passkey_assertion(
+    request: Request,
     payload: dict[str, Any] = Body(...),
     step_up=Depends(get_step_up),
 ):
+    origin_header = (request.headers.get("origin") or "").strip() or None
+    expected_rp_id = payload.get("rp_id") or (
+        _resolve_webauthn_rp_id(request, payload)
+        if payload.get("authenticator_data") and payload.get("client_data_json")
+        else None
+    )
     res = step_up.verify_passkey_assertion_and_issue_token(
         operator_id=str(payload.get("operator_id") or "admin"),
         credential_id=str(payload.get("credential_id") or ""),
@@ -550,6 +630,9 @@ async def verify_passkey_assertion(
         signature_b64=str(payload.get("signature") or ""),
         authenticator_data_b64=payload.get("authenticator_data"),
         client_data_json_b64=payload.get("client_data_json"),
+        expected_origin=origin_header,
+        expected_rp_id=expected_rp_id,
+        require_user_verification=bool(payload.get("require_user_verification", False)),
     )
     if not res:
         raise HTTPException(status_code=401, detail="Passkey assertion verification failed")
@@ -815,6 +898,8 @@ CONTROL_PLANE_HTML = """<!DOCTYPE html>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
         <input id="totpCode" class="totp-input" type="text" inputmode="numeric" maxlength="6" placeholder="6-digit TOTP" aria-label="6-digit TOTP step-up code" />
         <button id="btnEnrollTotp" class="btn" type="button">Setup 2FA</button>
+        <button id="btnEnrollPasskey" class="btn" type="button" title="Enroll Touch ID, Face ID, or YubiKey passkey">Setup Passkey</button>
+        <button id="btnVerifyPasskey" class="btn btn-primary" type="button" title="Verify with hardware passkey for 5-minute step-up session">Verify Passkey</button>
       </div>
     </header>
 
@@ -845,6 +930,34 @@ CONTROL_PLANE_HTML = """<!DOCTYPE html>
     const modal = document.getElementById("overrideModal");
     const toast = document.getElementById("toast");
     const totpInput = document.getElementById("totpCode");
+    let cachedStepUpToken = "";
+    let cachedStepUpExpiresAt = 0;
+
+    function activeStepUpPayload(extra = {}) {
+      const payload = { ...extra };
+      const code = totpInput.value.trim();
+      if (code) {
+        payload.totp_code = code;
+      } else if (cachedStepUpToken && Date.now() / 1000 < cachedStepUpExpiresAt - 5) {
+        payload.step_up_token = cachedStepUpToken;
+      }
+      return payload;
+    }
+
+    function b64urlToBuf(b64u) {
+      const pad = "=".repeat((4 - (b64u.length % 4)) % 4);
+      const bin = atob((b64u + pad).replace(/-/g, "+").replace(/_/g, "/"));
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return bytes.buffer;
+    }
+
+    function bufToB64url(buf) {
+      const bytes = new Uint8Array(buf);
+      let bin = "";
+      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+      return btoa(bin).replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/, "");
+    }
 
     function showToast(msg) {
       toast.textContent = msg;
@@ -942,11 +1055,11 @@ CONTROL_PLANE_HTML = """<!DOCTYPE html>
       const r = await fetch(`/approvals/${encodeURIComponent(id)}/${verb}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ totp_code: totpInput.value.trim() })
+        body: JSON.stringify(activeStepUpPayload())
       });
       const data = await r.json();
       if (!r.ok) {
-        showToast(data.detail || "Step-up TOTP verification required");
+        showToast(data.detail || "Step-up TOTP or Passkey verification required");
         return;
       }
       showToast(`Approval ${id} marked ${data.status}`);
@@ -992,11 +1105,11 @@ CONTROL_PLANE_HTML = """<!DOCTYPE html>
       const r = await fetch("/policy/resume", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ totp_code: totpInput.value.trim(), reason: "Operator resumed from Hub UI" })
+        body: JSON.stringify(activeStepUpPayload({ reason: "Operator resumed from Hub UI" }))
       });
       const data = await r.json();
       if (!r.ok) {
-        showToast(data.detail || "Enter 6-digit TOTP code in top bar to Resume");
+        showToast(data.detail || "Verify with Passkey or enter 6-digit TOTP code to Resume");
         return;
       }
       totpInput.value = "";
@@ -1037,7 +1150,7 @@ CONTROL_PLANE_HTML = """<!DOCTYPE html>
       const r = await fetch("/auth/step-up/totp/enroll", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ operator_id: "admin", totp_code: totpInput.value.trim() })
+        body: JSON.stringify(activeStepUpPayload({ operator_id: "admin" }))
       });
       const data = await r.json();
       if (!r.ok) {
@@ -1045,6 +1158,112 @@ CONTROL_PLANE_HTML = """<!DOCTYPE html>
         return;
       }
       showToast(`TOTP Secret enrolled: ${data.secret} (${data.otpauth_uri})`);
+    });
+
+    document.getElementById("btnEnrollPasskey").addEventListener("click", async () => {
+      if (!window.PublicKeyCredential || !navigator.credentials) {
+        showToast("WebAuthn Passkeys require a supported browser on localhost or HTTPS");
+        return;
+      }
+      try {
+        const optRes = await fetch("/auth/step-up/passkey/register/options", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(activeStepUpPayload({ operator_id: "admin" }))
+        });
+        const opts = await optRes.json();
+        if (!optRes.ok) {
+          showToast(opts.detail || "Step-up verification required to enroll an additional passkey");
+          return;
+        }
+        const cred = await navigator.credentials.create({
+          publicKey: {
+            challenge: b64urlToBuf(opts.challenge),
+            rp: opts.rp,
+            user: { ...opts.user, id: b64urlToBuf(opts.user.id) },
+            pubKeyCredParams: opts.pubKeyCredParams,
+            timeout: opts.timeout,
+            attestation: opts.attestation,
+            authenticatorSelection: opts.authenticatorSelection,
+            excludeCredentials: (opts.excludeCredentials || []).map((c) => ({ ...c, id: b64urlToBuf(c.id) })),
+          }
+        });
+        if (!cred || !cred.response || typeof cred.response.getPublicKey !== "function") {
+          showToast("Browser did not expose SPKI public key; try Safari 15+, Chrome 105+, or Firefox 119+");
+          return;
+        }
+        const spkiBuf = cred.response.getPublicKey();
+        const regRes = await fetch("/auth/step-up/passkey/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(activeStepUpPayload({
+            operator_id: "admin",
+            credential_id: cred.id,
+            public_key_spki_b64: bufToB64url(spkiBuf),
+            label: "Browser Passkey",
+            transports: typeof cred.response.getTransports === "function" ? cred.response.getTransports() : [],
+          }))
+        });
+        const regData = await regRes.json();
+        if (!regRes.ok) {
+          showToast(regData.detail || "Passkey registration failed");
+          return;
+        }
+        showToast("Hardware Passkey enrolled successfully");
+      } catch (err) {
+        showToast("Passkey enrollment cancelled or failed: " + (err && err.message ? err.message : String(err)));
+      }
+    });
+
+    document.getElementById("btnVerifyPasskey").addEventListener("click", async () => {
+      if (!window.PublicKeyCredential || !navigator.credentials) {
+        showToast("WebAuthn Passkeys require a supported browser on localhost or HTTPS");
+        return;
+      }
+      try {
+        const optRes = await fetch("/auth/step-up/passkey/authenticate/options", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ operator_id: "admin" })
+        });
+        const opts = await optRes.json();
+        if (!optRes.ok || !(opts.allowCredentials || []).length) {
+          showToast("No Passkey enrolled yet — click Setup Passkey first");
+          return;
+        }
+        const assertion = await navigator.credentials.get({
+          publicKey: {
+            challenge: b64urlToBuf(opts.challenge),
+            rpId: opts.rpId,
+            timeout: opts.timeout,
+            userVerification: opts.userVerification,
+            allowCredentials: opts.allowCredentials.map((c) => ({ ...c, id: b64urlToBuf(c.id) })),
+          }
+        });
+        const verRes = await fetch("/auth/step-up/passkey/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            operator_id: "admin",
+            credential_id: assertion.id,
+            challenge: opts.challenge,
+            signature: bufToB64url(assertion.response.signature),
+            authenticator_data: bufToB64url(assertion.response.authenticatorData),
+            client_data_json: bufToB64url(assertion.response.clientDataJSON),
+            require_user_verification: true,
+          })
+        });
+        const verData = await verRes.json();
+        if (!verRes.ok) {
+          showToast(verData.detail || "Passkey verification failed");
+          return;
+        }
+        cachedStepUpToken = verData.step_up_token;
+        cachedStepUpExpiresAt = verData.expires_at;
+        showToast("Passkey verified — 5-minute step-up session active");
+      } catch (err) {
+        showToast("Passkey verification cancelled or failed: " + (err && err.message ? err.message : String(err)));
+      }
     });
 
     refreshAll();
