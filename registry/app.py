@@ -149,6 +149,15 @@ async def lifespan(app: FastAPI):
         event_bus = None
         logger.debug("Event bus not available — unhealthy events won't be published")
 
+    data_dir = os.path.dirname(persistence_path) or "data"
+
+    # ECO-02: Validate/initialize pairing identity BEFORE starting background tasks
+    from .discovery import EcosystemDiscovery
+    from .pairing import NodePairingManager
+
+    pairing_dir = os.environ.get("ECOSYSTEM_PAIRING_DIR") or os.path.join(data_dir, "pairing")
+    pairing_manager = NodePairingManager(data_dir=pairing_dir)
+
     interval = int(os.environ.get("ECOSYSTEM_HEALTH_INTERVAL", "30"))
     max_failures = int(os.environ.get("ECOSYSTEM_MAX_FAILURES", "5"))
     health_monitor = HealthMonitor(
@@ -174,7 +183,6 @@ async def lifespan(app: FastAPI):
     # /ai/providers routes below, which gate writes to loopback callers.
     provider_credential_store = ProviderCredentialStore()
 
-    data_dir = os.path.dirname(persistence_path) or "data"
     policy_engine, step_up_auth, approval_service = _create_policy_and_approvals(
         data_dir,
         notification_router=notification_router,
@@ -232,6 +240,16 @@ async def lifespan(app: FastAPI):
     if closed:
         logger.info("%d command(s) closed because their approval had been denied or had expired", closed)
 
+    # ECO-02: Advertise hub fingerprint & pairing readiness over mDNS (opt-out via ECOSYSTEM_DISABLE_MDNS=1)
+    registry_port = int(os.environ.get("ECOSYSTEM_PORT", "8500"))
+    discovery = EcosystemDiscovery(
+        registry_port=registry_port,
+        hub_fingerprint=pairing_manager.hub_fingerprint,
+        pairing_enabled=True,
+    )
+    if os.environ.get("ECOSYSTEM_DISABLE_MDNS", "").strip().lower() not in ("1", "true", "yes"):
+        await discovery.start()
+
     # Stash on app.state so request handlers resolve them via dependencies
     # rather than module globals (which could be None before startup).
     app.state.registry = registry
@@ -248,10 +266,13 @@ async def lifespan(app: FastAPI):
     app.state.scan_runner = scan_runner
     app.state.scan_scheduler = scan_scheduler
     app.state.command_dispatcher = command_dispatcher
+    app.state.pairing_manager = pairing_manager
+    app.state.discovery = discovery
 
     logger.info("Ecosystem registry started")
     yield
 
+    await discovery.stop()
     await scan_scheduler.stop()
     await approval_service.stop()
     await health_monitor.stop()
@@ -453,10 +474,12 @@ def _ensure_voice_pkg():
 _ensure_voice_pkg()
 from ecosystem_voice import router as voice_router
 
+from .pairing_routes import router as pairing_router
 app.include_router(policy_router)
 app.include_router(scan_router)
 app.include_router(command_router)
 app.include_router(voice_router)
+app.include_router(pairing_router)
 
 
 @app.get("/", include_in_schema=False)
