@@ -63,6 +63,11 @@ def _sanitize_public_result(raw: dict[str, Any]) -> dict[str, Any]:
     has_full = bool(public.pop("report_ref", ""))
     public["has_full_report"] = has_full
 
+    if public.get("exit_description"):
+        public["exit_description"] = _redact_diagnostic(public["exit_description"])
+    if public.get("device_id"):
+        public["device_id"] = _redact_diagnostic(public["device_id"])
+
     if public.get("error_message"):
         # Only expose safe high-level status; never leak raw subprocess stderr or paths
         st = str(public.get("status") or "unknown")
@@ -76,6 +81,8 @@ def _sanitize_public_result(raw: dict[str, Any]) -> dict[str, Any]:
         safe_share = dict(share)
         if "error" in safe_share:
             safe_share["error"] = "Scan summary unavailable"
+        if isinstance(safe_share.get("reason"), str):
+            safe_share["reason"] = _redact_diagnostic(safe_share["reason"])
         public["share"] = safe_share
     return public
 

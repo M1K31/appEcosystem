@@ -161,6 +161,9 @@ def test_s2_zbt_phone_backup_allowlist_and_redaction(tmp_path: Path, monkeypatch
     reg.register(SCAN_REQUEST_CAPABILITY)
     assert reg.resolve("scan.request") is not None
 
+    # Stub metadata discovery so refusal tests never invoke a real ZBT binary on disk
+    monkeypatch.setattr(ScanRunner, "_resolve_zbt_path", lambda self, *_a, **_kw: None)
+
     # Folder outside ECOSYSTEM_PHONE_SCAN_BASE must be refused fail-closed before ZBT starts
     runner = ScanRunner(zbt_path=tmp_path / "missing_zbt.py", data_dir=tmp_path / "data")
     denied = asyncio.run(
@@ -175,18 +178,19 @@ def test_s2_zbt_phone_backup_allowlist_and_redaction(tmp_path: Path, monkeypatch
     assert denied.status == "denied"
     assert "outside the allowed ECOSYSTEM_PHONE_SCAN_BASE" in (denied.error_message or "")
 
-    # Handler also refuses outside-base requests without leaking host paths in summary
+    # Handler also refuses outside-base requests without leaking host paths anywhere in the response
     handler = build_scan_request_handler(ScanRunner(zbt_path=tmp_path / "missing_zbt.py", data_dir=tmp_path / "data", policy_engine=policy))
     resp = asyncio.run(
         handler(
             {
                 "target": {"scope": "backup", "identifier": str(outside_dir)},
                 "parameters": {"phone_folder": str(outside_dir), "profile": "quick"},
-            }
+            },
+            "approval:s2-owner-approval",
         )
     )
-    assert resp["status"] in ("denied", "pending_approval")
-    assert str(outside_dir) not in json.dumps(resp.get("summary") or "")
+    assert resp["status"] == "denied"
+    assert str(outside_dir) not in json.dumps(resp)
 
 
 # ── S3: Automated brute-force triage & Freeze preemption ───────────────────
@@ -400,12 +404,14 @@ def test_s8_analyst_model_selection_excludes_tinyllama():
 
 # ── S9 & S10: Presence restriction safety & consent-gated scans ────────────
 
-def test_s9_s10_freeze_blocks_restriction_and_scan_requires_consent(tmp_path: Path):
+def test_s9_s10_freeze_blocks_restriction_and_scan_requires_consent(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(ScanRunner, "_resolve_zbt_path", lambda self, *_a, **_kw: None)
     policy, _, _ = _make_policy_stack(tmp_path)
     runner = ScanRunner(zbt_path=tmp_path / "missing_zbt.py", data_dir=tmp_path / "data", policy_engine=policy)
     handler = build_scan_request_handler(runner)
 
-    # S10: device without recorded AUP consent is refused/held before any scan starts
+    # S10: even with owner approval passed as the second argument, a device without
+    # recorded AUP consent is refused at consent enforcement before any scan starts
     unconsented = asyncio.run(
         handler(
             {
@@ -413,12 +419,12 @@ def test_s9_s10_freeze_blocks_restriction_and_scan_requires_consent(tmp_path: Pa
                 "parameters": {
                     "target_device": "visitor-phone-unconsented",
                     "profile": "quick",
-                    "authorization_ref": "owner-approved",
                 },
-            }
+            },
+            "approval:s10-owner-approval",
         )
     )
-    assert unconsented["status"] in ("denied", "pending_approval")
+    assert unconsented["status"] == "denied"
 
     # S9: Freeze preempts containment/restriction
     policy.freeze(initiated_by="owner", channel="dashboard", reason="S9 freeze check")
