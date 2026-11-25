@@ -1007,4 +1007,9 @@ def cmd_compact(
     print(f"  Event logs archived: {len(report.archived_logs)}")
     print(f"  Archives pruned:     {len(report.pruned_archives)}")
     print(f"  Bytes reclaimed:     {report.total_bytes_reclaimed}")
+    errors = [r for r in report.sqlite_results if r.get("error")]
+    if errors:
+        for err in errors:
+            print(f"  ERROR ({err['db_path']}): {err['error']}")
+        return 1
     return 0

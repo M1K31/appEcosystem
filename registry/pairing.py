@@ -422,6 +422,12 @@ class NodePairingManager:
             rec["status"] = "claimed"
             self._pending.pop(pairing_id, None)
 
+            # Record claimed_at on the pinned node so revocation knows if the secret was delivered
+            nodes = self._load_pinned()
+            if rec["node_id"] in nodes:
+                nodes[rec["node_id"]]["claimed_at"] = ts
+                self._save_pinned(nodes)
+
             return {
                 "pairing_id": pairing_id,
                 "node_id": rec["node_id"],
@@ -436,14 +442,18 @@ class NodePairingManager:
             nodes = self._load_pinned()
             return [dict(nodes[nid]) for nid in sorted(nodes.keys())]
 
-    def revoke_node(self, node_id: str) -> bool:
+    def revoke_node_details(self, node_id: str) -> dict[str, Any] | None:
+        """Revoke a pinned node, invalidate unclaimed bundles, and return the removed record (or None)."""
         nid = str(node_id).strip()
         with self._lock:
             nodes = self._load_pinned()
-            removed = nodes.pop(nid, None) is not None
-            if removed:
+            removed_rec = nodes.pop(nid, None)
+            if removed_rec is not None:
                 self._save_pinned(nodes)
             # Invalidate any unclaimed approvals/requests for this node
             for pid in [k for k, r in self._pending.items() if r.get("node_id") == nid]:
                 self._pending.pop(pid, None)
-            return removed
+            return dict(removed_rec) if isinstance(removed_rec, dict) else None
+
+    def revoke_node(self, node_id: str) -> bool:
+        return self.revoke_node_details(node_id) is not None

@@ -567,7 +567,7 @@ class StepUpAuthenticator:
                 if not isinstance(stored, dict):
                     return None
                 latest_count = int(stored.get("sign_count", 0))
-                if latest_count > 0 and new_sign_count > 0 and new_sign_count <= latest_count:
+                if (latest_count > 0 or new_sign_count > 0) and new_sign_count <= latest_count:
                     return None
                 if new_sign_count > latest_count:
                     stored["sign_count"] = new_sign_count

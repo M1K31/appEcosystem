@@ -96,11 +96,15 @@ def compress_file_atomic(
             os.fsync(out_fh.fileno())
         os.replace(tmp_path, final_path)
         if os.name == "posix":
-            dir_fd = os.open(str(dest_dir), os.O_RDONLY)
+            dir_fd = None
             try:
+                dir_fd = os.open(str(dest_dir), os.O_RDONLY)
                 os.fsync(dir_fd)
+            except OSError as exc:
+                logger.debug("Best-effort directory fsync skipped for %s: %s", dest_dir, exc)
             finally:
-                os.close(dir_fd)
+                if dir_fd is not None:
+                    os.close(dir_fd)
     except Exception:
         try:
             os.unlink(tmp_path)
