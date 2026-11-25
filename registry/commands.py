@@ -73,6 +73,7 @@ class CommandDispatcher:
         client_factory: Callable[[], httpx.AsyncClient] | None = None,
         connect_timeout: float = 3.0,
         clock: Callable[[], float] = time.time,
+        local_handlers: dict[tuple[str, str], Callable[..., Awaitable[dict[str, Any]]]] | None = None,
     ):
         self.store = store
         self._caps = capability_registry
@@ -85,6 +86,7 @@ class CommandDispatcher:
         self._client_factory = client_factory or (lambda: httpx.AsyncClient())
         self._connect_timeout = float(connect_timeout)
         self._clock = clock
+        self._local_handlers = dict(local_handlers or {})
 
     # ---- views -------------------------------------------------------------
 
@@ -129,6 +131,9 @@ class CommandDispatcher:
         for record in resolution.providers:
             app = record["app"]
             if wanted and app != wanted:
+                continue
+            if (app, capability) in self._local_handlers:
+                candidates.append((0, app, record))
                 continue
             service = self._services.get(app)
             if service is None:
@@ -533,7 +538,30 @@ class CommandDispatcher:
 
     async def _forward_claimed(self, record: dict[str, Any], authorization_ref: str | None) -> dict[str, Any]:
         command_id = record["command_id"]
-        provider_app = record.get("provider_app") or ""
+        capability = str(record.get("capability") or "")
+        provider_app = str(record.get("provider_app") or "")
+        local_handler = self._local_handlers.get((provider_app, capability))
+        if local_handler is not None:
+            try:
+                outcome = await local_handler(record, authorization_ref)
+            except Exception as exc:
+                logger.exception("Local handler for %s:%s failed", provider_app, capability)
+                return self.store.update(
+                    command_id,
+                    status="failed",
+                    error=str(exc),
+                    event="failed",
+                )
+            st = str((outcome or {}).get("status") or "completed")
+            if st not in ("completed", "accepted", "denied", "pending_approval", "failed"):
+                st = "completed"
+            return self.store.update(
+                command_id,
+                status=st,
+                result=(outcome or {}).get("result"),
+                error=(outcome or {}).get("error"),
+                event=st,
+            )
         service = self._services.get(provider_app)
         if service is None:
             return self.store.update(

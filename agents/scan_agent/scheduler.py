@@ -28,6 +28,20 @@ class ScanScheduler:
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._scheduled_jobs: dict[str, dict[str, Any]] = {}
+        self._active_tasks: dict[str, set[asyncio.Task[Any]]] = {}
+
+    def cancel_queued_for_device(self, device_id: str) -> int:
+        """Cancel any queued or active scheduled scans for a device whose consent was withdrawn."""
+        cancelled = 0
+        self._scheduled_jobs.pop(device_id, None)
+        tasks = self._active_tasks.pop(device_id, set())
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+                cancelled += 1
+        if cancelled:
+            logger.info("Cancelled %d queued/active scan(s) for revoked device %s", cancelled, device_id)
+        return cancelled
 
     async def is_reachable(self, device_id: str) -> bool:
         if device_id in ("local", "localhost", "127.0.0.1", ""):
@@ -83,8 +97,21 @@ class ScanScheduler:
                     trigger="schedule",
                     initiator="ecosystem-scan-scheduler",
                 )
-                res = await self.runner.run_scan(req)
-                executed.append(res)
+                scan_task = asyncio.create_task(self.runner.run_scan(req))
+                self._active_tasks.setdefault(dev_id, set()).add(scan_task)
+                try:
+                    res = await scan_task
+                    executed.append(res)
+                except asyncio.CancelledError:
+                    if not self._running:
+                        raise
+                    logger.info("Scheduled scan for %s was cancelled", dev_id)
+                finally:
+                    bucket = self._active_tasks.get(dev_id)
+                    if bucket is not None:
+                        bucket.discard(scan_task)
+                        if not bucket:
+                            self._active_tasks.pop(dev_id, None)
             elif target["status"] == "deferred":
                 logger.info("Deferred scheduled scan for unreachable device: %s", dev_id)
                 req = ScanRequest(

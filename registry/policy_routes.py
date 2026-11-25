@@ -446,7 +446,11 @@ async def revoke_auto_scan_grant(
     revoked = engine.revoke_auto_scan(device_id)
     if not revoked:
         raise HTTPException(status_code=404, detail=f"No active auto_scan grant for '{device_id}'")
-    return {"status": "revoked", "device_id": device_id}
+    cancelled = 0
+    sched = getattr(request.app.state, "scan_scheduler", None)
+    if sched is not None and hasattr(sched, "cancel_queued_for_device"):
+        cancelled = int(sched.cancel_queued_for_device(device_id))
+    return {"status": "revoked", "device_id": device_id, "cancelled_scans": cancelled}
 
 
 # ---- Step-Up Authentication Routes (TOTP 2FA & WebAuthn Passkeys) -----------

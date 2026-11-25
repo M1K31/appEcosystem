@@ -144,6 +144,17 @@ async def list_scans(
     return [s.to_dict() for s in scans]
 
 
+@router.get("/phone-folders")
+async def list_phone_folders():
+    """List allowed phone-backup folders under ECOSYSTEM_PHONE_SCAN_BASE (WP6).
+
+    Fails closed when ECOSYSTEM_PHONE_SCAN_BASE is unset.
+    """
+    from agents.scan_agent import list_allowed_phone_folders
+
+    return list_allowed_phone_folders()
+
+
 @router.get("/targets")
 async def list_targets(
     scheduler=Depends(get_scan_scheduler),
