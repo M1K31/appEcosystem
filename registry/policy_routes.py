@@ -585,6 +585,7 @@ async def register_passkey(
             public_key_spki_b64=pub_key_spki,
             rp_id=_resolve_webauthn_rp_id(request, payload),
             transports=payload.get("transports") if isinstance(payload.get("transports"), list) else None,
+            registration_challenge=payload.get("challenge"),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -618,10 +619,9 @@ async def verify_passkey_assertion(
     step_up=Depends(get_step_up),
 ):
     origin_header = (request.headers.get("origin") or "").strip() or None
+    has_webauthn = bool(payload.get("authenticator_data") and payload.get("client_data_json"))
     expected_rp_id = payload.get("rp_id") or (
-        _resolve_webauthn_rp_id(request, payload)
-        if payload.get("authenticator_data") and payload.get("client_data_json")
-        else None
+        _resolve_webauthn_rp_id(request, payload) if has_webauthn else None
     )
     res = step_up.verify_passkey_assertion_and_issue_token(
         operator_id=str(payload.get("operator_id") or "admin"),
@@ -632,7 +632,7 @@ async def verify_passkey_assertion(
         client_data_json_b64=payload.get("client_data_json"),
         expected_origin=origin_header,
         expected_rp_id=expected_rp_id,
-        require_user_verification=bool(payload.get("require_user_verification", False)),
+        require_user_verification=has_webauthn,
     )
     if not res:
         raise HTTPException(status_code=401, detail="Passkey assertion verification failed")

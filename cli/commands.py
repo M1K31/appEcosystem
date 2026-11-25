@@ -988,7 +988,18 @@ def cmd_compact(
     """CLI handler for ``ecosystem compact`` (SQLite WAL compaction & event log archival)."""
     from registry.storage_compactor import EdgeStorageCompactor
 
-    target_dir = Path(data_dir) if data_dir else DATA_DIR
+    if data_dir is not None:
+        target_dir = Path(data_dir).expanduser()
+        if not target_dir.is_dir():
+            print(f"Error: data directory does not exist or is not a directory: {target_dir}")
+            return 1
+    else:
+        reg_file = os.environ.get("ECOSYSTEM_REGISTRY_FILE")
+        if reg_file:
+            target_dir = Path(reg_file).expanduser().parent
+        else:
+            target_dir = _resolve_data_dir()
+
     compactor = EdgeStorageCompactor(data_dir=target_dir, codec=codec)
     report = compactor.run_once(vacuum=vacuum)
     print(f"Compacted data directory: {report.data_dir}")

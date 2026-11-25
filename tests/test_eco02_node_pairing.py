@@ -45,6 +45,7 @@ def test_ecdsa_node_pairing_round_trip_and_mitm_rejection(tmp_path: Path):
             secret_value=secret,
             approved_by="owner",
             expected_sas="000000" if node_derived_sas != "000000" else "999999",
+            expected_fingerprint=req["node_fingerprint"],
             now=1010.0,
         )
 
@@ -172,13 +173,14 @@ def test_registry_pairing_routes_enforce_step_up_and_freeze(tmp_path: Path, monk
         assert r_req.status_code == 200
         pid = r_req.json()["pairing_id"]
         sas = r_req.json()["sas_code"]
+        node_fp = r_req.json()["node_fingerprint"]
 
         # Freeze blocks pairing approval (HTTP 423)
         assert client.post("/policy/freeze", json={"initiated_by": "owner", "reason": "freeze check"}).status_code == 200
         code1 = compute_totp(totp_secret)
         r_frozen = client.post(
             f"/pairing/{pid}/approve",
-            json={"operator_id": "admin", "totp_code": code1, "expected_sas": sas},
+            json={"operator_id": "admin", "totp_code": code1, "expected_sas": sas, "expected_fingerprint": node_fp},
         )
         assert r_frozen.status_code == 423
 
@@ -190,7 +192,7 @@ def test_registry_pairing_routes_enforce_step_up_and_freeze(tmp_path: Path, monk
 
         r_app = client.post(
             f"/pairing/{pid}/approve",
-            json={"step_up_token": token, "expected_sas": sas},
+            json={"step_up_token": token, "expected_sas": sas, "expected_fingerprint": node_fp},
         )
         assert r_app.status_code == 200
 

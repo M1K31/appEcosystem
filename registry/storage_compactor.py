@@ -92,7 +92,15 @@ def compress_file_atomic(
                         raw_bytes += len(chunk)
                         raw_hash.update(chunk)
                         gz.write(chunk)
+            out_fh.flush()
+            os.fsync(out_fh.fileno())
         os.replace(tmp_path, final_path)
+        if os.name == "posix":
+            dir_fd = os.open(str(dest_dir), os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
     except Exception:
         try:
             os.unlink(tmp_path)
@@ -179,8 +187,9 @@ def compact_sqlite_db(
             error="database file not found",
         )
 
-    conn = sqlite3.connect(str(p), timeout=busy_timeout_ms / 1000.0)
+    conn: sqlite3.Connection | None = None
     try:
+        conn = sqlite3.connect(str(p), timeout=busy_timeout_ms / 1000.0)
         conn.execute(f"PRAGMA busy_timeout = {int(busy_timeout_ms)}")
         row = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
         busy, log_frames, checkpointed = (int(row[0]), int(row[1]), int(row[2])) if row else (0, 0, 0)
@@ -197,8 +206,23 @@ def compact_sqlite_db(
             conn.execute("VACUUM")
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             did_vacuum = True
+    except (sqlite3.Error, OSError) as exc:
+        logger.warning("SQLite compaction failed for %s: %s", p, exc)
+        return WalCompactionResult(
+            db_path=str(p),
+            wal_bytes_before=wal_before,
+            wal_bytes_after=wal_p.stat().st_size if wal_p.is_file() else 0,
+            db_bytes_before=db_before,
+            db_bytes_after=p.stat().st_size if p.is_file() else 0,
+            checkpoint_busy=1,
+            checkpoint_log=0,
+            checkpoint_checkpointed=0,
+            vacuumed=False,
+            error=str(exc),
+        )
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
     db_after = p.stat().st_size if p.is_file() else 0
     wal_after = wal_p.stat().st_size if wal_p.is_file() else 0
@@ -234,7 +258,12 @@ def enforce_archive_retention(
 
     total_bytes = sum(p.stat().st_size for p in archives)
     pruned: list[str] = []
-    while archives and (len(archives) > max(1, int(max_archive_files)) or total_bytes > max(0, int(max_archive_bytes))):
+    # Always preserve at least the single newest archive so retention never deletes
+    # an archive that was just created when it alone exceeds max_archive_bytes.
+    while len(archives) > 1 and (
+        len(archives) > max(1, int(max_archive_files))
+        or total_bytes > max(0, int(max_archive_bytes))
+    ):
         victim = archives.pop(0)
         size = victim.stat().st_size
         try:
@@ -353,7 +382,6 @@ class StorageCompactionScheduler:
         if self._task is None:
             return
         self._stop_event.set()
-        self._task.cancel()
         try:
             await self._task
         except asyncio.CancelledError:

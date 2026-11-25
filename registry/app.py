@@ -151,12 +151,41 @@ async def lifespan(app: FastAPI):
 
     data_dir = os.path.dirname(persistence_path) or "data"
 
-    # ECO-02: Validate/initialize pairing identity BEFORE starting background tasks
+    # ECO-02 & ECO-03: Validate config & pairing identity BEFORE starting background tasks
     from .discovery import EcosystemDiscovery
     from .pairing import NodePairingManager
+    from .storage_compactor import EdgeStorageCompactor, StorageCompactionScheduler
+
+    raw_compact_interval = os.environ.get("ECOSYSTEM_COMPACT_INTERVAL_SECONDS", "3600")
+    try:
+        compact_interval = int(raw_compact_interval)
+    except ValueError as exc:
+        raise ValueError(f"ECOSYSTEM_COMPACT_INTERVAL_SECONDS must be an integer, got {raw_compact_interval!r}") from exc
+
+    raw_port = os.environ.get("ECOSYSTEM_PORT")
+    if raw_port is not None:
+        registry_port = int(raw_port)
+    else:
+        registry_port = 8500
+        try:
+            import yaml
+            cfg_path = os.environ.get("ECOSYSTEM_CONFIG") or os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ecosystem.yaml"
+            )
+            if os.path.isfile(cfg_path):
+                with open(cfg_path, encoding="utf-8") as fh:
+                    cfg_data = yaml.safe_load(fh) or {}
+                registry_port = int((cfg_data.get("registry") or {}).get("port") or 8500)
+        except Exception:
+            registry_port = 8500
 
     pairing_dir = os.environ.get("ECOSYSTEM_PAIRING_DIR") or os.path.join(data_dir, "pairing")
     pairing_manager = NodePairingManager(data_dir=pairing_dir)
+    storage_compactor = EdgeStorageCompactor(data_dir=data_dir)
+    compaction_scheduler = StorageCompactionScheduler(
+        storage_compactor,
+        interval_seconds=compact_interval,
+    )
 
     interval = int(os.environ.get("ECOSYSTEM_HEALTH_INTERVAL", "30"))
     max_failures = int(os.environ.get("ECOSYSTEM_MAX_FAILURES", "5"))
@@ -241,7 +270,6 @@ async def lifespan(app: FastAPI):
         logger.info("%d command(s) closed because their approval had been denied or had expired", closed)
 
     # ECO-02: Advertise hub fingerprint & pairing readiness over mDNS (opt-out via ECOSYSTEM_DISABLE_MDNS=1)
-    registry_port = int(os.environ.get("ECOSYSTEM_PORT", "8500"))
     discovery = EcosystemDiscovery(
         registry_port=registry_port,
         hub_fingerprint=pairing_manager.hub_fingerprint,
@@ -250,15 +278,7 @@ async def lifespan(app: FastAPI):
     if os.environ.get("ECOSYSTEM_DISABLE_MDNS", "").strip().lower() not in ("1", "true", "yes"):
         await discovery.start()
 
-    # ECO-03: Periodic SQLite WAL compaction & offline event log archival
-    from .storage_compactor import EdgeStorageCompactor, StorageCompactionScheduler
-
-    compact_interval = int(os.environ.get("ECOSYSTEM_COMPACT_INTERVAL_SECONDS", "3600"))
-    storage_compactor = EdgeStorageCompactor(data_dir=data_dir)
-    compaction_scheduler = StorageCompactionScheduler(
-        storage_compactor,
-        interval_seconds=compact_interval,
-    )
+    # ECO-03: Start periodic SQLite WAL compaction & offline event log archival
     await compaction_scheduler.start()
 
     # Stash on app.state so request handlers resolve them via dependencies
