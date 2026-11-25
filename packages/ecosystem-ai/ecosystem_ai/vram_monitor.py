@@ -18,7 +18,7 @@ import subprocess
 import threading
 import time
 from dataclasses import asdict, dataclass
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Union
 
 logger = logging.getLogger("ecosystem.vram_monitor")
 
@@ -40,8 +40,12 @@ _QUANT_ALIASES: dict[str, str] = {
     "Q6": "Q6_K",
     "Q6_K": "Q6_K",
     "Q5": "Q5_K_M",
+    "Q5_0": "Q5_K_M",
+    "Q5_K_S": "Q5_K_M",
     "Q5_K_M": "Q5_K_M",
     "Q4": "Q4_K_M",
+    "Q4_0": "Q4_K_M",
+    "Q4_K_S": "Q4_K_M",
     "Q4_K_M": "Q4_K_M",
     "Q3": "Q3_K_M",
     "Q3_K_M": "Q3_K_M",
@@ -50,8 +54,20 @@ _QUANT_ALIASES: dict[str, str] = {
 }
 
 _QUANT_TAG_RE = re.compile(
-    r"(?i)(?:^|[-_:])(f16|fp16|q8_0|q8|q6_k|q6|q5_k_m|q5_k_s|q5_0|q5|q4_k_m|q4_k_s|q4_0|q4|q3_k_m|q3|q2_k|q2)(?=$|[-_:])"
+    r"(?i)(?:^|[-_:])(f16|fp16|q8_0|q8|q6_k|q6|q5_k_m|q5_k_s|q5_0|q5|q4_k_m|q4_k_s|q4_0|q4|q3_k_m|q3|q2_k|q2)(?=$|[-:]|\.gguf$|_(?![0-9]|k(?:_|$)))"
 )
+
+
+def extract_model_quantization(model_name: str, *, default: str | None = None) -> str | None:
+    """Extract and normalize the quantization tag from a model identifier, if present."""
+    raw = str(model_name or "").strip()
+    if not raw or raw.lower() == "auto":
+        return default
+    m = _QUANT_TAG_RE.search(raw)
+    if not m:
+        return default
+    token = m.group(1).upper()
+    return _QUANT_ALIASES.get(token, default)
 
 
 def normalize_quantization(quant: str) -> str:
@@ -226,7 +242,7 @@ def sample_memory_headroom() -> MemorySample:
     )
 
 
-ShiftCallback = Callable[[QuantizationShiftEvent], Any | Awaitable[Any]]
+ShiftCallback = Callable[[QuantizationShiftEvent], Union[Any, Awaitable[Any]]]
 
 
 class VramQuantizationMonitor:

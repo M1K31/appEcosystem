@@ -288,18 +288,23 @@ async def lifespan(app: FastAPI):
     await compaction_scheduler.start()
 
     # ECO-05: Dynamic VRAM quantization down-shifting monitor
-    from ecosystem_ai.vram_monitor import VramQuantizationMonitor
+    from ecosystem_ai.vram_monitor import VramQuantizationMonitor, extract_model_quantization
+    from events.schemas import EventEnvelope
 
     async def _on_vram_shift(ev):
         if event_bus is not None:
             await event_bus.publish(
-                source="ecosystem_registry",
-                event_type=f"ai.quantization.{ev.action}",
-                payload=ev.to_dict(),
+                EventEnvelope(
+                    type=f"ai.quantization.{ev.action}",
+                    source="ecosystem_registry",
+                    data=ev.to_dict(),
+                )
             )
 
     current_model = str((ai_profile_store.get() or {}).get("selected_model") or "auto")
+    baseline_quant = extract_model_quantization(current_model, default="Q8_0") or "Q8_0"
     vram_monitor = VramQuantizationMonitor(
+        baseline_quant=baseline_quant,
         interval_seconds=vram_interval,
         model_name=current_model,
         on_shift=_on_vram_shift,
