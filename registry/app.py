@@ -250,6 +250,17 @@ async def lifespan(app: FastAPI):
     if os.environ.get("ECOSYSTEM_DISABLE_MDNS", "").strip().lower() not in ("1", "true", "yes"):
         await discovery.start()
 
+    # ECO-03: Periodic SQLite WAL compaction & offline event log archival
+    from .storage_compactor import EdgeStorageCompactor, StorageCompactionScheduler
+
+    compact_interval = int(os.environ.get("ECOSYSTEM_COMPACT_INTERVAL_SECONDS", "3600"))
+    storage_compactor = EdgeStorageCompactor(data_dir=data_dir)
+    compaction_scheduler = StorageCompactionScheduler(
+        storage_compactor,
+        interval_seconds=compact_interval,
+    )
+    await compaction_scheduler.start()
+
     # Stash on app.state so request handlers resolve them via dependencies
     # rather than module globals (which could be None before startup).
     app.state.registry = registry
@@ -268,10 +279,12 @@ async def lifespan(app: FastAPI):
     app.state.command_dispatcher = command_dispatcher
     app.state.pairing_manager = pairing_manager
     app.state.discovery = discovery
+    app.state.storage_compactor = storage_compactor
 
     logger.info("Ecosystem registry started")
     yield
 
+    await compaction_scheduler.stop()
     await discovery.stop()
     await scan_scheduler.stop()
     await approval_service.stop()

@@ -6,7 +6,7 @@ import argparse
 import sys
 
 from .commands import (
-    cmd_apps, cmd_doctor, cmd_install, cmd_logs, cmd_monitor, cmd_partner, cmd_provider,
+    cmd_apps, cmd_compact, cmd_doctor, cmd_install, cmd_logs, cmd_monitor, cmd_partner, cmd_provider,
     cmd_restart, cmd_scan, cmd_secret, cmd_start, cmd_start_all, cmd_status, cmd_stop,
     cmd_stop_all, cmd_totp_recover, cmd_uninstall,
 )
@@ -99,6 +99,14 @@ def main():
     totp_parser.add_argument("--yes", action="store_true", dest="confirm", help="Confirm removing the operator's TOTP secret")
     totp_parser.add_argument("--store-path", dest="store_path", default=None, help="Optional override path to step_up_credentials.json")
 
+    compact_parser = sub.add_parser(
+        "compact",
+        help="Compact SQLite WAL files and archive offline event logs",
+    )
+    compact_parser.add_argument("--data-dir", dest="data_dir", default=None, help="Data directory to compact (default: ecosystem data dir)")
+    compact_parser.add_argument("--vacuum", action="store_true", help="Force SQLite VACUUM in addition to WAL checkpoint")
+    compact_parser.add_argument("--codec", choices=["auto", "zstd", "gzip"], default="auto", help="Archive compression codec (default: auto)")
+
     args = parser.parse_args()
 
     commands = {
@@ -142,6 +150,12 @@ def main():
             list_only=getattr(args, "list_only", False),
             confirm=getattr(args, "confirm", False),
             store_path=getattr(args, "store_path", None),
+        ))
+    elif args.command == "compact":
+        sys.exit(cmd_compact(
+            getattr(args, "data_dir", None),
+            vacuum=getattr(args, "vacuum", False),
+            codec=getattr(args, "codec", "auto"),
         ))
     elif args.command in commands:
         sys.exit(commands[args.command]())
