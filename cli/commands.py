@@ -977,3 +977,23 @@ def cmd_totp_recover(
         "Re-enroll a new authenticator app from the dashboard on loopback."
     )
     return 0
+
+
+def cmd_compact(
+    data_dir: str | None = None,
+    *,
+    vacuum: bool = False,
+    codec: str = "auto",
+) -> int:
+    """CLI handler for ``ecosystem compact`` (SQLite WAL compaction & event log archival)."""
+    from registry.storage_compactor import EdgeStorageCompactor
+
+    target_dir = Path(data_dir) if data_dir else DATA_DIR
+    compactor = EdgeStorageCompactor(data_dir=target_dir, codec=codec)
+    report = compactor.run_once(vacuum=vacuum)
+    print(f"Compacted data directory: {report.data_dir}")
+    print(f"  SQLite DBs checked:  {len(report.sqlite_results)}")
+    print(f"  Event logs archived: {len(report.archived_logs)}")
+    print(f"  Archives pruned:     {len(report.pruned_archives)}")
+    print(f"  Bytes reclaimed:     {report.total_bytes_reclaimed}")
+    return 0

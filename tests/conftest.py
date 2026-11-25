@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "auth" / "python"))
 # exercise the resolver itself override/delete this via monkeypatch.
 os.environ.setdefault("ECOSYSTEM_HMAC_SECRET", "test-ecosystem-secret")
 os.environ.setdefault("ECOSYSTEM_DISABLE_MDNS", "1")
+os.environ.setdefault("ECOSYSTEM_COMPACT_INTERVAL_SECONDS", "0")
 
 
 # ── Network guard ──────────────────────────────────────────────────────────
