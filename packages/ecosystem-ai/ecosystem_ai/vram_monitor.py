@@ -54,7 +54,7 @@ _QUANT_ALIASES: dict[str, str] = {
 }
 
 _QUANT_TAG_RE = re.compile(
-    r"(?i)(?:^|[-_:])(f16|fp16|q8_0|q8|q6_k|q6|q5_k_m|q5_k_s|q5_0|q5|q4_k_m|q4_k_s|q4_0|q4|q3_k_m|q3|q2_k|q2)(?=$|[-:]|\.gguf$|_(?![0-9]|k(?:_|$)))"
+    r"(?i)(?:^|[-_:.])(f16|fp16|q8_0|q8|q6_k|q6|q5_k_m|q5_k_s|q5_0|q5|q4_k_m|q4_k_s|q4_0|q4|q3_k_m|q3|q2_k|q2)(?=$|[-:]|\.gguf$|_(?![0-9]|k(?:_|$)))"
 )
 
 
@@ -286,10 +286,28 @@ class VramQuantizationMonitor:
         self._low_streak = 0
         self._restore_streak = 0
         self._last_shift_ts: float = 0.0
+        self._config_generation: int = 0
         self._last_sample: MemorySample | None = None
         self._history: list[dict[str, Any]] = []
         self._task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
+
+    def configure_model(self, model_name: str, *, baseline_quant: str | None = None) -> None:
+        """Synchronize the monitor with a new selected model and reset shift/streak state."""
+        cleaned = str(model_name or "auto").strip()
+        resolved_baseline = (
+            normalize_quantization(baseline_quant)
+            if baseline_quant is not None
+            else (extract_model_quantization(cleaned, default="Q8_0") or "Q8_0")
+        )
+        with self._lock:
+            self.model_name = cleaned
+            self.baseline_quant = resolved_baseline
+            self._active_quant = resolved_baseline
+            self._low_streak = 0
+            self._restore_streak = 0
+            self._last_shift_ts = 0.0
+            self._config_generation += 1
 
     def evaluate_sample(
         self,
@@ -360,16 +378,40 @@ class VramQuantizationMonitor:
 
     async def poll_once(self) -> QuantizationShiftEvent | None:
         sample = await asyncio.to_thread(self._probe_fn)
-        event = self.evaluate_sample(sample)
+        with self._lock:
+            gen = self._config_generation
+            prev_active = self._active_quant
+            prev_last_shift_ts = self._last_shift_ts
+            prev_low_streak = self._low_streak
+            prev_restore_streak = self._restore_streak
+            event = self.evaluate_sample(sample)
         if event is not None and self._on_shift is not None:
-            res = self._on_shift(event)
-            if inspect.isawaitable(res):
-                await res
+            delivered = True
+            try:
+                res = self._on_shift(event)
+                if inspect.isawaitable(res):
+                    res = await res
+                if res is False:
+                    delivered = False
+            except Exception as exc:
+                logger.warning("VRAM quantization shift callback failed: %s", exc)
+                delivered = False
+            if not delivered:
+                with self._lock:
+                    if self._config_generation == gen:
+                        self._active_quant = prev_active
+                        self._last_shift_ts = prev_last_shift_ts
+                        self._low_streak = prev_low_streak
+                        self._restore_streak = prev_restore_streak
+                        if self._history and self._history[-1].get("timestamp") == event.timestamp:
+                            self._history.pop()
+                return None
         return event
 
     def status(self) -> dict[str, Any]:
         with self._lock:
             return {
+                "model_name": self.model_name,
                 "baseline_quant": self.baseline_quant,
                 "active_quant": self._active_quant,
                 "downshifted": self._active_quant != self.baseline_quant,

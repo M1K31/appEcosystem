@@ -23,11 +23,13 @@ def test_quantization_step_down_and_model_tag_rewriting():
     assert rewrite_model_quantization("llama3.1:8b-instruct-q8_0", "Q4_K_M") == "llama3.1:8b-instruct-q4_k_m"
     assert rewrite_model_quantization("qwen2.5:14b", "Q4_K_M") == "qwen2.5:14b-q4_k_m"
     assert rewrite_model_quantization("model-Q8_0.gguf", "Q4_K_M") == "model-q4_k_m.gguf"
+    assert rewrite_model_quantization("model.Q8_0.gguf", "Q4_K_M") == "model.q4_k_m.gguf"
     assert rewrite_model_quantization("model-Q8_1.gguf", "Q4_K_M") == "model-Q8_1.gguf:q4_k_m"
     assert rewrite_model_quantization("auto", "Q4_K_M") == "auto"
 
     assert extract_model_quantization("llama3.1:8b-instruct-q4_k_m") == "Q4_K_M"
     assert extract_model_quantization("model-Q8_0.gguf") == "Q8_0"
+    assert extract_model_quantization("model.Q8_0.gguf") == "Q8_0"
     assert extract_model_quantization("auto", default="Q8_0") == "Q8_0"
     assert extract_model_quantization("qwen2.5:14b", default="Q8_0") == "Q8_0"
 
@@ -126,23 +128,43 @@ def test_registry_memory_pressure_endpoint(tmp_path: Path, monkeypatch):
         assert body["low_headroom_gb"] == 2.0
         assert body["downshifted"] is False
 
-        # Verify _on_vram_shift publishes a valid EventEnvelope to event_bus
+        # Verify _on_vram_shift rolls back when no subscriber received the event
+        async def _undelivered_publish(envelope):
+            return {"delivered": 0, "failed": 1, "subscribers": ["ollama"]}
+
+        monkeypatch.setattr(app.state.event_bus, "publish", _undelivered_publish)
+        mon = app.state.vram_monitor
+        low_samples = iter([
+            MemorySample(1.1, 16.0, "nvidia_smi", False),
+            MemorySample(1.0, 16.0, "nvidia_smi", False),
+        ])
+        mon._probe_fn = lambda: next(low_samples)
+        assert asyncio.run(mon.poll_once()) is None
+        assert asyncio.run(mon.poll_once()) is None
+        assert mon.status()["active_quant"] == "Q8_0"
+        assert mon.status()["downshifted"] is False
+
+        # Verify _on_vram_shift commits when a subscriber receives the EventEnvelope
         published = []
 
         async def _capture_publish(envelope):
             published.append(envelope)
+            return {"delivered": 1, "failed": 0, "subscribers": ["ollama"]}
 
         monkeypatch.setattr(app.state.event_bus, "publish", _capture_publish)
-        mon = app.state.vram_monitor
-        samples = iter([
-            MemorySample(1.1, 16.0, "nvidia_smi", False),
-            MemorySample(1.0, 16.0, "nvidia_smi", False),
-        ])
-        mon._probe_fn = lambda: next(samples)
-        assert asyncio.run(mon.poll_once()) is None
+        mon._probe_fn = lambda: MemorySample(1.0, 16.0, "nvidia_smi", False)
         ev = asyncio.run(mon.poll_once())
         assert ev is not None
         assert len(published) == 1
         assert published[0].type == "ai.quantization.downshift"
         assert published[0].source == "ecosystem_registry"
         assert published[0].data["to_quant"] == "Q4_K_M"
+        assert mon.status()["downshifted"] is True
+
+        # Verify configure_model synchronizes baseline and resets downshift state
+        mon.configure_model("llama3.1:8b-instruct-q4_k_m")
+        st = mon.status()
+        assert st["model_name"] == "llama3.1:8b-instruct-q4_k_m"
+        assert st["baseline_quant"] == "Q4_K_M"
+        assert st["active_quant"] == "Q4_K_M"
+        assert st["downshifted"] is False

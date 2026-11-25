@@ -289,17 +289,22 @@ async def lifespan(app: FastAPI):
 
     # ECO-05: Dynamic VRAM quantization down-shifting monitor
     from ecosystem_ai.vram_monitor import VramQuantizationMonitor, extract_model_quantization
-    from events.schemas import EventEnvelope
 
     async def _on_vram_shift(ev):
-        if event_bus is not None:
-            await event_bus.publish(
-                EventEnvelope(
-                    type=f"ai.quantization.{ev.action}",
-                    source="ecosystem_registry",
-                    data=ev.to_dict(),
-                )
+        if event_bus is None:
+            return False
+        from events.schemas import EventEnvelope
+
+        result = await event_bus.publish(
+            EventEnvelope(
+                type=f"ai.quantization.{ev.action}",
+                source="ecosystem_registry",
+                data=ev.to_dict(),
             )
+        )
+        if isinstance(result, dict) and result.get("delivered", 0) <= 0:
+            return False
+        return True
 
     current_model = str((ai_profile_store.get() or {}).get("selected_model") or "auto")
     baseline_quant = extract_model_quantization(current_model, default="Q8_0") or "Q8_0"
@@ -627,6 +632,11 @@ async def update_ai_profile(
         )
     updated_by = (auth or {}).get("app_id") or "unknown"
     profile = store.update(changes, updated_by=updated_by)
+
+    if "selected_model" in changes:
+        vram_monitor = getattr(request.app.state, "vram_monitor", None)
+        if vram_monitor is not None:
+            vram_monitor.configure_model(str(profile.get("selected_model") or "auto"))
 
     event_bus = getattr(request.app.state, "event_bus", None)
     if event_bus:
