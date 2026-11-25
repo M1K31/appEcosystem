@@ -17,11 +17,31 @@ class EcosystemDiscovery:
 
     SERVICE_TYPE = "_ecosystem._tcp.local."
 
-    def __init__(self, registry_port: int = 8500, host: Optional[str] = None):
+    def __init__(
+        self,
+        registry_port: int = 8500,
+        host: Optional[str] = None,
+        *,
+        hub_fingerprint: Optional[str] = None,
+        pairing_enabled: bool = True,
+    ):
         self.registry_port = registry_port
         self.host = host or self._get_local_ip()
+        self.hub_fingerprint = hub_fingerprint
+        self.pairing_enabled = pairing_enabled
         self._zeroconf = None
         self._service_info = None
+
+    def build_txt_properties(self) -> dict[bytes, bytes]:
+        """Build mDNS TXT properties advertising registry role and ECDSA public key fingerprint."""
+        props: dict[bytes, bytes] = {
+            b"version": b"0.2.0",
+            b"role": b"registry",
+            b"pairing": b"1" if self.pairing_enabled else b"0",
+        }
+        if self.hub_fingerprint:
+            props[b"pubkey_fp"] = self.hub_fingerprint.encode("ascii")
+        return props
 
     async def start(self) -> None:
         """Start mDNS announcement."""
@@ -34,10 +54,7 @@ class EcosystemDiscovery:
                 f"ecosystem-registry.{self.SERVICE_TYPE}",
                 addresses=[socket.inet_aton(self.host)],
                 port=self.registry_port,
-                properties={
-                    b"version": b"0.1.0",
-                    b"role": b"registry",
-                },
+                properties=self.build_txt_properties(),
             )
             self._zeroconf.register_service(self._service_info)
             logger.info(
@@ -75,10 +92,18 @@ class EcosystemDiscovery:
                 def add_service(self, zc, type_, name):
                     info = zc.get_service_info(type_, name)
                     if info:
+                        props = {
+                            (k.decode("utf-8", errors="ignore") if isinstance(k, bytes) else str(k)): (
+                                v.decode("utf-8", errors="ignore") if isinstance(v, bytes) else str(v)
+                            )
+                            for k, v in (info.properties or {}).items()
+                        }
                         services_found.append({
                             "name": name.replace(f".{type_}", ""),
                             "host": socket.inet_ntoa(info.addresses[0]) if info.addresses else "unknown",
                             "port": info.port,
+                            "pubkey_fp": props.get("pubkey_fp"),
+                            "pairing": props.get("pairing") == "1",
                         })
 
                 def remove_service(self, zc, type_, name):

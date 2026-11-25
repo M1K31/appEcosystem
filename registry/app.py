@@ -232,6 +232,12 @@ async def lifespan(app: FastAPI):
     if closed:
         logger.info("%d command(s) closed because their approval had been denied or had expired", closed)
 
+    # ECO-02: Cryptographic node auto-pairing (ECDSA P-256 identity & pinned LAN nodes)
+    from .pairing import NodePairingManager
+
+    pairing_dir = os.environ.get("ECOSYSTEM_PAIRING_DIR") or os.path.join(data_dir, "pairing")
+    pairing_manager = NodePairingManager(data_dir=pairing_dir)
+
     # Stash on app.state so request handlers resolve them via dependencies
     # rather than module globals (which could be None before startup).
     app.state.registry = registry
@@ -248,6 +254,7 @@ async def lifespan(app: FastAPI):
     app.state.scan_runner = scan_runner
     app.state.scan_scheduler = scan_scheduler
     app.state.command_dispatcher = command_dispatcher
+    app.state.pairing_manager = pairing_manager
 
     logger.info("Ecosystem registry started")
     yield
@@ -453,10 +460,12 @@ def _ensure_voice_pkg():
 _ensure_voice_pkg()
 from ecosystem_voice import router as voice_router
 
+from .pairing_routes import router as pairing_router
 app.include_router(policy_router)
 app.include_router(scan_router)
 app.include_router(command_router)
 app.include_router(voice_router)
+app.include_router(pairing_router)
 
 
 @app.get("/", include_in_schema=False)
