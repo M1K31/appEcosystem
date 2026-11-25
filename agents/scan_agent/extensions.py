@@ -39,8 +39,11 @@ _SAFE_EXT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _VALID_PROFILES = frozenset({"quick", "standard", "full"})
 _VALID_STATUSES = frozenset({"clean", "findings", "partial", "error", "skipped_frozen"})
 _VALID_SEVERITIES = frozenset({"low", "medium", "high", "critical"})
-_HOST_PATH_RE = re.compile(r"(/[A-Za-z0-9._-]+){2,}|[A-Za-z]:\\[^\s'\"]+")
+_HOST_PATH_RE = re.compile(
+    r"\\\\[^\s'\"]+|[A-Za-z]:\\[^\s'\"]+|(?<![A-Za-z0-9_:])/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*"
+)
 _MAX_SCRIPT_STDOUT_BYTES = 256 * 1024
+_MAX_SCRIPT_STDERR_BYTES = 64 * 1024
 
 _SCRUBBED_ENV_KEYS = (
     "PATH",
@@ -152,9 +155,12 @@ class ScannerExtension:
     async def run(self, ctx: ExtensionContext) -> ExtensionResult:
         if self._handler is None:
             raise NotImplementedError("ScannerExtension requires a handler callable or run() override")
-        res = self._handler(ctx)
-        if inspect.isawaitable(res):
-            res = await res
+        if inspect.iscoroutinefunction(self._handler):
+            res = await self._handler(ctx)
+        else:
+            res = await asyncio.to_thread(self._handler, ctx)
+            if inspect.isawaitable(res):
+                res = await res
         if not isinstance(res, ExtensionResult):
             raise TypeError(f"Extension {self.extension_id!r} returned {type(res).__name__}, expected ExtensionResult")
         return res
@@ -227,6 +233,28 @@ class ScriptScannerExtension(ScannerExtension):
         env["ECOSYSTEM_EXTENSION_READONLY"] = "1"
         return env
 
+    @staticmethod
+    async def _read_stream_bounded(stream: asyncio.StreamReader | None, limit: int) -> tuple[bytes, bool]:
+        if stream is None:
+            return b"", False
+        chunks: list[bytes] = []
+        total = 0
+        exceeded = False
+        while True:
+            chunk = await stream.read(16384)
+            if not chunk:
+                break
+            if total + len(chunk) > limit:
+                keep = max(0, limit - total)
+                if keep:
+                    chunks.append(chunk[:keep])
+                total = limit + 1
+                exceeded = True
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+        return b"".join(chunks), exceeded
+
     async def run(self, ctx: ExtensionContext) -> ExtensionResult:
         self._verify_sha256()
         ctx_payload = json.dumps(
@@ -249,34 +277,50 @@ class ScriptScannerExtension(ScannerExtension):
             stderr=asyncio.subprocess.PIPE,
             env=self._scrubbed_env(),
         )
+
+        async def _kill_and_reap() -> None:
+            if proc.returncode is None:
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+                try:
+                    await proc.wait()
+                except Exception:
+                    pass
+
         try:
-            stdout_bytes, _stderr_bytes = await asyncio.wait_for(
-                proc.communicate(),
+            (stdout_bytes, stdout_exceeded), (_stderr_bytes, _stderr_exceeded) = await asyncio.wait_for(
+                asyncio.gather(
+                    self._read_stream_bounded(proc.stdout, _MAX_SCRIPT_STDOUT_BYTES),
+                    self._read_stream_bounded(proc.stderr, _MAX_SCRIPT_STDERR_BYTES),
+                ),
                 timeout=self.timeout_seconds,
             )
+            if stdout_exceeded:
+                await _kill_and_reap()
+                return ExtensionResult(
+                    extension_id=self.extension_id,
+                    status="error",
+                    summary="Extension stdout exceeded 256 KiB safety limit",
+                )
+            await asyncio.wait_for(proc.wait(), timeout=5.0)
         except asyncio.TimeoutError:
-            try:
-                proc.kill()
-                await proc.wait()
-            except Exception:
-                pass
+            await _kill_and_reap()
             return ExtensionResult(
                 extension_id=self.extension_id,
                 status="partial",
                 summary=f"Extension timed out after {int(self.timeout_seconds)}s",
             )
+        except asyncio.CancelledError:
+            await _kill_and_reap()
+            raise
 
         if proc.returncode != 0:
             return ExtensionResult(
                 extension_id=self.extension_id,
                 status="error",
                 summary=f"Extension exited with code {proc.returncode}",
-            )
-        if len(stdout_bytes) > _MAX_SCRIPT_STDOUT_BYTES:
-            return ExtensionResult(
-                extension_id=self.extension_id,
-                status="error",
-                summary="Extension stdout exceeded 256 KiB safety limit",
             )
         try:
             parsed = json.loads(stdout_bytes.decode("utf-8"))
@@ -289,9 +333,16 @@ class ScriptScannerExtension(ScannerExtension):
                 summary="Extension produced invalid JSON output",
             )
 
+        raw_status = parsed.get("status")
+        if not isinstance(raw_status, str) or raw_status.strip().lower() not in _VALID_STATUSES:
+            return ExtensionResult(
+                extension_id=self.extension_id,
+                status="error",
+                summary="Extension returned missing or invalid status",
+            )
         return ExtensionResult(
             extension_id=self.extension_id,
-            status=str(parsed.get("status") or "clean").strip().lower(),
+            status=raw_status.strip().lower(),
             findings_count=int(parsed.get("findings_count") or 0),
             severity=str(parsed.get("severity") or "low").strip().lower(),
             summary=str(parsed.get("summary") or ""),

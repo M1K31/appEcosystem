@@ -642,34 +642,79 @@ class ScanRunner:
                     try:
                         return bool(self.policy_engine.export_state().get("frozen"))
                     except Exception:
-                        return False
+                        # Fail closed: if policy state cannot be read, treat as frozen
+                        return True
 
-                ext_results = await self.extension_registry.run_all(ext_ctx, is_frozen_fn=_is_frozen)
+                try:
+                    ext_results = await self.extension_registry.run_all(ext_ctx, is_frozen_fn=_is_frozen)
+                except asyncio.CancelledError:
+                    if full_json_path.is_file():
+                        try:
+                            orig_len = full_json_path.stat().st_size
+                            full_json_path.write_bytes(b"\x00" * orig_len)
+                        except Exception:
+                            pass
+                        full_json_path.unlink(missing_ok=True)
+                    cancelled_res = ScanResult(
+                        scan_id=req.scan_id,
+                        device_id=req.device_id,
+                        status="cancelled",
+                        exit_code=4,
+                        exit_description="Scan execution cancelled during extensions",
+                        share={"verdict": "cancelled"},
+                        report_ref="",
+                        started_at=started_at,
+                        completed_at=_iso_utc(),
+                        duration_seconds=round(time.time() - start_ts, 2),
+                        error_message="Scan cancelled",
+                    )
+                    self._results_history[req.scan_id] = cancelled_res
+                    self._persist_history()
+                    raise
+
                 if ext_results:
+                    if not isinstance(share_data, dict):
+                        share_data = {"verdict": "unknown", "error": "Invalid share summary"}
                     share_data["extensions"] = [r.to_public_summary() for r in ext_results]
                     if any(r.status == "findings" for r in ext_results) and status == "clean":
                         status = "findings"
                     elif any(r.status in ("partial", "error", "skipped_frozen") for r in ext_results) and status == "clean":
                         status = "partial"
 
+            completed_at = _iso_utc()
+            duration = round(time.time() - start_ts, 2)
+
             report_ref = ""
             full_payload_bytes: bytes | None = None
+            ext_full_records = [r.to_full_record() for r in ext_results] if ext_results else []
             if full_json_path.is_file():
                 try:
                     full_payload_bytes = full_json_path.read_bytes()
-                    if ext_results:
+                    if ext_full_records:
                         try:
                             full_obj = json.loads(full_payload_bytes.decode("utf-8"))
                             if isinstance(full_obj, dict):
-                                full_obj["extensions"] = [r.to_full_record() for r in ext_results]
-                                full_payload_bytes = json.dumps(full_obj).encode("utf-8")
+                                full_obj["extensions"] = ext_full_records
+                                full_payload_bytes = json.dumps(full_obj, default=str).encode("utf-8")
+                            else:
+                                full_payload_bytes = json.dumps(
+                                    {"core": full_obj, "extensions": ext_full_records},
+                                    default=str,
+                                ).encode("utf-8")
                         except Exception:
-                            pass
+                            full_payload_bytes = json.dumps(
+                                {
+                                    "core_raw": full_payload_bytes.decode("utf-8", errors="replace"),
+                                    "extensions": ext_full_records,
+                                },
+                                default=str,
+                            ).encode("utf-8")
                 except Exception as exc:
                     logger.error("Failed reading full scan report: %r", exc)
-            elif ext_results:
+            elif ext_full_records:
                 full_payload_bytes = json.dumps(
-                    {"scan_id": req.scan_id, "extensions": [r.to_full_record() for r in ext_results]}
+                    {"scan_id": req.scan_id, "extensions": ext_full_records},
+                    default=str,
                 ).encode("utf-8")
 
             if full_payload_bytes is not None:
