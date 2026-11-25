@@ -303,7 +303,13 @@ class StepUpAuthenticator:
                 ).decode("ascii")
                 return pem.strip(), "ES256"
             raise ValueError("Unsupported WebAuthn public key type (expected P-256 ES256 or Ed25519)")
-        return public_key_pem_or_b64.strip(), algorithm.upper()
+        cleaned = public_key_pem_or_b64.strip()
+        alg = algorithm.upper()
+        if cleaned and alg == "ES256":
+            pub = serialization.load_pem_public_key(cleaned.encode("utf-8"))
+            if not (isinstance(pub, ec.EllipticCurvePublicKey) and isinstance(pub.curve, ec.SECP256R1)):
+                raise ValueError("ES256 passkey requires a P-256 (SECP256R1) EC public key")
+        return cleaned, alg
 
     def register_passkey(
         self,

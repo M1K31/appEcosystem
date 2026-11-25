@@ -12,6 +12,7 @@ Keeps long-running edge nodes and hubs within tight flash storage budgets by:
 from __future__ import annotations
 
 import asyncio
+import errno
 import gzip
 import hashlib
 import logging
@@ -101,7 +102,16 @@ def compress_file_atomic(
                 dir_fd = os.open(str(dest_dir), os.O_RDONLY)
                 os.fsync(dir_fd)
             except OSError as exc:
-                logger.debug("Best-effort directory fsync skipped for %s: %s", dest_dir, exc)
+                unsupported = {
+                    getattr(errno, "EINVAL", -1),
+                    getattr(errno, "ENOTSUP", -1),
+                    getattr(errno, "EOPNOTSUPP", -1),
+                    getattr(errno, "EBADF", -1),
+                }
+                if exc.errno in unsupported:
+                    logger.debug("Directory fsync unsupported on %s (%s); continuing", dest_dir, exc)
+                else:
+                    raise
             finally:
                 if dir_fd is not None:
                     os.close(dir_fd)
@@ -382,12 +392,19 @@ class StorageCompactionScheduler:
         self._stop_event.clear()
         self._task = asyncio.create_task(self._loop(), name="edge-storage-compactor")
 
-    async def stop(self) -> None:
+    async def stop(self, *, timeout_seconds: float = 15.0) -> None:
         if self._task is None:
             return
         self._stop_event.set()
         try:
-            await self._task
+            await asyncio.wait_for(self._task, timeout=float(timeout_seconds))
+        except asyncio.TimeoutError:
+            logger.warning("Timed out waiting for in-flight compaction pass; cancelling task")
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
         except asyncio.CancelledError:
             pass
         self._task = None

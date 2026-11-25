@@ -996,7 +996,7 @@ def cmd_compact(
     else:
         reg_file = os.environ.get("ECOSYSTEM_REGISTRY_FILE")
         if reg_file:
-            target_dir = Path(reg_file).expanduser().parent
+            target_dir = Path(os.path.dirname(os.path.expanduser(reg_file)) or "data")
         else:
             target_dir = _resolve_data_dir()
 

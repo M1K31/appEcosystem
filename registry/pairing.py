@@ -354,7 +354,8 @@ class NodePairingManager:
 
             # Persist the pin BEFORE making the encrypted bundle claimable
             nodes = self._load_pinned()
-            nodes[rec["node_id"]] = {
+            prev = nodes.get(rec["node_id"]) if isinstance(nodes.get(rec["node_id"]), dict) else {}
+            pin_entry: dict[str, Any] = {
                 "node_id": rec["node_id"],
                 "hostname": rec["hostname"],
                 "roles": list(rec["roles"]),
@@ -363,6 +364,9 @@ class NodePairingManager:
                 "paired_by": approved_by,
                 "paired_at": ts,
             }
+            if prev.get("claimed_at") is not None:
+                pin_entry["claimed_at"] = prev["claimed_at"]
+            nodes[rec["node_id"]] = pin_entry
             self._save_pinned(nodes)
 
             rec["encrypted_bundle"] = bundle
@@ -416,17 +420,18 @@ class NodePairingManager:
             except (InvalidSignature, ValueError, TypeError) as exc:
                 raise PermissionError("Invalid ECDSA proof-of-possession signature") from exc
 
+            # Persist claimed_at BEFORE consuming the approved request so a write failure
+            # does not lose the one-time bundle without recording delivery.
+            nodes = self._load_pinned()
+            if rec["node_id"] in nodes:
+                nodes[rec["node_id"]]["claimed_at"] = ts
+                self._save_pinned(nodes)
+
             bundle = dict(rec["encrypted_bundle"])
             rec["encrypted_bundle"] = None
             rec["claimed"] = True
             rec["status"] = "claimed"
             self._pending.pop(pairing_id, None)
-
-            # Record claimed_at on the pinned node so revocation knows if the secret was delivered
-            nodes = self._load_pinned()
-            if rec["node_id"] in nodes:
-                nodes[rec["node_id"]]["claimed_at"] = ts
-                self._save_pinned(nodes)
 
             return {
                 "pairing_id": pairing_id,
