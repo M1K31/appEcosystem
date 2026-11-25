@@ -28,19 +28,29 @@ async def get_hub_pairing_identity(mgr=Depends(get_pairing_manager)):
     }
 
 
+def _validate_step_up_fields(payload: dict[str, Any]) -> None:
+    for field in ("step_up_token", "totp_code", "step_up_credential", "operator_id"):
+        val = payload.get(field)
+        if val is not None and not isinstance(val, str):
+            raise HTTPException(status_code=400, detail=f"{field} must be a string")
+
+
 @router.post("/request")
 async def request_node_pairing(
     payload: dict[str, Any] = Body(...),
     mgr=Depends(get_pairing_manager),
 ):
     """Submit a pairing request from a joining LAN node."""
+    raw_ttl = payload.get("ttl_seconds", 300)
+    if isinstance(raw_ttl, bool) or not isinstance(raw_ttl, int):
+        raise HTTPException(status_code=400, detail="ttl_seconds must be an integer")
     try:
         return mgr.request_pairing(
             node_id=str(payload.get("node_id") or ""),
             public_key_pem=str(payload.get("public_key_pem") or ""),
             hostname=str(payload.get("hostname") or ""),
             roles=payload.get("roles") if isinstance(payload.get("roles"), list) else None,
-            ttl_seconds=int(payload.get("ttl_seconds") or 300),
+            ttl_seconds=raw_ttl,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -77,6 +87,7 @@ async def approve_node_pairing(
     if policy.export_state().get("frozen"):
         raise HTTPException(status_code=423, detail="Cannot approve node pairing while Ecosystem Freeze is active")
 
+    _validate_step_up_fields(payload)
     claims = _resolve_step_up_claims(step_up, payload, request)
     try:
         secret_value = get_ecosystem_secret()
@@ -107,6 +118,7 @@ async def reject_node_pairing(
     mgr=Depends(get_pairing_manager),
     step_up=Depends(get_step_up),
 ):
+    _validate_step_up_fields(payload)
     _resolve_step_up_claims(step_up, payload, request)
     if not mgr.reject_pairing(pairing_id):
         raise HTTPException(status_code=404, detail="Pairing request not found")
@@ -140,6 +152,7 @@ async def revoke_paired_node(
     mgr=Depends(get_pairing_manager),
     step_up=Depends(get_step_up),
 ):
+    _validate_step_up_fields(payload)
     _resolve_step_up_claims(step_up, payload, request)
     if not mgr.revoke_node(node_id):
         raise HTTPException(status_code=404, detail="Paired node not found")

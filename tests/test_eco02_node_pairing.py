@@ -38,7 +38,7 @@ def test_ecdsa_node_pairing_round_trip_and_mitm_rejection(tmp_path: Path):
     assert node_derived_sas == req["sas_code"]
     assert len(node_derived_sas) == 6 and node_derived_sas.isdigit()
 
-    # 2. Wrong SAS is rejected (MITM protection)
+    # 2. Wrong SAS is rejected and invalidates the pending request (single-attempt MITM protection)
     with pytest.raises(PermissionError, match="SAS code mismatch"):
         mgr.approve_pairing(
             pairing_id,
@@ -48,12 +48,24 @@ def test_ecdsa_node_pairing_round_trip_and_mitm_rejection(tmp_path: Path):
             now=1010.0,
         )
 
-    # 3. Matching SAS pins the node's ECDSA public key and encrypts the secret
+    # Create a fresh request after invalidation, then approve with matching SAS + fingerprint
+    req = mgr.request_pairing(
+        node_id="edge-pi-garage",
+        public_key_pem=node_pub_pem,
+        hostname="garage-pi.local",
+        roles=["edge_sensor", "openeye"],
+        now=1015.0,
+    )
+    pairing_id = req["pairing_id"]
+    node_derived_sas = compute_sas_code(req["hub_public_key_pem"], node_pub_pem, pairing_id)
+
+    # 3. Matching SAS + fingerprint pins the node's ECDSA public key and encrypts the secret
     approved = mgr.approve_pairing(
         pairing_id,
         secret_value=secret,
         approved_by="owner",
         expected_sas=node_derived_sas,
+        expected_fingerprint=req["node_fingerprint"],
         now=1020.0,
     )
     assert approved["status"] == "approved"
@@ -82,9 +94,25 @@ def test_ecdsa_node_pairing_round_trip_and_mitm_rejection(tmp_path: Path):
     with pytest.raises(KeyError):
         mgr.claim_pairing(pairing_id, node_id="edge-pi-garage", signature_b64=valid_sig, now=1040.0)
 
-    # 7. Revocation removes pinned node
+    # 7. Revocation removes pinned node AND invalidates any unclaimed approval bundle
+    req2 = mgr.request_pairing(node_id="edge-pi-garage", public_key_pem=node_pub_pem, now=1045.0)
+    mgr.approve_pairing(
+        req2["pairing_id"],
+        secret_value=secret,
+        approved_by="owner",
+        expected_fingerprint=req2["node_fingerprint"],
+        now=1046.0,
+    )
     assert mgr.revoke_node("edge-pi-garage") is True
     assert mgr.list_paired_nodes() == []
+    sig2 = sign_claim_proof(node_priv, req2["pairing_id"], "edge-pi-garage")
+    with pytest.raises(KeyError):
+        mgr.claim_pairing(req2["pairing_id"], node_id="edge-pi-garage", signature_b64=sig2, now=1047.0)
+
+    # 8. Corrupt pin store fails closed rather than silently returning empty
+    mgr.store_path.write_text("{corrupt json", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="unreadable or corrupt"):
+        mgr.list_paired_nodes()
 
 
 def test_mdns_txt_advertises_hub_fingerprint_and_pairing_flag(tmp_path: Path):
@@ -108,12 +136,24 @@ def test_registry_pairing_routes_enforce_step_up_and_freeze(tmp_path: Path, monk
     monkeypatch.setenv("ECOSYSTEM_STEP_UP_FILE", str(tmp_path / "step_up.json"))
     monkeypatch.setenv("ECOSYSTEM_APPROVALS_DB", str(tmp_path / "approvals.db"))
     monkeypatch.setenv("ECOSYSTEM_PAIRING_DIR", str(tmp_path / "pairing"))
+    monkeypatch.setenv("ECOSYSTEM_DISABLE_MDNS", "1")
 
     from registry.app import app
 
     node_priv, node_pub_pem = generate_ecdsa_keypair()
 
     with TestClient(app) as client:
+        # App lifespan wires EcosystemDiscovery with the same pairing manager fingerprint
+        txt = app.state.discovery.build_txt_properties()
+        assert txt[b"pairing"] == b"1"
+        assert txt[b"pubkey_fp"] == app.state.pairing_manager.hub_fingerprint.encode("ascii")
+
+        # Invalid ttl_seconds returns 400
+        r_bad_ttl = client.post(
+            "/pairing/request",
+            json={"node_id": "bad-ttl", "public_key_pem": node_pub_pem, "ttl_seconds": "not-an-int"},
+        )
+        assert r_bad_ttl.status_code == 400
         # Enroll TOTP for operator step-up
         r_totp = client.post("/auth/step-up/totp/enroll", json={"operator_id": "admin"})
         assert r_totp.status_code == 200

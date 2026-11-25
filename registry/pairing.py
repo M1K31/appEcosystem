@@ -37,6 +37,23 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 _SAFE_NODE_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
 _PAIRING_HKDF_INFO = b"appecosystem-node-pairing-v1"
 _MAX_PENDING_REQUESTS = 20
+_MAX_PENDING_PER_NODE = 2
+
+
+def _write_private_file(path: Path, content: bytes) -> None:
+    """Atomically write a sensitive file with 0o600 permissions from creation."""
+    tmp = path.with_suffix(f".{secrets.token_hex(6)}.tmp")
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(content)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def _b64u(data: bytes) -> str:
@@ -186,13 +203,7 @@ class NodePairingManager:
             format=serialization.PrivateFormat.PKCS8,
             encryption_algorithm=serialization.NoEncryption(),
         )
-        tmp = self.key_path.with_suffix(".tmp")
-        tmp.write_bytes(pem)
-        try:
-            os.chmod(tmp, 0o600)
-        except OSError:
-            pass
-        os.replace(tmp, self.key_path)
+        _write_private_file(self.key_path, pem)
         return key
 
     def _load_pinned(self) -> dict[str, dict[str, Any]]:
@@ -200,20 +211,15 @@ class NodePairingManager:
             return {}
         try:
             data = json.loads(self.store_path.read_text(encoding="utf-8"))
-            if isinstance(data, dict) and isinstance(data.get("nodes"), dict):
-                return data["nodes"]
-        except Exception:
-            pass
-        return {}
+        except Exception as exc:
+            raise RuntimeError(f"Pinned node store at {self.store_path} is unreadable or corrupt") from exc
+        if not isinstance(data, dict) or not isinstance(data.get("nodes"), dict):
+            raise RuntimeError(f"Pinned node store at {self.store_path} has invalid structure")
+        return data["nodes"]
 
     def _save_pinned(self, nodes: dict[str, dict[str, Any]]) -> None:
-        tmp = self.store_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"schema_version": 1, "nodes": nodes}, indent=2, sort_keys=True), encoding="utf-8")
-        try:
-            os.chmod(tmp, 0o600)
-        except OSError:
-            pass
-        os.replace(tmp, self.store_path)
+        raw = json.dumps({"schema_version": 1, "nodes": nodes}, indent=2, sort_keys=True).encode("utf-8")
+        _write_private_file(self.store_path, raw)
 
     def _prune_expired(self, now: float) -> None:
         expired = [pid for pid, rec in self._pending.items() if rec["expires_at"] <= now]
@@ -240,6 +246,12 @@ class NodePairingManager:
 
         with self._lock:
             self._prune_expired(ts)
+            node_pending = [
+                pid for pid, r in self._pending.items()
+                if r["node_id"] == nid and r["status"] == "pending"
+            ]
+            if len(node_pending) >= _MAX_PENDING_PER_NODE:
+                raise RuntimeError(f"Too many pending pairing requests for node '{nid}'")
             if len(self._pending) >= _MAX_PENDING_REQUESTS:
                 raise RuntimeError("Too many pending pairing requests; wait for expiry or resolve existing requests")
             pairing_id = secrets.token_urlsafe(16)
@@ -307,18 +319,45 @@ class NodePairingManager:
         if not expected_sas and not expected_fingerprint:
             raise ValueError("Interactive verification requires expected_sas or expected_fingerprint")
 
+        if expected_sas is not None:
+            sas_str = str(expected_sas).strip()
+            if not sas_str.isascii() or len(sas_str) != 6 or not sas_str.isdigit():
+                raise ValueError("expected_sas must be a 6-digit ASCII string")
+        else:
+            sas_str = None
+        if expected_fingerprint is not None:
+            fp_str = str(expected_fingerprint).strip().lower()
+            if not fp_str.isascii() or not fp_str.startswith("sha256:"):
+                raise ValueError("expected_fingerprint must be an ASCII sha256:... string")
+        else:
+            fp_str = None
+
         ts = time.time() if now is None else now
         with self._lock:
             self._prune_expired(ts)
             rec = self._pending.get(pairing_id)
             if not rec or rec["status"] != "pending":
                 raise KeyError("Pairing request not found or no longer pending")
-            if expected_sas and not hmac.compare_digest(str(expected_sas).strip(), rec["sas_code"]):
-                raise PermissionError("SAS code mismatch — aborting pairing (possible MITM)")
-            if expected_fingerprint and not hmac.compare_digest(
-                str(expected_fingerprint).strip().lower(), rec["node_fingerprint"].lower()
-            ):
-                raise PermissionError("Public key fingerprint mismatch — aborting pairing (possible MITM)")
+            if sas_str is not None and not hmac.compare_digest(sas_str, rec["sas_code"]):
+                # Single-attempt SAS: invalidate immediately on mismatch to prevent brute force
+                self._pending.pop(pairing_id, None)
+                raise PermissionError("SAS code mismatch — pairing request invalidated (possible MITM)")
+            if fp_str is not None and not hmac.compare_digest(fp_str, rec["node_fingerprint"].lower()):
+                self._pending.pop(pairing_id, None)
+                raise PermissionError("Public key fingerprint mismatch — pairing request invalidated (possible MITM)")
+
+            # Persist the pin FIRST before making the encrypted bundle claimable
+            nodes = self._load_pinned()
+            nodes[rec["node_id"]] = {
+                "node_id": rec["node_id"],
+                "hostname": rec["hostname"],
+                "roles": list(rec["roles"]),
+                "public_key_pem": rec["public_key_pem"],
+                "fingerprint": rec["node_fingerprint"],
+                "paired_by": approved_by,
+                "paired_at": ts,
+            }
+            self._save_pinned(nodes)
 
             bundle = encrypt_paired_secret(
                 self._private_key,
@@ -332,17 +371,6 @@ class NodePairingManager:
             rec["approved_by"] = approved_by
             rec["approved_at"] = ts
 
-            nodes = self._load_pinned()
-            nodes[rec["node_id"]] = {
-                "node_id": rec["node_id"],
-                "hostname": rec["hostname"],
-                "roles": list(rec["roles"]),
-                "public_key_pem": rec["public_key_pem"],
-                "fingerprint": rec["node_fingerprint"],
-                "paired_by": approved_by,
-                "paired_at": ts,
-            }
-            self._save_pinned(nodes)
             return {
                 "pairing_id": pairing_id,
                 "node_id": rec["node_id"],
@@ -373,6 +401,9 @@ class NodePairingManager:
                 raise KeyError("Approved pairing bundle not available (pending, expired, or already claimed)")
             if rec["node_id"] != str(node_id).strip():
                 raise PermissionError("node_id does not match pairing request")
+            pinned = self._load_pinned().get(rec["node_id"])
+            if not pinned or pinned.get("public_key_pem") != rec["public_key_pem"]:
+                raise PermissionError("Pairing approval was revoked or superseded by a newer pin")
 
             pub = load_ecdsa_public_key(rec["public_key_pem"])
             msg = f"claim:{pairing_id}:{rec['node_id']}".encode("utf-8")
@@ -403,9 +434,13 @@ class NodePairingManager:
             return [dict(nodes[nid]) for nid in sorted(nodes.keys())]
 
     def revoke_node(self, node_id: str) -> bool:
+        nid = str(node_id).strip()
         with self._lock:
             nodes = self._load_pinned()
-            removed = nodes.pop(str(node_id).strip(), None) is not None
+            removed = nodes.pop(nid, None) is not None
             if removed:
                 self._save_pinned(nodes)
+            # Invalidate any unclaimed approvals/requests for this node
+            for pid in [k for k, r in self._pending.items() if r.get("node_id") == nid]:
+                self._pending.pop(pid, None)
             return removed

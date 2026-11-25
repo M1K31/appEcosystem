@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "auth" / "python"))
 # components that resolve the secret at construction don't raise. Tests that
 # exercise the resolver itself override/delete this via monkeypatch.
 os.environ.setdefault("ECOSYSTEM_HMAC_SECRET", "test-ecosystem-secret")
+os.environ.setdefault("ECOSYSTEM_DISABLE_MDNS", "1")
 
 
 # ── Network guard ──────────────────────────────────────────────────────────
