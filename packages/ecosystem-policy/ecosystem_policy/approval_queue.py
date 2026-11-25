@@ -201,7 +201,7 @@ class LocalApprovalQueue:
             else:
                 rows = conn.execute(
                     "SELECT * FROM unified_approvals ORDER BY created_at DESC LIMIT ?",
-                    (max(1, int(limit))),
+                    (max(1, int(limit)),),
                 ).fetchall()
             return [self._row_to_dict(r) for r in rows]
 

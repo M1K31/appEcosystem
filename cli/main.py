@@ -8,7 +8,7 @@ import sys
 from .commands import (
     cmd_apps, cmd_doctor, cmd_install, cmd_logs, cmd_monitor, cmd_partner, cmd_provider,
     cmd_restart, cmd_scan, cmd_secret, cmd_start, cmd_start_all, cmd_status, cmd_stop,
-    cmd_stop_all, cmd_uninstall,
+    cmd_stop_all, cmd_totp_recover, cmd_uninstall,
 )
 
 
@@ -90,6 +90,15 @@ def main():
     doctor_parser = sub.add_parser("doctor", help="Hardware, GPU, and runtime diagnostic inspector")
     doctor_parser.add_argument("component", nargs="?", default="gpu", choices=["gpu"], help="Component to diagnose (default: gpu)")
 
+    totp_parser = sub.add_parser(
+        "totp-recover",
+        help="Local-only recovery for a lost TOTP second factor",
+    )
+    totp_parser.add_argument("operator_id", nargs="?", default=None, help="Operator ID to recover (omit to list)")
+    totp_parser.add_argument("--list", action="store_true", dest="list_only", help="List enrolled operators and factor counts")
+    totp_parser.add_argument("--yes", action="store_true", dest="confirm", help="Confirm removing the operator's TOTP secret")
+    totp_parser.add_argument("--store-path", dest="store_path", default=None, help="Optional override path to step_up_credentials.json")
+
     args = parser.parse_args()
 
     commands = {
@@ -127,6 +136,13 @@ def main():
         ))
     elif args.command == "doctor":
         sys.exit(cmd_doctor(getattr(args, "component", "gpu")))
+    elif args.command == "totp-recover":
+        sys.exit(cmd_totp_recover(
+            getattr(args, "operator_id", None),
+            list_only=getattr(args, "list_only", False),
+            confirm=getattr(args, "confirm", False),
+            store_path=getattr(args, "store_path", None),
+        ))
     elif args.command in commands:
         sys.exit(commands[args.command]())
     else:
