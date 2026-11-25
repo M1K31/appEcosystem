@@ -150,6 +150,47 @@ class StepUpAuthenticator:
                     return True
             return False
 
+    def list_operators(self) -> list[dict[str, Any]]:
+        """Return non-secret summaries of enrolled operators and their factors."""
+        with self._lock:
+            operators = self._load()["operators"]
+            result: list[dict[str, Any]] = []
+            for op_id in sorted(operators):
+                op = operators[op_id] or {}
+                result.append(
+                    {
+                        "operator_id": op_id,
+                        "totp": bool(op.get("totp_secret")),
+                        "passkey_count": len(op.get("passkeys") or {}),
+                        "device_key_count": len(op.get("device_keys") or {}),
+                        "totp_enrolled_at": op.get("totp_enrolled_at"),
+                    }
+                )
+            return result
+
+    def reset_totp(self, operator_id: str) -> bool:
+        """Local-only recovery: remove an operator's enrolled TOTP secret and clear lockouts.
+
+        Preserves passkeys and device keys. Returns True if a TOTP secret was
+        present and removed, False otherwise.
+        """
+        op_id = str(operator_id or "").strip()
+        if not op_id:
+            return False
+        with self._lock:
+            data = self._load()
+            op = data["operators"].get(op_id)
+            if not isinstance(op, dict) or not op.get("totp_secret"):
+                return False
+            op.pop("totp_secret", None)
+            op.pop("totp_enrolled_at", None)
+            self._save(data)
+            prefix = f"{op_id}:"
+            for key in [k for k in self._used_totp_windows if k.startswith(prefix)]:
+                self._used_totp_windows.pop(key, None)
+            self._totp_failures.pop(op_id, None)
+            return True
+
     def verify_totp_and_issue_token(
         self,
         operator_id: str,

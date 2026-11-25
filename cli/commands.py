@@ -922,3 +922,58 @@ def cmd_doctor(component: str = "gpu") -> int:
 
     print(f"Unknown doctor component: {component} (available: gpu)")
     return 1
+
+
+def cmd_totp_recover(
+    operator_id: str | None = None,
+    *,
+    list_only: bool = False,
+    confirm: bool = False,
+    store_path: str | None = None,
+) -> int:
+    """Local-only CLI recovery for a lost TOTP second factor.
+
+    Never exposed over HTTP: requires direct shell access to the host running
+    the ecosystem hub and holding ``step_up_credentials.json``.
+    """
+    from ecosystem_policy.step_up import StepUpAuthenticator
+
+    auth = StepUpAuthenticator(store_path=store_path)
+
+    if list_only or not operator_id:
+        operators = auth.list_operators()
+        if not operators:
+            print(f"No step-up operators enrolled in {auth.store_path}.")
+            return 0
+        print(f"Step-up credential store: {auth.store_path}")
+        print(f"{'OPERATOR':<20} {'TOTP':<8} {'PASSKEYS':<10} {'DEVICE KEYS':<12}")
+        print("-" * 54)
+        for op in operators:
+            print(
+                f"{op['operator_id']:<20} "
+                f"{('yes' if op['totp'] else 'no'):<8} "
+                f"{op['passkey_count']:<10} "
+                f"{op['device_key_count']:<12}"
+            )
+        if not list_only:
+            print("\nTo reset a lost TOTP factor locally, run:")
+            print("  ecosystem totp-recover <operator_id> --yes")
+        return 0
+
+    if not confirm:
+        print(
+            f"Refusing to reset TOTP for '{operator_id}' without --yes. "
+            "Pass --yes to confirm local second-factor recovery."
+        )
+        return 2
+
+    removed = auth.reset_totp(operator_id)
+    if not removed:
+        print(f"No TOTP factor found for operator '{operator_id}' in {auth.store_path}.")
+        return 1
+
+    print(
+        f"TOTP factor removed for operator '{operator_id}' in {auth.store_path}. "
+        "Re-enroll a new authenticator app from the dashboard on loopback."
+    )
+    return 0

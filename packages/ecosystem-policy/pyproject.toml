@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "appecosystem-policy"
-version = "0.3.0"
+version = "0.3.1"
 description = "Signed blue-team policy engine, Freeze preemption, Ed25519 scoped overrides, TOTP/Passkey step-up auth, and unified SQLite approval queue for appEcosystem."
 readme = "README.md"
 license = {text = "MIT"}
