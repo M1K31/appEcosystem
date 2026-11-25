@@ -29,6 +29,16 @@ from .capability import (
 from .router import ProviderRouter
 from .factory import build_providers, build_router
 from .sync import AIProfileClient
+from .vram_monitor import (
+    QUANTIZATION_LADDER,
+    MemorySample,
+    QuantizationShiftEvent,
+    VramQuantizationMonitor,
+    normalize_quantization,
+    rewrite_model_quantization,
+    sample_memory_headroom,
+    step_down_quantization,
+)
 from .providers import (
     AIProvider,
     AnthropicProvider,
@@ -42,9 +52,17 @@ from .providers import (
     ProviderError,
 )
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 
 __all__ = [
+    "QUANTIZATION_LADDER",
+    "MemorySample",
+    "QuantizationShiftEvent",
+    "VramQuantizationMonitor",
+    "normalize_quantization",
+    "rewrite_model_quantization",
+    "sample_memory_headroom",
+    "step_down_quantization",
     "clear_recorded_floor_passes",
     "load_recorded_floor_passes",
     "record_floor_pass",

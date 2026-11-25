@@ -162,6 +162,12 @@ async def lifespan(app: FastAPI):
     except ValueError as exc:
         raise ValueError(f"ECOSYSTEM_COMPACT_INTERVAL_SECONDS must be an integer, got {raw_compact_interval!r}") from exc
 
+    raw_vram_interval = os.environ.get("ECOSYSTEM_VRAM_MONITOR_INTERVAL", "15")
+    try:
+        vram_interval = float(raw_vram_interval)
+    except ValueError as exc:
+        raise ValueError(f"ECOSYSTEM_VRAM_MONITOR_INTERVAL must be a number, got {raw_vram_interval!r}") from exc
+
     raw_port = os.environ.get("ECOSYSTEM_PORT")
     if raw_port is not None:
         registry_port = int(raw_port)
@@ -281,6 +287,25 @@ async def lifespan(app: FastAPI):
     # ECO-03: Start periodic SQLite WAL compaction & offline event log archival
     await compaction_scheduler.start()
 
+    # ECO-05: Dynamic VRAM quantization down-shifting monitor
+    from ecosystem_ai.vram_monitor import VramQuantizationMonitor
+
+    async def _on_vram_shift(ev):
+        if event_bus is not None:
+            await event_bus.publish(
+                source="ecosystem_registry",
+                event_type=f"ai.quantization.{ev.action}",
+                payload=ev.to_dict(),
+            )
+
+    current_model = str((ai_profile_store.get() or {}).get("selected_model") or "auto")
+    vram_monitor = VramQuantizationMonitor(
+        interval_seconds=vram_interval,
+        model_name=current_model,
+        on_shift=_on_vram_shift,
+    )
+    await vram_monitor.start()
+
     # Stash on app.state so request handlers resolve them via dependencies
     # rather than module globals (which could be None before startup).
     app.state.registry = registry
@@ -300,10 +325,12 @@ async def lifespan(app: FastAPI):
     app.state.pairing_manager = pairing_manager
     app.state.discovery = discovery
     app.state.storage_compactor = storage_compactor
+    app.state.vram_monitor = vram_monitor
 
     logger.info("Ecosystem registry started")
     yield
 
+    await vram_monitor.stop()
     await compaction_scheduler.stop()
     await discovery.stop()
     await scan_scheduler.stop()
@@ -541,6 +568,18 @@ async def metrics_endpoint(request: Request):
 
     reg = getattr(request.app.state, "registry", None)
     return PlainTextResponse(metrics.render_prometheus(reg))
+
+
+@app.get("/ai-profile/memory-pressure")
+async def get_ai_memory_pressure(
+    request: Request,
+    _auth: Optional[dict] = Depends(require_read_auth),
+):
+    """Return real-time VRAM/memory headroom and dynamic quantization state (ECO-05)."""
+    mon = getattr(request.app.state, "vram_monitor", None)
+    if mon is None:
+        raise HTTPException(status_code=503, detail="VRAM monitor not initialized")
+    return mon.status()
 
 
 @app.get("/ai-profile")
