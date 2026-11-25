@@ -80,6 +80,43 @@ def _validate_phone_folder(raw: str) -> tuple[str | None, str | None]:
     return None, f"phone_folder '{raw}' is outside the allowed ECOSYSTEM_PHONE_SCAN_BASE roots"
 
 
+def list_allowed_phone_folders() -> dict[str, Any]:
+    """Return allowed phone-backup folders under ECOSYSTEM_PHONE_SCAN_BASE.
+
+    Fails closed: returns ``enabled=False`` and an empty folder list when
+    ``ECOSYSTEM_PHONE_SCAN_BASE`` is unset or points to no existing directories.
+    """
+    bases_env = os.environ.get("ECOSYSTEM_PHONE_SCAN_BASE", "").strip()
+    if not bases_env:
+        return {"enabled": False, "bases": [], "folders": []}
+    bases: list[str] = []
+    folders: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for raw_base in bases_env.split(os.pathsep):
+        raw_base = raw_base.strip()
+        if not raw_base:
+            continue
+        try:
+            base_resolved = Path(raw_base).expanduser().resolve(strict=True)
+        except (OSError, RuntimeError):
+            continue
+        if not base_resolved.is_dir():
+            continue
+        base_str = str(base_resolved)
+        if base_str not in bases:
+            bases.append(base_str)
+        try:
+            for child in sorted(base_resolved.iterdir()):
+                if child.is_dir():
+                    child_resolved = str(child.resolve())
+                    if child_resolved not in seen:
+                        seen.add(child_resolved)
+                        folders.append({"name": child.name, "path": child_resolved})
+        except OSError:
+            continue
+    return {"enabled": bool(bases), "bases": bases, "folders": folders}
+
+
 @dataclass
 class ZbtMetadata:
     schema_version: str = "unknown"
@@ -115,6 +152,15 @@ class ZbtMetadata:
             return "aborted"
         if exit_code == 1 or ("setup or output error" in desc or "error" in desc):
             return "error"
+        return "unknown"
+
+    def map_wp6_outcome(self, exit_code: int) -> str:
+        """Map ZBT exit code to canonical WP6 outcome: clean | findings | partial | unknown."""
+        raw = self.map_exit_code(exit_code)
+        if raw in ("clean", "findings"):
+            return raw
+        if raw in ("gaps", "aborted"):
+            return "partial"
         return "unknown"
 
 
@@ -190,6 +236,7 @@ class ScanRunner:
         policy_engine: Any = None,
         event_bus: Any = None,
         keystore_dir: str | Path | None = None,
+        notification_router: Any = None,
     ):
         self.data_dir = Path(data_dir or Path.home() / ".local" / "share" / "ecosystem")
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -210,6 +257,7 @@ class ScanRunner:
 
         self.policy_engine = policy_engine
         self.event_bus = event_bus
+        self.notification_router = notification_router
         self.zbt_script = self._resolve_zbt_path(zbt_path)
         self._device_locks: dict[str, asyncio.Lock] = {}
         self._metadata: ZbtMetadata | None = None
@@ -247,12 +295,14 @@ class ScanRunner:
             if p.is_dir() and (p / "scan" / "zero-breach-toolkit.py").is_file():
                 return (p / "scan" / "zero-breach-toolkit.py").resolve()
 
+        which_zbt = shutil.which("zero-breach-toolkit") or shutil.which("zero-breach-toolkit.py")
         candidates = [
             os.environ.get("ECOSYSTEM_ZBT_SCRIPT"),
             os.environ.get("ECOSYSTEM_ZBT_PATH"),
-            Path("/Users/mikelsmart/GitHub/Zero-Breach-Toolkit/scan/zero-breach-toolkit.py"),
-            Path.home() / "GitHub" / "Zero-Breach-Toolkit" / "scan" / "zero-breach-toolkit.py",
+            which_zbt,
             Path(__file__).resolve().parent.parent.parent.parent / "Zero-Breach-Toolkit" / "scan" / "zero-breach-toolkit.py",
+            Path.home() / ".local" / "share" / "ecosystem" / "zbt" / "zero-breach-toolkit.py",
+            Path.home() / "GitHub" / "Zero-Breach-Toolkit" / "scan" / "zero-breach-toolkit.py",
         ]
         for c in candidates:
             if c:
@@ -298,13 +348,13 @@ class ScanRunner:
         start_ts = time.time()
         metadata = self.get_metadata()
 
-        # 1. Policy Engine evaluation
+        # 1. Policy Engine evaluation (Freeze beats everything; action="scan.request")
         if self.policy_engine is not None:
             try:
                 from ecosystem_policy.engine import ActionRequest
                 act_req = ActionRequest(
                     actor=req.initiator,
-                    action="zbt_scan",
+                    action="scan.request",
                     action_class="investigate",
                     target={
                         "device_id": req.device_id,
@@ -318,12 +368,6 @@ class ScanRunner:
                     authenticated=True,
                 )
                 decision = self.policy_engine.decide(act_req)
-                # Only an affirmative allow may execute. "deny" and
-                # "require_approval" are both blocking: a scan the engine says
-                # needs operator approval must NOT run unattended. Previously
-                # only "deny" was honored, so every require_approval decision
-                # (unenrolled device, missing/omitted device-key grant, blue-team
-                # default) silently ran the scan anyway, defeating the gate.
                 if decision.result not in ("allow", "allow_and_notify"):
                     blocked_status = "denied" if decision.result == "deny" else "needs_approval"
                     res = ScanResult(
@@ -343,7 +387,49 @@ class ScanRunner:
                     self._persist_history()
                     return res
             except Exception as exc:
-                logger.error("Policy check failed: %r", exc)
+                logger.error("Policy check failed closed: %r", exc)
+                res = ScanResult(
+                    scan_id=req.scan_id,
+                    device_id=req.device_id,
+                    status="denied",
+                    exit_code=4,
+                    exit_description="Policy check failed closed",
+                    share={"verdict": "denied", "reason": "Policy evaluation error"},
+                    report_ref="",
+                    started_at=started_at,
+                    completed_at=_iso_utc(),
+                    duration_seconds=round(time.time() - start_ts, 2),
+                    error_message=str(exc),
+                )
+                self._results_history[req.scan_id] = res
+                self._persist_history()
+                return res
+
+            # 1a. Recorded consent check for device targets (consent is data, never assumed)
+            if not req.phone_folder and hasattr(self.policy_engine, "list_enrolled_devices"):
+                enrolled_list = self.policy_engine.list_enrolled_devices() or []
+                rec = next((d for d in enrolled_list if d.get("device_id") == req.device_id), None)
+                if rec is None or rec.get("revoked") or not rec.get("owner") or not rec.get("aup_version"):
+                    reason = (
+                        f"Device '{req.device_id}' has no valid recorded AUP consent "
+                        "(owner + aup_version required; revoked consent refuses scans)."
+                    )
+                    res = ScanResult(
+                        scan_id=req.scan_id,
+                        device_id=req.device_id,
+                        status="denied",
+                        exit_code=4,
+                        exit_description=reason,
+                        share={"verdict": "denied", "reason": reason},
+                        report_ref="",
+                        started_at=started_at,
+                        completed_at=_iso_utc(),
+                        duration_seconds=round(time.time() - start_ts, 2),
+                        error_message=reason,
+                    )
+                    self._results_history[req.scan_id] = res
+                    self._persist_history()
+                    return res
 
         # 1b. Confine any requested phone_folder to the configured allowlist
         phone_path: str | None = None
@@ -435,6 +521,9 @@ class ScanRunner:
                 args.extend(["--phone", phone_path])
 
             logger.info("Executing ZBT scan %s for device %s...", req.scan_id, req.device_id)
+            timed_out = False
+            cancelled = False
+            proc = None
             try:
                 proc = await asyncio.create_subprocess_exec(
                     *args,
@@ -442,16 +531,26 @@ class ScanRunner:
                     stderr=asyncio.subprocess.PIPE,
                 )
                 _, stderr_data = await asyncio.wait_for(proc.communicate(), timeout=600.0)
-                rc = proc.returncode
+                rc = proc.returncode if proc.returncode is not None else 1
                 stderr_str = stderr_data.decode("utf-8", errors="replace")
             except asyncio.TimeoutError:
+                timed_out = True
                 if proc:
                     try:
                         proc.kill()
                     except Exception:
                         pass
-                rc = 1
+                rc = 124
                 stderr_str = "Scan execution timed out after 600s"
+            except asyncio.CancelledError:
+                cancelled = True
+                if proc:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                rc = 4
+                stderr_str = "Scan cancelled"
             except Exception as exc:
                 rc = 1
                 stderr_str = f"Failed spawning ZBT process: {exc!r}"
@@ -460,14 +559,16 @@ class ScanRunner:
             duration = round(time.time() - start_ts, 2)
 
             share_data: dict[str, Any] = {}
+            share_valid = False
             if share_json_path.is_file():
                 try:
                     share_data = json.loads(share_json_path.read_text(encoding="utf-8"))
+                    share_valid = isinstance(share_data, dict)
                 except Exception as exc:
                     logger.warning("Failed parsing share.json: %r", exc)
-                    share_data = {"verdict": "error", "error": f"Invalid share.json: {exc!r}"}
+                    share_data = {"verdict": "unknown", "error": f"Invalid share.json: {exc!r}"}
             else:
-                share_data = {"verdict": "error", "error": stderr_str}
+                share_data = {"verdict": "timed_out" if timed_out else ("cancelled" if cancelled else "unknown")}
 
             report_ref = ""
             if full_json_path.is_file():
@@ -490,8 +591,18 @@ class ScanRunner:
                 except Exception as exc:
                     logger.error("Failed encrypting full scan report: %r", exc)
 
-            status = metadata.map_exit_code(rc)
-            exit_desc = metadata.exit_codes.get(str(rc), f"Exit code {rc}")
+            # Timed-out, cancelled, partial, or unparseable runs are NEVER reported as clean
+            if timed_out:
+                status = "timed_out"
+                exit_desc = "Scan execution timed out"
+            elif cancelled:
+                status = "cancelled"
+                exit_desc = "Scan execution cancelled"
+            else:
+                status = metadata.map_exit_code(rc)
+                if status == "clean" and not share_valid:
+                    status = "unknown"
+                exit_desc = metadata.exit_codes.get(str(rc), f"Exit code {rc}")
 
             scan_result = ScanResult(
                 scan_id=req.scan_id,
@@ -504,10 +615,10 @@ class ScanRunner:
                 started_at=started_at,
                 completed_at=completed_at,
                 duration_seconds=duration,
-                error_message=stderr_str if rc == 1 else None,
+                error_message=stderr_str if status in ("unknown", "timed_out", "cancelled") else None,
             )
 
-            # Emit scan.completed onto event bus (only share summary)
+            # Emit scan.completed onto event bus (only share.json summary — NEVER host paths)
             if self.event_bus is not None:
                 try:
                     await self.event_bus.publish(
@@ -519,12 +630,36 @@ class ScanRunner:
                             "status": status,
                             "exit_code": rc,
                             "share": share_data,
-                            "report_ref": report_ref,
+                            "has_full_report": bool(report_ref),
                             "duration_seconds": duration,
                         },
                     )
                 except Exception as exc:
                     logger.warning("Failed publishing scan.completed event: %r", exc)
+
+            # Publish completion notification with zero filesystem paths or indicator values
+            if self.notification_router is not None:
+                try:
+                    from ecosystem_client.contracts import build_notification_envelope
+
+                    sev = "high" if status == "findings" else ("medium" if status in ("partial", "timed_out") else "info")
+                    title = f"Device scan {status}: {req.device_id}"
+                    body = (
+                        f"ZBT {req.profile} scan ({req.scan_id}) completed with status '{status}'. "
+                        "Inspect the redacted summary or use step-up data_release to view full details."
+                    )
+                    envelope = build_notification_envelope(
+                        "notify.scan",
+                        "ecosystem_scan_agent",
+                        sev,
+                        title,
+                        body,
+                        dedupe_key=f"scan:{req.scan_id}:{status}",
+                        privacy="redacted",
+                    )
+                    await self.notification_router.route(envelope)
+                except Exception as exc:
+                    logger.warning("Failed routing scan completion notification: %r", exc)
 
             self._results_history[req.scan_id] = scan_result
             self._persist_history()

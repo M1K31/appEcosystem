@@ -28,6 +28,20 @@ class ScanScheduler:
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._scheduled_jobs: dict[str, dict[str, Any]] = {}
+        self._active_tasks: dict[str, set[asyncio.Task[Any]]] = {}
+
+    def cancel_queued_for_device(self, device_id: str) -> int:
+        """Cancel any queued or active scheduled scans for a device whose consent was withdrawn."""
+        cancelled = 0
+        self._scheduled_jobs.pop(device_id, None)
+        tasks = self._active_tasks.pop(device_id, set())
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+                cancelled += 1
+        if cancelled:
+            logger.info("Cancelled %d queued/active scan(s) for revoked device %s", cancelled, device_id)
+        return cancelled
 
     async def is_reachable(self, device_id: str) -> bool:
         if device_id in ("local", "localhost", "127.0.0.1", ""):

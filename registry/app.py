@@ -89,7 +89,7 @@ def _create_policy_and_approvals(data_dir: str, notification_router, event_bus):
     return policy_engine, step_up_auth, approval_service
 
 
-def _create_scan_service(data_dir: str, policy_engine, event_bus):
+def _create_scan_service(data_dir: str, policy_engine, event_bus, notification_router=None):
     import sys
     from pathlib import Path
 
@@ -102,6 +102,7 @@ def _create_scan_service(data_dir: str, policy_engine, event_bus):
         data_dir=data_dir,
         policy_engine=policy_engine,
         event_bus=event_bus,
+        notification_router=notification_router,
     )
     scan_scheduler = ScanScheduler(
         runner=scan_runner,
@@ -185,7 +186,16 @@ async def lifespan(app: FastAPI):
         data_dir,
         policy_engine=policy_engine,
         event_bus=event_bus,
+        notification_router=notification_router,
     )
+
+    # WP6: register hub-local `scan.request` capability (`investigate`)
+    from agents.scan_agent import SCAN_REQUEST_CAPABILITY, build_scan_request_handler
+
+    try:
+        capability_registry.register("ecosystem_scan_agent", [SCAN_REQUEST_CAPABILITY])
+    except Exception as exc:
+        logger.warning("Could not register scan.request capability: %r", exc)
 
     # Command dispatch: the durable record of every capability invocation, and
     # the dispatcher that gates, signs and forwards them. Commands that were
@@ -207,6 +217,7 @@ async def lifespan(app: FastAPI):
         notification_router=notification_router,
         app_store=app_store,
         secret_fn=_ecosystem_secret_or_empty,
+        local_handlers={"scan.request": build_scan_request_handler(scan_runner)},
     )
     # A command waiting on an approval that expires will not run; say so on its record.
     approval_service.on_expired = lambda rec: command_dispatcher.mark_approval_closed(rec, outcome="expired")
