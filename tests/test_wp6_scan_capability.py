@@ -178,3 +178,56 @@ def test_offline_device_reports_deferred_never_clean(tmp_path: Path):
     assert len(results) == 1
     assert results[0].status == "deferred"
     assert results[0].status != "clean"
+
+
+def test_capability_manifest_valid_and_approved_scan_executes(tmp_path: Path, monkeypatch):
+    from ecosystem_hub.capabilities import CapabilityRegistry
+
+    cap_reg = CapabilityRegistry(persistence_path=tmp_path / "caps.json")
+    rec = cap_reg.register(SCAN_REQUEST_CAPABILITY)
+    assert rec["capability"] == "scan.request"
+    assert rec["app"] == "ecosystem_scan_agent"
+
+    # Symlink escaping allowlist is excluded from list_allowed_phone_folders
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    outside = tmp_path / "secret_outside"
+    outside.mkdir()
+    (allowed / "legit").mkdir()
+    (allowed / "escape_link").symlink_to(outside)
+    monkeypatch.setenv("ECOSYSTEM_PHONE_SCAN_BASE", str(allowed))
+    listed = list_allowed_phone_folders()
+    assert [f["name"] for f in listed["folders"]] == ["legit"]
+
+    # Device enrolled with AUP consent but NO auto_scan grant:
+    # 1) without authorization_ref -> needs_approval
+    # 2) with operator approval authorization_ref="approval:appr-1" -> executes and emits low-severity notification
+    policy = PolicyEngine(authority="standalone_local", persistence_path=tmp_path / "policy.json")
+    policy.enroll_device("dev-consent-only", "fp-1", owner="mikel", aup_version="2.0")
+    notifier = FakeNotificationRouter()
+    runner = ScanRunner(
+        zbt_path=_make_fake_zbt(tmp_path, rc=0),
+        data_dir=tmp_path / "data",
+        policy_engine=policy,
+        notification_router=notifier,
+    )
+    handler = build_scan_request_handler(runner)
+
+    unapproved = asyncio.run(handler({
+        "capability": "scan.request",
+        "target": {"scope": "local", "identifier": "dev-consent-only"},
+        "parameters": {"target_device": "dev-consent-only", "profile": "quick", "public_key_fingerprint": "fp-1"},
+        "actor": {"app": "ai_for_survival"},
+    }))
+    assert unapproved["status"] == "pending_approval"
+
+    approved = asyncio.run(handler({
+        "capability": "scan.request",
+        "target": {"scope": "local", "identifier": "dev-consent-only"},
+        "parameters": {"target_device": "dev-consent-only", "profile": "quick", "public_key_fingerprint": "fp-1"},
+        "actor": {"app": "ai_for_survival"},
+    }, "approval:appr-1"))
+    assert approved["status"] == "completed"
+    assert approved["result"]["status"] == "clean"
+    assert len(notifier.envelopes) == 1
+    assert notifier.envelopes[0]["severity"] == "low"

@@ -85,13 +85,13 @@ def list_allowed_phone_folders() -> dict[str, Any]:
 
     Fails closed: returns ``enabled=False`` and an empty folder list when
     ``ECOSYSTEM_PHONE_SCAN_BASE`` is unset or points to no existing directories.
+    Symlinks whose resolved target escapes all configured roots are excluded.
     """
     bases_env = os.environ.get("ECOSYSTEM_PHONE_SCAN_BASE", "").strip()
     if not bases_env:
         return {"enabled": False, "bases": [], "folders": []}
+    resolved_bases: list[Path] = []
     bases: list[str] = []
-    folders: list[dict[str, str]] = []
-    seen: set[str] = set()
     for raw_base in bases_env.split(os.pathsep):
         raw_base = raw_base.strip()
         if not raw_base:
@@ -105,13 +105,28 @@ def list_allowed_phone_folders() -> dict[str, Any]:
         base_str = str(base_resolved)
         if base_str not in bases:
             bases.append(base_str)
+            resolved_bases.append(base_resolved)
+
+    folders: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for base_resolved in resolved_bases:
         try:
             for child in sorted(base_resolved.iterdir()):
-                if child.is_dir():
-                    child_resolved = str(child.resolve())
-                    if child_resolved not in seen:
-                        seen.add(child_resolved)
-                        folders.append({"name": child.name, "path": child_resolved})
+                if not child.is_dir():
+                    continue
+                try:
+                    child_resolved = child.resolve(strict=True)
+                except (OSError, RuntimeError):
+                    continue
+                if not any(
+                    child_resolved == root or root in child_resolved.parents
+                    for root in resolved_bases
+                ):
+                    continue
+                child_str = str(child_resolved)
+                if child_str not in seen:
+                    seen.add(child_str)
+                    folders.append({"name": child.name, "path": child_str})
         except OSError:
             continue
     return {"enabled": bool(bases), "bases": bases, "folders": folders}
@@ -204,8 +219,9 @@ class ScanRequest:
     profile: str = "quick"  # quick | full | standard
     offline: bool = False
     initiator: str = "ecosystem-scan"
-    trigger: str = "on_demand"  # on_demand | schedule | automation | baseline
+    trigger: str = "on_demand"  # on_demand | schedule | automation | baseline | command_dispatch
     phone_folder: str | None = None
+    authorization_ref: str | None = None
 
 
 @dataclass
@@ -368,7 +384,14 @@ class ScanRunner:
                     authenticated=True,
                 )
                 decision = self.policy_engine.decide(act_req)
-                if decision.result not in ("allow", "allow_and_notify"):
+                # An operator approval from WP1 execute_approved (`authorization_ref="approval:..."`)
+                # satisfies `require_approval` only; `"deny"` and Freeze always block.
+                approved_by_operator = (
+                    decision.result == "require_approval"
+                    and isinstance(req.authorization_ref, str)
+                    and req.authorization_ref.startswith("approval:")
+                )
+                if decision.result not in ("allow", "allow_and_notify") and not approved_by_operator:
                     blocked_status = "denied" if decision.result == "deny" else "needs_approval"
                     res = ScanResult(
                         scan_id=req.scan_id,
@@ -538,19 +561,34 @@ class ScanRunner:
                 if proc:
                     try:
                         proc.kill()
+                        await proc.wait()
                     except Exception:
                         pass
                 rc = 124
                 stderr_str = "Scan execution timed out after 600s"
             except asyncio.CancelledError:
-                cancelled = True
                 if proc:
                     try:
                         proc.kill()
+                        await proc.wait()
                     except Exception:
                         pass
-                rc = 4
-                stderr_str = "Scan cancelled"
+                cancelled_res = ScanResult(
+                    scan_id=req.scan_id,
+                    device_id=req.device_id,
+                    status="cancelled",
+                    exit_code=4,
+                    exit_description="Scan execution cancelled",
+                    share={"verdict": "cancelled"},
+                    report_ref="",
+                    started_at=started_at,
+                    completed_at=_iso_utc(),
+                    duration_seconds=round(time.time() - start_ts, 2),
+                    error_message="Scan cancelled",
+                )
+                self._results_history[req.scan_id] = cancelled_res
+                self._persist_history()
+                raise
             except Exception as exc:
                 rc = 1
                 stderr_str = f"Failed spawning ZBT process: {exc!r}"
@@ -566,9 +604,9 @@ class ScanRunner:
                     share_valid = isinstance(share_data, dict)
                 except Exception as exc:
                     logger.warning("Failed parsing share.json: %r", exc)
-                    share_data = {"verdict": "unknown", "error": f"Invalid share.json: {exc!r}"}
+                    share_data = {"verdict": "unknown", "error": "Invalid share summary"}
             else:
-                share_data = {"verdict": "timed_out" if timed_out else ("cancelled" if cancelled else "unknown")}
+                share_data = {"verdict": "timed_out" if timed_out else "unknown"}
 
             report_ref = ""
             if full_json_path.is_file():
@@ -591,15 +629,12 @@ class ScanRunner:
                 except Exception as exc:
                     logger.error("Failed encrypting full scan report: %r", exc)
 
-            # Timed-out, cancelled, partial, or unparseable runs are NEVER reported as clean
+            # Timed-out, partial, or unparseable runs are NEVER reported as clean
             if timed_out:
                 status = "timed_out"
                 exit_desc = "Scan execution timed out"
-            elif cancelled:
-                status = "cancelled"
-                exit_desc = "Scan execution cancelled"
             else:
-                status = metadata.map_exit_code(rc)
+                status = metadata.map_wp6_outcome(rc)
                 if status == "clean" and not share_valid:
                     status = "unknown"
                 exit_desc = metadata.exit_codes.get(str(rc), f"Exit code {rc}")
@@ -642,7 +677,7 @@ class ScanRunner:
                 try:
                     from ecosystem_client.contracts import build_notification_envelope
 
-                    sev = "high" if status == "findings" else ("medium" if status in ("partial", "timed_out") else "info")
+                    sev = "high" if status == "findings" else ("medium" if status in ("partial", "timed_out") else "low")
                     title = f"Device scan {status}: {req.device_id}"
                     body = (
                         f"ZBT {req.profile} scan ({req.scan_id}) completed with status '{status}'. "

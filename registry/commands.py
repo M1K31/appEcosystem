@@ -73,7 +73,7 @@ class CommandDispatcher:
         client_factory: Callable[[], httpx.AsyncClient] | None = None,
         connect_timeout: float = 3.0,
         clock: Callable[[], float] = time.time,
-        local_handlers: dict[str, Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]] | None = None,
+        local_handlers: dict[tuple[str, str], Callable[..., Awaitable[dict[str, Any]]]] | None = None,
     ):
         self.store = store
         self._caps = capability_registry
@@ -131,6 +131,9 @@ class CommandDispatcher:
         for record in resolution.providers:
             app = record["app"]
             if wanted and app != wanted:
+                continue
+            if (app, capability) in self._local_handlers:
+                candidates.append((0, app, record))
                 continue
             service = self._services.get(app)
             if service is None:
@@ -536,12 +539,13 @@ class CommandDispatcher:
     async def _forward_claimed(self, record: dict[str, Any], authorization_ref: str | None) -> dict[str, Any]:
         command_id = record["command_id"]
         capability = str(record.get("capability") or "")
-        local_handler = self._local_handlers.get(capability)
+        provider_app = str(record.get("provider_app") or "")
+        local_handler = self._local_handlers.get((provider_app, capability))
         if local_handler is not None:
             try:
-                outcome = await local_handler(record)
+                outcome = await local_handler(record, authorization_ref)
             except Exception as exc:
-                logger.exception("Local handler for %s failed", capability)
+                logger.exception("Local handler for %s:%s failed", provider_app, capability)
                 return self.store.update(
                     command_id,
                     status="failed",
@@ -558,8 +562,6 @@ class CommandDispatcher:
                 error=(outcome or {}).get("error"),
                 event=st,
             )
-
-        provider_app = record.get("provider_app") or ""
         service = self._services.get(provider_app)
         if service is None:
             return self.store.update(

@@ -191,9 +191,10 @@ async def lifespan(app: FastAPI):
 
     # WP6: register hub-local `scan.request` capability (`investigate`)
     from agents.scan_agent import SCAN_REQUEST_CAPABILITY, build_scan_request_handler
+    from agents.scan_agent.command_handler import SCAN_PROVIDER_APP
 
     try:
-        capability_registry.register("ecosystem_scan_agent", [SCAN_REQUEST_CAPABILITY])
+        capability_registry.register(SCAN_REQUEST_CAPABILITY)
     except Exception as exc:
         logger.warning("Could not register scan.request capability: %r", exc)
 
@@ -217,7 +218,7 @@ async def lifespan(app: FastAPI):
         notification_router=notification_router,
         app_store=app_store,
         secret_fn=_ecosystem_secret_or_empty,
-        local_handlers={"scan.request": build_scan_request_handler(scan_runner)},
+        local_handlers={(SCAN_PROVIDER_APP, "scan.request"): build_scan_request_handler(scan_runner)},
     )
     # A command waiting on an approval that expires will not run; say so on its record.
     approval_service.on_expired = lambda rec: command_dispatcher.mark_approval_closed(rec, outcome="expired")

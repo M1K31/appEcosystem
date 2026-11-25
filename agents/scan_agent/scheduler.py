@@ -97,8 +97,21 @@ class ScanScheduler:
                     trigger="schedule",
                     initiator="ecosystem-scan-scheduler",
                 )
-                res = await self.runner.run_scan(req)
-                executed.append(res)
+                scan_task = asyncio.create_task(self.runner.run_scan(req))
+                self._active_tasks.setdefault(dev_id, set()).add(scan_task)
+                try:
+                    res = await scan_task
+                    executed.append(res)
+                except asyncio.CancelledError:
+                    if not self._running:
+                        raise
+                    logger.info("Scheduled scan for %s was cancelled", dev_id)
+                finally:
+                    bucket = self._active_tasks.get(dev_id)
+                    if bucket is not None:
+                        bucket.discard(scan_task)
+                        if not bucket:
+                            self._active_tasks.pop(dev_id, None)
             elif target["status"] == "deferred":
                 logger.info("Deferred scheduled scan for unreachable device: %s", dev_id)
                 req = ScanRequest(
