@@ -253,7 +253,10 @@ class ScanRunner:
         event_bus: Any = None,
         keystore_dir: str | Path | None = None,
         notification_router: Any = None,
+        extension_registry: Any = None,
     ):
+        from .extensions import ScannerExtensionRegistry
+
         self.data_dir = Path(data_dir or Path.home() / ".local" / "share" / "ecosystem")
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.scans_dir = self.data_dir / "scans"
@@ -274,6 +277,7 @@ class ScanRunner:
         self.policy_engine = policy_engine
         self.event_bus = event_bus
         self.notification_router = notification_router
+        self.extension_registry = extension_registry if extension_registry is not None else ScannerExtensionRegistry()
         self.zbt_script = self._resolve_zbt_path(zbt_path)
         self._device_locks: dict[str, asyncio.Lock] = {}
         self._metadata: ZbtMetadata | None = None
@@ -608,27 +612,6 @@ class ScanRunner:
             else:
                 share_data = {"verdict": "timed_out" if timed_out else "unknown"}
 
-            report_ref = ""
-            if full_json_path.is_file():
-                try:
-                    plain_bytes = full_json_path.read_bytes()
-                    enc_bytes = self.encryptor.encrypt_bytes(plain_bytes)
-                    enc_path = out_dir / f"{req.scan_id}.full.enc"
-                    enc_path.write_bytes(enc_bytes)
-                    try:
-                        os.chmod(enc_path, 0o600)
-                    except Exception:
-                        pass
-                    # Overwrite and remove plaintext report
-                    try:
-                        full_json_path.write_bytes(b"\x00" * len(plain_bytes))
-                    except Exception:
-                        pass
-                    full_json_path.unlink(missing_ok=True)
-                    report_ref = str(enc_path)
-                except Exception as exc:
-                    logger.error("Failed encrypting full scan report: %r", exc)
-
             # Timed-out, partial, or unparseable runs are NEVER reported as clean
             if timed_out:
                 status = "timed_out"
@@ -638,6 +621,128 @@ class ScanRunner:
                 if status == "clean" and not share_valid:
                     status = "unknown"
                 exit_desc = metadata.exit_codes.get(str(rc), f"Exit code {rc}")
+
+            # ECO-04: Run registered pluggable scanner extensions (isolated, redacted summaries on bus)
+            ext_results = []
+            if self.extension_registry is not None and not timed_out:
+                from .extensions import ExtensionContext
+
+                ext_ctx = ExtensionContext(
+                    scan_id=req.scan_id,
+                    device_id=req.device_id,
+                    profile=req.profile,
+                    offline=req.offline,
+                    phone_folder=phone_path,
+                    core_status=status,
+                )
+
+                def _is_frozen() -> bool:
+                    if self.policy_engine is None:
+                        return False
+                    try:
+                        return bool(self.policy_engine.export_state().get("frozen"))
+                    except Exception:
+                        # Fail closed: if policy state cannot be read, treat as frozen
+                        return True
+
+                try:
+                    ext_results = await self.extension_registry.run_all(ext_ctx, is_frozen_fn=_is_frozen)
+                except asyncio.CancelledError:
+                    if full_json_path.is_file():
+                        try:
+                            orig_len = full_json_path.stat().st_size
+                            full_json_path.write_bytes(b"\x00" * orig_len)
+                        except Exception:
+                            pass
+                        full_json_path.unlink(missing_ok=True)
+                    cancelled_res = ScanResult(
+                        scan_id=req.scan_id,
+                        device_id=req.device_id,
+                        status="cancelled",
+                        exit_code=4,
+                        exit_description="Scan execution cancelled during extensions",
+                        share={"verdict": "cancelled"},
+                        report_ref="",
+                        started_at=started_at,
+                        completed_at=_iso_utc(),
+                        duration_seconds=round(time.time() - start_ts, 2),
+                        error_message="Scan cancelled",
+                    )
+                    self._results_history[req.scan_id] = cancelled_res
+                    self._persist_history()
+                    raise
+
+                if ext_results:
+                    if not isinstance(share_data, dict):
+                        share_data = {"verdict": "unknown", "error": "Invalid share summary"}
+                    share_data["extensions"] = [r.to_public_summary() for r in ext_results]
+                    if any(r.status == "findings" for r in ext_results) and status == "clean":
+                        status = "findings"
+                        share_data["verdict"] = "findings"
+                    elif any(r.status in ("partial", "error", "skipped_frozen") for r in ext_results) and status == "clean":
+                        status = "partial"
+                        share_data["verdict"] = "partial"
+                    try:
+                        share_json_path.write_text(json.dumps(share_data, indent=2), encoding="utf-8")
+                    except Exception as exc:
+                        logger.warning("Failed updating share.json with extension summaries: %r", exc)
+
+            completed_at = _iso_utc()
+            duration = round(time.time() - start_ts, 2)
+
+            report_ref = ""
+            full_payload_bytes: bytes | None = None
+            ext_full_records = [r.to_full_record() for r in ext_results] if ext_results else []
+            if full_json_path.is_file():
+                try:
+                    full_payload_bytes = full_json_path.read_bytes()
+                    if ext_full_records:
+                        try:
+                            full_obj = json.loads(full_payload_bytes.decode("utf-8"))
+                            if isinstance(full_obj, dict):
+                                full_obj["extensions"] = ext_full_records
+                                full_payload_bytes = json.dumps(full_obj, default=str).encode("utf-8")
+                            else:
+                                full_payload_bytes = json.dumps(
+                                    {"core": full_obj, "extensions": ext_full_records},
+                                    default=str,
+                                ).encode("utf-8")
+                        except Exception:
+                            full_payload_bytes = json.dumps(
+                                {
+                                    "core_raw": full_payload_bytes.decode("utf-8", errors="replace"),
+                                    "extensions": ext_full_records,
+                                },
+                                default=str,
+                            ).encode("utf-8")
+                except Exception as exc:
+                    logger.error("Failed reading full scan report: %r", exc)
+            elif ext_full_records:
+                full_payload_bytes = json.dumps(
+                    {"scan_id": req.scan_id, "extensions": ext_full_records},
+                    default=str,
+                ).encode("utf-8")
+
+            if full_payload_bytes is not None:
+                try:
+                    enc_bytes = self.encryptor.encrypt_bytes(full_payload_bytes)
+                    enc_path = out_dir / f"{req.scan_id}.full.enc"
+                    enc_path.write_bytes(enc_bytes)
+                    try:
+                        os.chmod(enc_path, 0o600)
+                    except Exception:
+                        pass
+                    # Overwrite and remove plaintext report
+                    if full_json_path.is_file():
+                        try:
+                            orig_len = full_json_path.stat().st_size
+                            full_json_path.write_bytes(b"\x00" * orig_len)
+                        except Exception:
+                            pass
+                        full_json_path.unlink(missing_ok=True)
+                    report_ref = str(enc_path)
+                except Exception as exc:
+                    logger.error("Failed encrypting full scan report: %r", exc)
 
             scan_result = ScanResult(
                 scan_id=req.scan_id,
