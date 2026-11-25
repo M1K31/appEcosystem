@@ -248,33 +248,132 @@ class StepUpAuthenticator:
 
         return self.issue_step_up_token(operator_id, auth_method="totp", scope=scope, now=ts)
 
-    # ---- WebAuthn Passkey (ES256 P-256 / Ed25519 PEM or Raw Public Key) -----
+    # ---- WebAuthn Passkey (ES256 P-256 / Ed25519 PEM, SPKI DER, or Raw Key) -
+
+    @staticmethod
+    def _is_allowed_webauthn_origin(origin: str, expected_origin: str | None = None) -> bool:
+        """WebAuthn is permitted only on https:// origins or loopback http://localhost / 127.0.0.1."""
+        from urllib.parse import urlparse
+
+        raw = str(origin or "").strip().rstrip("/")
+        if not raw:
+            return False
+        if expected_origin:
+            return raw == str(expected_origin).strip().rstrip("/")
+        try:
+            parsed = urlparse(raw)
+        except Exception:
+            return False
+        if parsed.scheme == "https" and bool(parsed.hostname):
+            return True
+        if parsed.scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1", "::1"):
+            return True
+        return False
+
+    @staticmethod
+    def _normalize_passkey_public_key(
+        public_key_pem_or_b64: str,
+        *,
+        algorithm: str = "ES256",
+        public_key_spki_b64: str | None = None,
+    ) -> tuple[str, str]:
+        """Normalize a PEM, raw Ed25519 b64, or browser SPKI DER base64url key.
+
+        Returns ``(stored_public_key, resolved_algorithm)``.
+        """
+        if public_key_spki_b64:
+            der = base64.urlsafe_b64decode(public_key_spki_b64.strip().encode("ascii") + b"===")
+            pub = serialization.load_der_public_key(der)
+            if isinstance(pub, ed25519.Ed25519PublicKey):
+                raw_bytes = pub.public_bytes(
+                    encoding=serialization.Encoding.Raw,
+                    format=serialization.PublicFormat.Raw,
+                )
+                return base64.urlsafe_b64encode(raw_bytes).decode("ascii").rstrip("="), "ED25519"
+            if isinstance(pub, ec.EllipticCurvePublicKey):
+                pem = pub.public_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PublicFormat.SubjectPublicKeyInfo,
+                ).decode("ascii")
+                return pem.strip(), "ES256"
+            raise ValueError("Unsupported WebAuthn public key type (expected P-256 ES256 or Ed25519)")
+        return public_key_pem_or_b64.strip(), algorithm.upper()
 
     def register_passkey(
         self,
         operator_id: str,
         credential_id: str,
-        public_key_pem_or_b64: str,
+        public_key_pem_or_b64: str = "",
         *,
         algorithm: str = "ES256",
         label: str = "Operator Passkey",
+        public_key_spki_b64: str | None = None,
+        rp_id: str = "localhost",
+        transports: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Register a WebAuthn Passkey (ES256 P-256 PEM or Ed25519 raw b64) or iOS Shortcut device key."""
+        """Register a WebAuthn Passkey (ES256 P-256 PEM/SPKI or Ed25519) or iOS Shortcut device key."""
+        stored_key, resolved_alg = self._normalize_passkey_public_key(
+            public_key_pem_or_b64,
+            algorithm=algorithm,
+            public_key_spki_b64=public_key_spki_b64,
+        )
+        if not stored_key:
+            raise ValueError("A valid public key (PEM, raw Ed25519 b64, or SPKI DER b64url) is required")
         with self._lock:
             data = self._load()
             op = data["operators"].setdefault(operator_id, {"passkeys": {}, "device_keys": {}})
             rec = {
                 "credential_id": credential_id,
-                "public_key": public_key_pem_or_b64.strip(),
-                "algorithm": algorithm.upper(),
+                "public_key": stored_key,
+                "algorithm": resolved_alg,
                 "label": label,
+                "rp_id": str(rp_id or "localhost").strip(),
+                "transports": list(transports or []),
+                "sign_count": 0,
                 "registered_at": time.time(),
             }
             op.setdefault("passkeys", {})[credential_id] = rec
             self._save(data)
             return dict(rec)
 
-    def create_challenge(self, operator_id: str, *, ttl_seconds: int = 120) -> dict[str, Any]:
+    def list_passkeys(self, operator_id: str) -> list[dict[str, Any]]:
+        """Return non-secret metadata for an operator's enrolled passkeys."""
+        with self._lock:
+            op = self._load()["operators"].get(operator_id, {})
+            passkeys = op.get("passkeys") or {}
+            return [
+                {
+                    "credential_id": cid,
+                    "label": rec.get("label", "Operator Passkey"),
+                    "algorithm": rec.get("algorithm", "ES256"),
+                    "rp_id": rec.get("rp_id", "localhost"),
+                    "transports": list(rec.get("transports") or []),
+                    "sign_count": int(rec.get("sign_count", 0)),
+                    "registered_at": rec.get("registered_at"),
+                }
+                for cid, rec in sorted(passkeys.items())
+            ]
+
+    def remove_passkey(self, operator_id: str, credential_id: str) -> bool:
+        """Remove a single enrolled passkey by credential_id."""
+        with self._lock:
+            data = self._load()
+            op = data["operators"].get(operator_id)
+            if not isinstance(op, dict):
+                return False
+            removed = (op.get("passkeys") or {}).pop(credential_id, None) is not None
+            if removed:
+                self._save(data)
+            return removed
+
+    def create_challenge(
+        self,
+        operator_id: str,
+        *,
+        ttl_seconds: int = 120,
+        purpose: str = "authentication",
+        rp_id: str | None = None,
+    ) -> dict[str, Any]:
         challenge = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode("ascii").rstrip("=")
         now = time.time()
         with self._lock:
@@ -283,8 +382,76 @@ class StepUpAuthenticator:
             self._challenges[challenge] = {
                 "operator_id": operator_id,
                 "expires_at": now + ttl_seconds,
+                "purpose": purpose,
+                "rp_id": rp_id,
             }
         return {"challenge": challenge, "expires_at": now + ttl_seconds}
+
+    def create_passkey_registration_options(
+        self,
+        operator_id: str,
+        *,
+        rp_id: str = "localhost",
+        rp_name: str = "appEcosystem",
+        display_name: str | None = None,
+        ttl_seconds: int = 120,
+    ) -> dict[str, Any]:
+        """Build WebAuthn PublicKeyCredentialCreationOptions for Touch ID / Face ID / YubiKey."""
+        ch = self.create_challenge(operator_id, ttl_seconds=ttl_seconds, purpose="registration", rp_id=rp_id)
+        existing = self.list_passkeys(operator_id)
+        user_id_b64 = base64.urlsafe_b64encode(
+            hashlib.sha256(f"appecosystem:{operator_id}".encode("utf-8")).digest()
+        ).decode("ascii").rstrip("=")
+        return {
+            "challenge": ch["challenge"],
+            "expires_at": ch["expires_at"],
+            "rp": {"id": rp_id, "name": rp_name},
+            "user": {
+                "id": user_id_b64,
+                "name": operator_id,
+                "displayName": display_name or operator_id,
+            },
+            "pubKeyCredParams": [
+                {"type": "public-key", "alg": -7},   # ES256 (P-256)
+                {"type": "public-key", "alg": -8},   # EdDSA (Ed25519)
+            ],
+            "timeout": int(ttl_seconds * 1000),
+            "attestation": "none",
+            "authenticatorSelection": {
+                "residentKey": "preferred",
+                "userVerification": "required",
+            },
+            "excludeCredentials": [
+                {"type": "public-key", "id": p["credential_id"]}
+                for p in existing
+            ],
+        }
+
+    def create_passkey_authentication_options(
+        self,
+        operator_id: str,
+        *,
+        rp_id: str = "localhost",
+        ttl_seconds: int = 120,
+    ) -> dict[str, Any]:
+        """Build WebAuthn PublicKeyCredentialRequestOptions for step-up verification."""
+        ch = self.create_challenge(operator_id, ttl_seconds=ttl_seconds, purpose="authentication", rp_id=rp_id)
+        existing = self.list_passkeys(operator_id)
+        return {
+            "challenge": ch["challenge"],
+            "expires_at": ch["expires_at"],
+            "rpId": rp_id,
+            "timeout": int(ttl_seconds * 1000),
+            "userVerification": "required",
+            "allowCredentials": [
+                {
+                    "type": "public-key",
+                    "id": p["credential_id"],
+                    **({"transports": p["transports"]} if p.get("transports") else {}),
+                }
+                for p in existing
+            ],
+        }
 
     def verify_passkey_assertion_and_issue_token(
         self,
@@ -295,6 +462,9 @@ class StepUpAuthenticator:
         *,
         authenticator_data_b64: str | None = None,
         client_data_json_b64: str | None = None,
+        expected_origin: str | None = None,
+        expected_rp_id: str | None = None,
+        require_user_verification: bool = False,
         scope: str = "policy_admin",
     ) -> dict[str, Any] | None:
         """Verify either a full WebAuthn assertion (`authenticatorData || SHA256(clientDataJSON)`) or direct challenge signature."""
@@ -308,6 +478,7 @@ class StepUpAuthenticator:
             if not cred:
                 return None
 
+        new_sign_count: int | None = None
         try:
             sig = base64.urlsafe_b64decode(signature_b64.strip().encode("ascii") + b"===")
             if authenticator_data_b64 and client_data_json_b64:
@@ -316,6 +487,36 @@ class StepUpAuthenticator:
                 parsed_client = json.loads(client_json.decode("utf-8"))
                 if parsed_client.get("challenge") != challenge:
                     return None
+                ctype = parsed_client.get("type")
+                if ctype is not None and ctype != "webauthn.get":
+                    return None
+                origin = parsed_client.get("origin")
+                if origin is not None or expected_origin is not None:
+                    if not self._is_allowed_webauthn_origin(str(origin or ""), expected_origin):
+                        return None
+
+                if len(auth_data) >= 37:
+                    rp_id_hash = auth_data[:32]
+                    flags = auth_data[32]
+                    sign_count = struct.unpack(">I", auth_data[33:37])[0]
+                    rp_to_check = expected_rp_id or ch.get("rp_id")
+                    if rp_to_check:
+                        expected_hash = hashlib.sha256(str(rp_to_check).encode("utf-8")).digest()
+                        if not hmac.compare_digest(rp_id_hash, expected_hash):
+                            return None
+                    # User Present (UP, bit 0x01) is required on full authenticatorData
+                    if not (flags & 0x01):
+                        return None
+                    # User Verified (UV, bit 0x04) when requested
+                    if require_user_verification and not (flags & 0x04):
+                        return None
+                    stored_count = int(cred.get("sign_count", 0))
+                    if stored_count > 0 and sign_count > 0 and sign_count <= stored_count:
+                        return None
+                    new_sign_count = sign_count
+                elif expected_rp_id or require_user_verification:
+                    return None
+
                 signed_bytes = auth_data + hashlib.sha256(client_json).digest()
             else:
                 signed_bytes = challenge.encode("ascii")
@@ -333,6 +534,14 @@ class StepUpAuthenticator:
                 pub.verify(sig, signed_bytes, ec.ECDSA(hashes.SHA256()))
         except (InvalidSignature, ValueError, TypeError, KeyError):
             return None
+
+        if new_sign_count is not None and new_sign_count > int(cred.get("sign_count", 0)):
+            with self._lock:
+                data = self._load()
+                stored = data["operators"].get(operator_id, {}).get("passkeys", {}).get(credential_id)
+                if isinstance(stored, dict):
+                    stored["sign_count"] = new_sign_count
+                    self._save(data)
 
         method = "device_key" if cred.get("algorithm") == "ED25519" and "shortcut" in cred.get("label", "").lower() else "passkey"
         return self.issue_step_up_token(operator_id, auth_method=method, scope=scope, now=now)
