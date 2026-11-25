@@ -325,3 +325,50 @@ curl -X POST http://127.0.0.1:8500/api/policy/resume \
   -d '{"operator_id": "admin", "totp_code": "123456"}'
 ```
 
+---
+
+### Example E: Local-Only TOTP Second-Factor Recovery
+If an operator loses their authenticator app, TOTP recovery is intentionally **never** exposed over HTTP. Run the local-only CLI directly on the host holding `step_up_credentials.json`:
+
+```bash
+# List enrolled operators and factor counts (never prints secrets)
+ecosystem totp-recover --list
+
+# Remove the lost TOTP factor (preserves passkeys and device keys)
+ecosystem totp-recover admin --yes
+# Then re-enroll a new authenticator app from the dashboard on loopback.
+```
+
+---
+
+### Example F: Invoking `scan.request` with `ECOSYSTEM_PHONE_SCAN_BASE`
+Configure `ECOSYSTEM_PHONE_SCAN_BASE` in the registry service's environment (for example in the LaunchAgent plist / systemd unit or `.env` used by `ecosystem start`) and restart the registry so the running daemon picks up the allowlist:
+
+```bash
+# Set ECOSYSTEM_PHONE_SCAN_BASE in your service environment, then restart:
+ecosystem restart
+
+# 1. List allowed backup folders visible to Cyber Command / hub UI
+curl -s http://127.0.0.1:8500/scans/phone-folders | jq .
+```
+
+```python
+# 2. Submit a signed scan.request command through the hub
+import httpx
+from ecosystem_auth.tokens import get_ecosystem_secret, sign_request
+
+url = "http://127.0.0.1:8500/commands"
+payload = {
+    "capability": "scan.request",
+    "target": {"scope": "backup", "identifier": "iphone-backup-01"},
+    "parameters": {"phone_folder": "iphone-backup-01", "profile": "quick"},
+    "rationale": "Owner-requested offline backup inspection",
+}
+headers = sign_request("POST", url, get_ecosystem_secret(), payload)
+resp = httpx.post(url, json=payload, headers=headers, timeout=30.0)
+print(resp.json())
+```
+
+Folders outside `ECOSYSTEM_PHONE_SCAN_BASE` (including symlink escapes) are refused fail-closed before Zero Breach Toolkit starts, and only redacted `share.json` summaries are published on the mesh bus.
+
+

@@ -91,6 +91,8 @@ ecosystem scan status <scan_id>      # View high-level scan findings and report 
 # Control Plane & Approvals
 ecosystem approval list              # List pending policy approval checkpoints
 ecosystem approval decide <id> allow # Approve a checkpoint (prompts for step-up TOTP)
+ecosystem totp-recover --list        # Inspect enrolled step-up operators (local-only)
+ecosystem totp-recover <op> --yes    # Reset a lost TOTP factor locally and re-enroll
 ```
 
 The HIG Control Plane dashboard is served locally at:
@@ -135,6 +137,13 @@ The HIG Control Plane dashboard is served locally at:
 1. **Hardware Profiling (`model-forge`)**: Host hardware (Apple Silicon Metal / NVIDIA CUDA / CPU) is profiled (`model-forge recommend`) to select an appropriate parameter and quantization tier (`T0_MINIMAL` to `T3_HIGH_END`).
 2. **Model Distillation & Packaging**: Abliterates refusal vectors and compiles optimized GGUF Modelfiles signed with Ed25519 publisher keys.
 3. **Local Serving (`AI-for-Survival` & `cyber-agents`)**: Runtimes serve the packaged model locally via Ollama with zero cloud leakage.
+
+### Scenario 5: Shared Action Loop & Cross-App Action Flows
+1. **AI-for-Survival Cyber Command**: Blue Team intents (*Mitigate network issue*, *Contain threat*, *Scan device/backup*) and Red Team *Authorised assessment* (gated behind an active Ed25519-signed Restrictions-Off grant) execute through the shared `run_action_loop` (`ecosystem_hub.action_loop`) with two-gate `PolicyEngine` checks, inline step approvals, and fail-closed target validation.
+2. **AegisSIEM + cyber-agents Automated Triage**: High/critical threats invoke `security.triage_threat`, redact PII/PHI/PCI fields before LLM or storage handoff, auto-contain disruptive critical threats with capped provisional TTLs and rollback, hold non-disruptive threats for operator approval, and export SHA-256 chain-of-custody NIST SP 800-61 authority handoff profiles.
+3. **Zero Breach Toolkit (`scan.request`)**: Registered as a hub capability (`investigate`) enforcing recorded AUP consent, Freeze-first checks, operator `authorization_ref`, and fail-closed `ECOSYSTEM_PHONE_SCAN_BASE` folder allowlists (`GET /scans/phone-folders`) with zero host paths published on the bus.
+4. **OpenEye Presence Automations**: Owner-defined rules support zone access restriction (`access.restrict_zone` / `access.release_zone` with hard life-safety/egress door protection, TTL expiry, and one-tap operator release), consent- and approval-gated presence scans (`scan.request`), and identity-driven infrastructure controls (`infrastructure.control`).
+5. **MagicMirror Federated Notifications**: Polls hub `/notifications/recent` with severity filtering, response-local and persistent deduplication, per-app unread badges (`AFS · 2`, `AegisSIEM · 1`), and HTML-escaped `SHOW_ALERT` escalation for `critical` alerts.
 
 ---
 
