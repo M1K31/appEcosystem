@@ -172,6 +172,13 @@ async def run_due_scans(
     return [r.to_dict() for r in results]
 
 
+@router.get("/extensions")
+async def list_scan_extensions(runner=Depends(get_scan_runner)):
+    """List registered pluggable ZBT scanner extensions (ECO-04)."""
+    reg = getattr(runner, "extension_registry", None)
+    return {"extensions": reg.list_extensions() if reg is not None else []}
+
+
 @router.get("/{scan_id}")
 async def get_scan_summary(
     scan_id: str,
