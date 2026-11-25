@@ -162,6 +162,12 @@ async def lifespan(app: FastAPI):
     except ValueError as exc:
         raise ValueError(f"ECOSYSTEM_COMPACT_INTERVAL_SECONDS must be an integer, got {raw_compact_interval!r}") from exc
 
+    raw_vram_interval = os.environ.get("ECOSYSTEM_VRAM_MONITOR_INTERVAL", "15")
+    try:
+        vram_interval = float(raw_vram_interval)
+    except ValueError as exc:
+        raise ValueError(f"ECOSYSTEM_VRAM_MONITOR_INTERVAL must be a number, got {raw_vram_interval!r}") from exc
+
     raw_port = os.environ.get("ECOSYSTEM_PORT")
     if raw_port is not None:
         registry_port = int(raw_port)
@@ -281,6 +287,35 @@ async def lifespan(app: FastAPI):
     # ECO-03: Start periodic SQLite WAL compaction & offline event log archival
     await compaction_scheduler.start()
 
+    # ECO-05: Dynamic VRAM quantization down-shifting monitor
+    from ecosystem_ai.vram_monitor import VramQuantizationMonitor, extract_model_quantization
+
+    async def _on_vram_shift(ev):
+        if event_bus is None:
+            return False
+        from events.schemas import EventEnvelope
+
+        result = await event_bus.publish(
+            EventEnvelope(
+                type=f"ai.quantization.{ev.action}",
+                source="ecosystem_registry",
+                data=ev.to_dict(),
+            )
+        )
+        if isinstance(result, dict) and result.get("delivered", 0) <= 0:
+            return False
+        return True
+
+    current_model = str((ai_profile_store.get() or {}).get("selected_model") or "auto")
+    baseline_quant = extract_model_quantization(current_model, default="Q8_0") or "Q8_0"
+    vram_monitor = VramQuantizationMonitor(
+        baseline_quant=baseline_quant,
+        interval_seconds=vram_interval,
+        model_name=current_model,
+        on_shift=_on_vram_shift,
+    )
+    await vram_monitor.start()
+
     # Stash on app.state so request handlers resolve them via dependencies
     # rather than module globals (which could be None before startup).
     app.state.registry = registry
@@ -300,10 +335,12 @@ async def lifespan(app: FastAPI):
     app.state.pairing_manager = pairing_manager
     app.state.discovery = discovery
     app.state.storage_compactor = storage_compactor
+    app.state.vram_monitor = vram_monitor
 
     logger.info("Ecosystem registry started")
     yield
 
+    await vram_monitor.stop()
     await compaction_scheduler.stop()
     await discovery.stop()
     await scan_scheduler.stop()
@@ -543,6 +580,18 @@ async def metrics_endpoint(request: Request):
     return PlainTextResponse(metrics.render_prometheus(reg))
 
 
+@app.get("/ai-profile/memory-pressure")
+async def get_ai_memory_pressure(
+    request: Request,
+    _auth: Optional[dict] = Depends(require_read_auth),
+):
+    """Return real-time VRAM/memory headroom and dynamic quantization state (ECO-05)."""
+    mon = getattr(request.app.state, "vram_monitor", None)
+    if mon is None:
+        raise HTTPException(status_code=503, detail="VRAM monitor not initialized")
+    return mon.status()
+
+
 @app.get("/ai-profile")
 async def get_ai_profile(
     store=Depends(get_profile_store),
@@ -583,6 +632,11 @@ async def update_ai_profile(
         )
     updated_by = (auth or {}).get("app_id") or "unknown"
     profile = store.update(changes, updated_by=updated_by)
+
+    if "selected_model" in changes:
+        vram_monitor = getattr(request.app.state, "vram_monitor", None)
+        if vram_monitor is not None:
+            vram_monitor.configure_model(str(profile.get("selected_model") or "auto"))
 
     event_bus = getattr(request.app.state, "event_bus", None)
     if event_bus:
