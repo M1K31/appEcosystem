@@ -154,6 +154,19 @@ async def revoke_paired_node(
 ):
     _validate_step_up_fields(payload)
     _resolve_step_up_claims(step_up, payload, request)
-    if not mgr.revoke_node(node_id):
+    removed = mgr.revoke_node_details(node_id)
+    if removed is None:
         raise HTTPException(status_code=404, detail="Paired node not found")
-    return {"node_id": node_id, "status": "revoked"}
+    was_claimed = bool(removed.get("claimed_at"))
+    return {
+        "node_id": node_id,
+        "status": "revoked",
+        "pin_removed": True,
+        "secret_rotation_required": was_claimed,
+        "note": (
+            "Node already claimed the shared ecosystem HMAC secret; rotate it "
+            "(`ecosystem secret generate`) and re-pair remaining trusted nodes."
+            if was_claimed
+            else "Node pin removed and unclaimed pairing bundle invalidated before secret delivery."
+        ),
+    }

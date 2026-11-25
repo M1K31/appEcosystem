@@ -252,21 +252,27 @@ class StepUpAuthenticator:
 
     @staticmethod
     def _is_allowed_webauthn_origin(origin: str, expected_origin: str | None = None) -> bool:
-        """WebAuthn is permitted only on https:// origins or loopback http://localhost / 127.0.0.1."""
+        """WebAuthn is permitted only on expected_origin (if set) or loopback origins."""
         from urllib.parse import urlparse
 
         raw = str(origin or "").strip().rstrip("/")
         if not raw:
             return False
         if expected_origin:
-            return raw == str(expected_origin).strip().rstrip("/")
+            exp = str(expected_origin).strip().rstrip("/")
+            try:
+                parsed = urlparse(exp)
+            except Exception:
+                return False
+            is_valid_scheme = parsed.scheme == "https" or (
+                parsed.scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1", "::1")
+            )
+            return is_valid_scheme and raw == exp
         try:
             parsed = urlparse(raw)
         except Exception:
             return False
-        if parsed.scheme == "https" and bool(parsed.hostname):
-            return True
-        if parsed.scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1", "::1"):
+        if parsed.scheme in ("http", "https") and parsed.hostname in ("localhost", "127.0.0.1", "::1"):
             return True
         return False
 
@@ -290,14 +296,20 @@ class StepUpAuthenticator:
                     format=serialization.PublicFormat.Raw,
                 )
                 return base64.urlsafe_b64encode(raw_bytes).decode("ascii").rstrip("="), "ED25519"
-            if isinstance(pub, ec.EllipticCurvePublicKey):
+            if isinstance(pub, ec.EllipticCurvePublicKey) and isinstance(pub.curve, ec.SECP256R1):
                 pem = pub.public_bytes(
                     encoding=serialization.Encoding.PEM,
                     format=serialization.PublicFormat.SubjectPublicKeyInfo,
                 ).decode("ascii")
                 return pem.strip(), "ES256"
             raise ValueError("Unsupported WebAuthn public key type (expected P-256 ES256 or Ed25519)")
-        return public_key_pem_or_b64.strip(), algorithm.upper()
+        cleaned = public_key_pem_or_b64.strip()
+        alg = algorithm.upper()
+        if cleaned and alg == "ES256":
+            pub = serialization.load_pem_public_key(cleaned.encode("utf-8"))
+            if not (isinstance(pub, ec.EllipticCurvePublicKey) and isinstance(pub.curve, ec.SECP256R1)):
+                raise ValueError("ES256 passkey requires a P-256 (SECP256R1) EC public key")
+        return cleaned, alg
 
     def register_passkey(
         self,
@@ -310,6 +322,7 @@ class StepUpAuthenticator:
         public_key_spki_b64: str | None = None,
         rp_id: str = "localhost",
         transports: list[str] | None = None,
+        registration_challenge: str | None = None,
     ) -> dict[str, Any]:
         """Register a WebAuthn Passkey (ES256 P-256 PEM/SPKI or Ed25519) or iOS Shortcut device key."""
         stored_key, resolved_alg = self._normalize_passkey_public_key(
@@ -319,7 +332,17 @@ class StepUpAuthenticator:
         )
         if not stored_key:
             raise ValueError("A valid public key (PEM, raw Ed25519 b64, or SPKI DER b64url) is required")
+        now = time.time()
         with self._lock:
+            if registration_challenge is not None:
+                ch = self._challenges.pop(registration_challenge, None)
+                if (
+                    not ch
+                    or ch.get("operator_id") != operator_id
+                    or ch.get("purpose") != "registration"
+                    or ch.get("expires_at", 0) < now
+                ):
+                    raise ValueError("Invalid or expired registration challenge")
             data = self._load()
             op = data["operators"].setdefault(operator_id, {"passkeys": {}, "device_keys": {}})
             rec = {
@@ -330,7 +353,7 @@ class StepUpAuthenticator:
                 "rp_id": str(rp_id or "localhost").strip(),
                 "transports": list(transports or []),
                 "sign_count": 0,
-                "registered_at": time.time(),
+                "registered_at": now,
             }
             op.setdefault("passkeys", {})[credential_id] = rec
             self._save(data)
@@ -471,7 +494,12 @@ class StepUpAuthenticator:
         now = time.time()
         with self._lock:
             ch = self._challenges.pop(challenge, None)
-            if not ch or ch["operator_id"] != operator_id or ch["expires_at"] < now:
+            if (
+                not ch
+                or ch["operator_id"] != operator_id
+                or ch["expires_at"] < now
+                or ch.get("purpose", "authentication") != "authentication"
+            ):
                 return None
             op = self._load()["operators"].get(operator_id, {})
             cred = op.get("passkeys", {}).get(credential_id)
@@ -481,42 +509,45 @@ class StepUpAuthenticator:
         new_sign_count: int | None = None
         try:
             sig = base64.urlsafe_b64decode(signature_b64.strip().encode("ascii") + b"===")
-            if authenticator_data_b64 and client_data_json_b64:
+            has_webauthn_fields = bool(authenticator_data_b64 and client_data_json_b64)
+            if not has_webauthn_fields and (
+                require_user_verification
+                or expected_origin is not None
+                or expected_rp_id is not None
+                or authenticator_data_b64
+                or client_data_json_b64
+            ):
+                return None
+
+            if has_webauthn_fields:
                 auth_data = base64.urlsafe_b64decode(authenticator_data_b64.encode("ascii") + b"===")
                 client_json = base64.urlsafe_b64decode(client_data_json_b64.encode("ascii") + b"===")
+                if len(auth_data) < 37:
+                    return None
                 parsed_client = json.loads(client_json.decode("utf-8"))
                 if parsed_client.get("challenge") != challenge:
                     return None
-                ctype = parsed_client.get("type")
-                if ctype is not None and ctype != "webauthn.get":
+                if parsed_client.get("type") != "webauthn.get":
                     return None
                 origin = parsed_client.get("origin")
-                if origin is not None or expected_origin is not None:
-                    if not self._is_allowed_webauthn_origin(str(origin or ""), expected_origin):
-                        return None
-
-                if len(auth_data) >= 37:
-                    rp_id_hash = auth_data[:32]
-                    flags = auth_data[32]
-                    sign_count = struct.unpack(">I", auth_data[33:37])[0]
-                    rp_to_check = expected_rp_id or ch.get("rp_id")
-                    if rp_to_check:
-                        expected_hash = hashlib.sha256(str(rp_to_check).encode("utf-8")).digest()
-                        if not hmac.compare_digest(rp_id_hash, expected_hash):
-                            return None
-                    # User Present (UP, bit 0x01) is required on full authenticatorData
-                    if not (flags & 0x01):
-                        return None
-                    # User Verified (UV, bit 0x04) when requested
-                    if require_user_verification and not (flags & 0x04):
-                        return None
-                    stored_count = int(cred.get("sign_count", 0))
-                    if stored_count > 0 and sign_count > 0 and sign_count <= stored_count:
-                        return None
-                    new_sign_count = sign_count
-                elif expected_rp_id or require_user_verification:
+                if not self._is_allowed_webauthn_origin(str(origin or ""), expected_origin):
                     return None
 
+                rp_id_hash = auth_data[:32]
+                flags = auth_data[32]
+                sign_count = struct.unpack(">I", auth_data[33:37])[0]
+                rp_to_check = expected_rp_id or ch.get("rp_id")
+                if rp_to_check:
+                    expected_hash = hashlib.sha256(str(rp_to_check).encode("utf-8")).digest()
+                    if not hmac.compare_digest(rp_id_hash, expected_hash):
+                        return None
+                # User Present (UP, bit 0x01) is required on full authenticatorData
+                if not (flags & 0x01):
+                    return None
+                # User Verified (UV, bit 0x04) when requested
+                if require_user_verification and not (flags & 0x04):
+                    return None
+                new_sign_count = sign_count
                 signed_bytes = auth_data + hashlib.sha256(client_json).digest()
             else:
                 signed_bytes = challenge.encode("ascii")
@@ -535,11 +566,16 @@ class StepUpAuthenticator:
         except (InvalidSignature, ValueError, TypeError, KeyError):
             return None
 
-        if new_sign_count is not None and new_sign_count > int(cred.get("sign_count", 0)):
+        if new_sign_count is not None:
             with self._lock:
                 data = self._load()
                 stored = data["operators"].get(operator_id, {}).get("passkeys", {}).get(credential_id)
-                if isinstance(stored, dict):
+                if not isinstance(stored, dict):
+                    return None
+                latest_count = int(stored.get("sign_count", 0))
+                if (latest_count > 0 or new_sign_count > 0) and new_sign_count <= latest_count:
+                    return None
+                if new_sign_count > latest_count:
                     stored["sign_count"] = new_sign_count
                     self._save(data)
 

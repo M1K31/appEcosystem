@@ -316,8 +316,8 @@ class NodePairingManager:
         """Interactively pin the node's ECDSA public key and encrypt the shared secret for it."""
         if not secret_value:
             raise ValueError("Hub ecosystem secret is unavailable; cannot complete pairing")
-        if not expected_sas and not expected_fingerprint:
-            raise ValueError("Interactive verification requires expected_sas or expected_fingerprint")
+        if not expected_fingerprint:
+            raise ValueError("Interactive pinning requires expected_fingerprint (full SHA-256 public key fingerprint)")
 
         if expected_sas is not None:
             sas_str = str(expected_sas).strip()
@@ -325,12 +325,9 @@ class NodePairingManager:
                 raise ValueError("expected_sas must be a 6-digit ASCII string")
         else:
             sas_str = None
-        if expected_fingerprint is not None:
-            fp_str = str(expected_fingerprint).strip().lower()
-            if not fp_str.isascii() or not fp_str.startswith("sha256:"):
-                raise ValueError("expected_fingerprint must be an ASCII sha256:... string")
-        else:
-            fp_str = None
+        fp_str = str(expected_fingerprint).strip().lower()
+        if not fp_str.isascii() or not fp_str.startswith("sha256:"):
+            raise ValueError("expected_fingerprint must be an ASCII sha256:... string")
 
         ts = time.time() if now is None else now
         with self._lock:
@@ -342,13 +339,23 @@ class NodePairingManager:
                 # Single-attempt SAS: invalidate immediately on mismatch to prevent brute force
                 self._pending.pop(pairing_id, None)
                 raise PermissionError("SAS code mismatch — pairing request invalidated (possible MITM)")
-            if fp_str is not None and not hmac.compare_digest(fp_str, rec["node_fingerprint"].lower()):
+            if not hmac.compare_digest(fp_str, rec["node_fingerprint"].lower()):
                 self._pending.pop(pairing_id, None)
                 raise PermissionError("Public key fingerprint mismatch — pairing request invalidated (possible MITM)")
 
-            # Persist the pin FIRST before making the encrypted bundle claimable
+            # Encrypt the bundle FIRST so any crypto error leaves the pin store untouched
+            bundle = encrypt_paired_secret(
+                self._private_key,
+                rec["public_key_pem"],
+                pairing_id=pairing_id,
+                node_id=rec["node_id"],
+                secret_value=secret_value,
+            )
+
+            # Persist the pin BEFORE making the encrypted bundle claimable
             nodes = self._load_pinned()
-            nodes[rec["node_id"]] = {
+            prev = nodes.get(rec["node_id"]) if isinstance(nodes.get(rec["node_id"]), dict) else {}
+            pin_entry: dict[str, Any] = {
                 "node_id": rec["node_id"],
                 "hostname": rec["hostname"],
                 "roles": list(rec["roles"]),
@@ -357,15 +364,11 @@ class NodePairingManager:
                 "paired_by": approved_by,
                 "paired_at": ts,
             }
+            if prev.get("claimed_at") is not None:
+                pin_entry["claimed_at"] = prev["claimed_at"]
+            nodes[rec["node_id"]] = pin_entry
             self._save_pinned(nodes)
 
-            bundle = encrypt_paired_secret(
-                self._private_key,
-                rec["public_key_pem"],
-                pairing_id=pairing_id,
-                node_id=rec["node_id"],
-                secret_value=secret_value,
-            )
             rec["encrypted_bundle"] = bundle
             rec["status"] = "approved"
             rec["approved_by"] = approved_by
@@ -380,9 +383,13 @@ class NodePairingManager:
             }
 
     def reject_pairing(self, pairing_id: str) -> bool:
+        """Reject a pairing request only while it is still pending (never silently drop an approved pin)."""
         with self._lock:
-            rec = self._pending.pop(pairing_id, None)
-            return rec is not None
+            rec = self._pending.get(pairing_id)
+            if not rec or rec.get("status") != "pending":
+                return False
+            self._pending.pop(pairing_id, None)
+            return True
 
     def claim_pairing(
         self,
@@ -413,6 +420,13 @@ class NodePairingManager:
             except (InvalidSignature, ValueError, TypeError) as exc:
                 raise PermissionError("Invalid ECDSA proof-of-possession signature") from exc
 
+            # Persist claimed_at BEFORE consuming the approved request so a write failure
+            # does not lose the one-time bundle without recording delivery.
+            nodes = self._load_pinned()
+            if rec["node_id"] in nodes:
+                nodes[rec["node_id"]]["claimed_at"] = ts
+                self._save_pinned(nodes)
+
             bundle = dict(rec["encrypted_bundle"])
             rec["encrypted_bundle"] = None
             rec["claimed"] = True
@@ -433,14 +447,18 @@ class NodePairingManager:
             nodes = self._load_pinned()
             return [dict(nodes[nid]) for nid in sorted(nodes.keys())]
 
-    def revoke_node(self, node_id: str) -> bool:
+    def revoke_node_details(self, node_id: str) -> dict[str, Any] | None:
+        """Revoke a pinned node, invalidate unclaimed bundles, and return the removed record (or None)."""
         nid = str(node_id).strip()
         with self._lock:
             nodes = self._load_pinned()
-            removed = nodes.pop(nid, None) is not None
-            if removed:
+            removed_rec = nodes.pop(nid, None)
+            if removed_rec is not None:
                 self._save_pinned(nodes)
             # Invalidate any unclaimed approvals/requests for this node
             for pid in [k for k, r in self._pending.items() if r.get("node_id") == nid]:
                 self._pending.pop(pid, None)
-            return removed
+            return dict(removed_rec) if isinstance(removed_rec, dict) else None
+
+    def revoke_node(self, node_id: str) -> bool:
+        return self.revoke_node_details(node_id) is not None
