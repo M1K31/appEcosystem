@@ -973,7 +973,7 @@ CONTROL_PLANE_HTML = """<!DOCTYPE html>
         fetch("/services"),
         fetch("/policy/devices")
       ]);
-      const modalOpen = modal.hasAttribute("open") && modal.getAttribute("open") !== "false";
+      const isModalOpen = () => modal.hasAttribute("open") && modal.getAttribute("open") !== "false";
       if (pRes.ok) {
         bar.policyState = await pRes.json();
       }
@@ -1032,7 +1032,7 @@ CONTROL_PLANE_HTML = """<!DOCTYPE html>
       }
       if (sRes.ok) {
         const services = await sRes.json();
-        if (!modalOpen) {
+        if (!isModalOpen()) {
           modal.availableApps = services.map((s) => s.name);
         }
         const box = document.getElementById("servicesList");
@@ -1053,7 +1053,7 @@ CONTROL_PLANE_HTML = """<!DOCTYPE html>
           box.appendChild(row);
         }
       }
-      if (dRes && dRes.ok && !modalOpen) {
+      if (dRes && dRes.ok) {
         const { devices = [] } = await dRes.json();
         const ids = ["local-device"];
         for (const dev of devices) {
@@ -1061,7 +1061,9 @@ CONTROL_PLANE_HTML = """<!DOCTYPE html>
             ids.push(dev.device_id);
           }
         }
-        modal.availableDevices = ids;
+        if (!isModalOpen()) {
+          modal.availableDevices = ids;
+        }
       }
     }
 
