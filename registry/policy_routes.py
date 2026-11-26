@@ -966,12 +966,14 @@ CONTROL_PLANE_HTML = """<!DOCTYPE html>
     }
 
     async function refreshAll() {
-      const [pRes, aRes, cRes, sRes] = await Promise.all([
+      const [pRes, aRes, cRes, sRes, dRes] = await Promise.all([
         fetch("/policy/state"),
         fetch("/approvals?status=pending"),
         fetch("/capabilities?active_only=false"),
-        fetch("/services")
+        fetch("/services"),
+        fetch("/policy/devices")
       ]);
+      const modalOpen = modal.hasAttribute("open") && modal.getAttribute("open") !== "false";
       if (pRes.ok) {
         bar.policyState = await pRes.json();
       }
@@ -1030,7 +1032,9 @@ CONTROL_PLANE_HTML = """<!DOCTYPE html>
       }
       if (sRes.ok) {
         const services = await sRes.json();
-        modal.availableApps = services.map((s) => s.name);
+        if (!modalOpen) {
+          modal.availableApps = services.map((s) => s.name);
+        }
         const box = document.getElementById("servicesList");
         box.innerHTML = services.length === 0
           ? '<span class="item-meta">No services registered.</span>'
@@ -1048,6 +1052,16 @@ CONTROL_PLANE_HTML = """<!DOCTYPE html>
           row.appendChild(left);
           box.appendChild(row);
         }
+      }
+      if (dRes && dRes.ok && !modalOpen) {
+        const { devices = [] } = await dRes.json();
+        const ids = ["local-device"];
+        for (const dev of devices) {
+          if (dev && !dev.revoked && dev.device_id && !ids.includes(dev.device_id)) {
+            ids.push(dev.device_id);
+          }
+        }
+        modal.availableDevices = ids;
       }
     }
 

@@ -510,9 +510,18 @@ function createComponentClasses(BaseElement) {
 
         set availableApps(list) {
             // Accept an empty array so clearing the inventory (discovery returned
-            // no targets) actually clears the modal instead of keeping stale items.
+            // no targets) actually clears the modal instead of keeping stale items,
+            // but skip re-rendering when the list is unchanged so background polling
+            // never disrupts active form input or cursor position.
             if (Array.isArray(list)) {
-                this._availableApps = list.map(String);
+                const next = list.map(String);
+                if (
+                    next.length === this._availableApps.length &&
+                    next.every((val, i) => val === this._availableApps[i])
+                ) {
+                    return;
+                }
+                this._availableApps = next;
                 this.render();
             }
         }
@@ -523,7 +532,14 @@ function createComponentClasses(BaseElement) {
 
         set availableDevices(list) {
             if (Array.isArray(list)) {
-                this._availableDevices = list.map(String);
+                const next = list.map(String);
+                if (
+                    next.length === this._availableDevices.length &&
+                    next.every((val, i) => val === this._availableDevices[i])
+                ) {
+                    return;
+                }
+                this._availableDevices = next;
                 this.render();
             }
         }
