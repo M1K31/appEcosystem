@@ -1067,7 +1067,18 @@ CONTROL_PLANE_HTML = """<!DOCTYPE html>
       refreshAll();
     }
 
-    bar.addEventListener("ecosystem-manage-restrictions", () => modal.open());
+    bar.addEventListener("ecosystem-manage-restrictions", () => {
+      modal.open();
+      if (cachedStepUpToken && Date.now() / 1000 < cachedStepUpExpiresAt - 10) {
+        modal.setPasskeyAssertion(cachedStepUpToken);
+      }
+    });
+    modal.addEventListener("ecosystem-passkey-request", async () => {
+      const token = await verifyWithPasskey();
+      if (token) {
+        modal.setPasskeyAssertion(token);
+      }
+    });
     // Report success only once the hub has accepted the request: a refused
     // Freeze or Restore must never read as done.
     async function failureDetail(r, fallback) {
@@ -1215,10 +1226,10 @@ CONTROL_PLANE_HTML = """<!DOCTYPE html>
       }
     });
 
-    document.getElementById("btnVerifyPasskey").addEventListener("click", async () => {
+    async function verifyWithPasskey() {
       if (!window.PublicKeyCredential || !navigator.credentials) {
         showToast("WebAuthn Passkeys require a supported browser on localhost or HTTPS");
-        return;
+        return null;
       }
       try {
         const optRes = await fetch("/auth/step-up/passkey/authenticate/options", {
@@ -1229,7 +1240,7 @@ CONTROL_PLANE_HTML = """<!DOCTYPE html>
         const opts = await optRes.json();
         if (!optRes.ok || !(opts.allowCredentials || []).length) {
           showToast("No Passkey enrolled yet — click Setup Passkey first");
-          return;
+          return null;
         }
         const assertion = await navigator.credentials.get({
           publicKey: {
@@ -1256,15 +1267,19 @@ CONTROL_PLANE_HTML = """<!DOCTYPE html>
         const verData = await verRes.json();
         if (!verRes.ok) {
           showToast(verData.detail || "Passkey verification failed");
-          return;
+          return null;
         }
         cachedStepUpToken = verData.step_up_token;
         cachedStepUpExpiresAt = verData.expires_at;
         showToast("Passkey verified — 5-minute step-up session active");
+        return cachedStepUpToken;
       } catch (err) {
         showToast("Passkey verification cancelled or failed: " + (err && err.message ? err.message : String(err)));
+        return null;
       }
-    });
+    }
+
+    document.getElementById("btnVerifyPasskey").addEventListener("click", verifyWithPasskey);
 
     refreshAll();
     setInterval(refreshAll, 5000);
