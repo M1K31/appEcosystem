@@ -341,12 +341,26 @@ class CommandDispatcher:
         try:
             from ecosystem_policy.models import ActionRequest
 
+            enrolled_ids = {
+                str(d["device_id"])
+                for d in (
+                    self._engine.list_enrolled_devices()
+                    if hasattr(self._engine, "list_enrolled_devices")
+                    else []
+                )
+                if not d.get("revoked") and d.get("device_id")
+            }
             return self._engine.decide(
                 ActionRequest(
                     actor=actor_string(actor),
                     action=policy_action(record["capability"], action_class),
                     action_class=action_class,
-                    target=policy_target(record["target"], action_class, record["parameters"]),
+                    target=policy_target(
+                        record["target"],
+                        action_class,
+                        record["parameters"],
+                        known_device_ids=enrolled_ids,
+                    ),
                     context=ctx,
                     rationale=str(record.get("rationale") or ""),
                     authenticated=True,
