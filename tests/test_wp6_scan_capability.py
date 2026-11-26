@@ -231,3 +231,36 @@ def test_capability_manifest_valid_and_approved_scan_executes(tmp_path: Path, mo
     assert approved["result"]["status"] == "clean"
     assert len(notifier.envelopes) == 1
     assert notifier.envelopes[0]["severity"] == "low"
+
+
+def test_policy_target_recognizes_enrolled_device_but_stays_fail_closed():
+    from ecosystem_hub.command_common import policy_target
+
+    # Enrolled device with scope="device" is treated as internal and sets device_id
+    t_ok = policy_target(
+        {"scope": "device", "identifier": "macmini-test-1"},
+        "investigate",
+        {"target_device": "macmini-test-1", "profile": "quick"},
+        known_device_ids={"macmini-test-1"},
+    )
+    assert t_ok["device_id"] == "macmini-test-1"
+    assert not t_ok.get("is_external")
+
+    # Unknown/unenrolled device ID stays fail-closed (external)
+    t_unknown = policy_target(
+        {"scope": "device", "identifier": "unknown-host"},
+        "investigate",
+        {"target_device": "unknown-host"},
+        known_device_ids={"macmini-test-1"},
+    )
+    assert t_unknown.get("is_external") is True
+
+    # Enrolled device smuggling an external IP in parameters stays fail-closed
+    t_smuggle = policy_target(
+        {"scope": "device", "identifier": "macmini-test-1"},
+        "investigate",
+        {"target_device": "macmini-test-1", "host": "8.8.8.8"},
+        known_device_ids={"macmini-test-1"},
+    )
+    assert t_smuggle.get("is_external") is True
+    assert t_smuggle.get("host") == "8.8.8.8"

@@ -5,7 +5,7 @@ import hashlib
 import ipaddress
 import json
 import re
-from typing import Any
+from typing import Any, Collection
 from urllib.parse import urlsplit
 
 FINAL_STATUSES = frozenset({"completed", "denied", "failed", "provider_unavailable"})
@@ -184,6 +184,8 @@ def policy_target(
     target: dict[str, Any],
     action_class: str,
     parameters: dict[str, Any] | None = None,
+    *,
+    known_device_ids: Collection[str] | None = None,
 ) -> dict[str, Any]:
     """Translate a CommandEnvelope target into the target the PolicyEngine evaluates.
 
@@ -194,19 +196,29 @@ def policy_target(
     identifier, no device id, nothing in the parameters) is external too —
     what it would touch cannot be shown to be the owner's.
 
-    The engine authorises an external target by its single `host`. When a
-    request names more than one distinct external subject, `host` is None, so
-    authorising one of them never covers another: the engine then allows only
-    passive actions.
+    When ``target.scope == "device"`` and ``target.identifier`` matches an
+    enrolled (non-revoked) device ID in ``known_device_ids``, ``device_id`` is
+    populated and the identifier is treated as an internal enrolled device
+    (still subject to PolicyEngine AUP consent and approval gates); any
+    parameters naming external hosts/IPs are still flagged as external.
     """
     target = target or {}
     out = {k: target[k] for k in ("scope", "device_id", "service", "identifier") if target.get(k) is not None}
     identifier = target.get("identifier")
+    if target.get("scope") == "device" and isinstance(identifier, str) and identifier and not out.get("device_id"):
+        out["device_id"] = identifier
+    enrolled_device = (
+        target.get("scope") == "device"
+        and isinstance(identifier, str)
+        and bool(known_device_ids)
+        and identifier in known_device_ids
+    )
     externals: list[Any] = []
     external = target.get("scope") == "external"
     if action_class in TOUCHES_SUBJECT:
         named = _subject_values(parameters)
-        candidates = ([identifier] if identifier not in (None, "") else []) + named
+        id_candidates = [] if (identifier in (None, "") or enrolled_device) else [identifier]
+        candidates = id_candidates + named
         externals = [v for v in candidates if not is_internal_subject(v)]
         if externals:
             external = True
