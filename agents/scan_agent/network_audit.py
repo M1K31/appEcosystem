@@ -330,6 +330,17 @@ def _is_frozen(policy_engine: Any) -> bool:
         return True
 
 
+def _find_nmap_binary() -> str | None:
+    """Locate nmap on PATH or standard Homebrew/system install paths (for LaunchAgents)."""
+    found = shutil.which("nmap")
+    if found:
+        return found
+    for candidate in ("/opt/homebrew/bin/nmap", "/usr/local/bin/nmap", "/usr/bin/nmap"):
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
 async def run_network_audit(
     target_ip: str,
     *,
@@ -371,7 +382,7 @@ async def run_network_audit(
             error_message=str(exc),
         )
 
-    exe = nmap_bin or shutil.which("nmap")
+    exe = nmap_bin or _find_nmap_binary()
     if not exe:
         return NetworkAuditResult(
             audit_id=audit_id,
