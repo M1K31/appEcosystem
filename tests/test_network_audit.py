@@ -72,10 +72,12 @@ def test_validate_lan_ip_fail_closed():
 
 
 def test_parse_nmap_xml_and_xxe_rejection():
-    state, ports = parse_nmap_xml(SAMPLE_NMAP_XML)
+    state, reason, ports, counts = parse_nmap_xml(SAMPLE_NMAP_XML)
     assert state == "up"
+    assert reason == "arp-response"
     assert [p.port for p in ports] == [22, 445, 5900]
     assert ports[0].product == "OpenSSH"
+    assert counts["closed"] == 1
 
     with pytest.raises(ValueError, match="ENTITY"):
         parse_nmap_xml('<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe "bad">]><nmaprun/>')
@@ -96,7 +98,14 @@ def test_run_network_audit_findings_and_policy_freeze(tmp_path: Path):
     )
     assert res.status == "findings"
     assert res.host_state == "up"
-    assert res.summary == {"open_port_count": 3, "high_count": 1, "medium_count": 1, "low_count": 1}
+    assert res.summary == {
+        "open_port_count": 3,
+        "closed_port_count": 1,
+        "filtered_port_count": 0,
+        "high_count": 1,
+        "medium_count": 1,
+        "low_count": 1,
+    }
     assert res.mac_address == "5e:a7:49:18:14:8b"
 
     # Public IP is refused fail-closed before nmap runs
@@ -136,3 +145,57 @@ def test_network_audit_handler_and_capability_manifest(tmp_path: Path):
     assert out["result"]["summary"]["high_count"] == 1
     assert len(published) == 1
     assert published[0].type == "scan.network_audit.completed"
+
+
+def test_all_filtered_pn_host_is_unreachable_not_clean_and_mid_scan_freeze(tmp_path: Path):
+    all_filtered_xml = """<?xml version="1.0"?>
+<nmaprun scanner="nmap">
+  <host>
+    <status state="up" reason="user-set"/>
+    <ports>
+      <extraports state="filtered" count="100"/>
+    </ports>
+  </host>
+</nmaprun>
+"""
+    fake_filtered = _make_fake_nmap(tmp_path / "f1", xml_body=all_filtered_xml) if False else None
+    (tmp_path / "f1").mkdir()
+    fake_filtered = _make_fake_nmap(tmp_path / "f1", xml_body=all_filtered_xml)
+    res_unreach = asyncio.run(run_network_audit("192.168.50.61", nmap_bin=str(fake_filtered)))
+    assert res_unreach.status == "unreachable"
+    assert res_unreach.summary["filtered_port_count"] == 100
+    assert res_unreach.summary["closed_port_count"] == 0
+
+    all_closed_xml = """<?xml version="1.0"?>
+<nmaprun scanner="nmap">
+  <host>
+    <status state="up" reason="user-set"/>
+    <ports>
+      <extraports state="closed" count="100"/>
+    </ports>
+  </host>
+</nmaprun>
+"""
+    (tmp_path / "f2").mkdir()
+    fake_closed = _make_fake_nmap(tmp_path / "f2", xml_body=all_closed_xml)
+    res_clean = asyncio.run(run_network_audit("192.168.50.61", nmap_bin=str(fake_closed)))
+    assert res_clean.status == "clean"
+    assert res_clean.summary["closed_port_count"] == 100
+
+    # Mid-scan Freeze terminates running nmap subprocess promptly
+    slow_nmap = tmp_path / "slow_nmap.py"
+    slow_nmap.write_text(f"#!{sys.executable}\nimport time\ntime.sleep(30)\n", encoding="utf-8")
+    slow_nmap.chmod(0o755)
+    policy = PolicyEngine(authority="standalone_local", persistence_path=tmp_path / "pol_freeze.json")
+
+    async def _run_and_freeze():
+        task = asyncio.create_task(
+            run_network_audit("192.168.50.61", nmap_bin=str(slow_nmap), policy_engine=policy, timeout_seconds=15.0)
+        )
+        await asyncio.sleep(0.4)
+        policy.freeze(initiated_by="test", channel="test", reason="mid-scan freeze")
+        return await task
+
+    res_frozen = asyncio.run(_run_and_freeze())
+    assert res_frozen.status == "denied"
+    assert "mid-audit" in (res_frozen.error_message or "")

@@ -211,10 +211,11 @@ def assess_service_exposures(ports: list[OpenPort]) -> list[ExposureFinding]:
     return findings
 
 
-def parse_nmap_xml(xml_text: str) -> tuple[str, list[OpenPort]]:
-    """Safely parse nmap XML output into (host_state, open_ports)."""
+def parse_nmap_xml(xml_text: str) -> tuple[str, str, list[OpenPort], dict[str, int]]:
+    """Safely parse nmap XML output into (host_state, host_reason, open_ports, port_counts)."""
+    counts = {"closed": 0, "filtered": 0}
     if not xml_text or not xml_text.strip():
-        return "unknown", []
+        return "unknown", "", [], counts
     # Reject XML DOCTYPE/ENTITY declarations (fail-closed against XXE)
     upper_head = xml_text[:4096].upper()
     if "<!ENTITY" in upper_head:
@@ -224,16 +225,34 @@ def parse_nmap_xml(xml_text: str) -> tuple[str, list[OpenPort]]:
 
     host_el = root.find("host")
     if host_el is None:
-        return "down", []
+        return "down", "", [], counts
     status_el = host_el.find("status")
     host_state = status_el.get("state", "unknown") if status_el is not None else "unknown"
+    host_reason = status_el.get("reason", "") if status_el is not None else ""
 
     ports: list[OpenPort] = []
     ports_el = host_el.find("ports")
     if ports_el is not None:
+        for extra_el in ports_el.findall("extraports"):
+            ex_state = str(extra_el.get("state") or "").lower()
+            try:
+                ex_cnt = int(extra_el.get("count", "0"))
+            except ValueError:
+                ex_cnt = 0
+            if "closed" in ex_state:
+                counts["closed"] += ex_cnt
+            elif "filtered" in ex_state:
+                counts["filtered"] += ex_cnt
         for port_el in ports_el.findall("port"):
             state_el = port_el.find("state")
-            if state_el is None or state_el.get("state") != "open":
+            if state_el is None:
+                continue
+            p_state = str(state_el.get("state") or "").lower()
+            if p_state != "open":
+                if "closed" in p_state:
+                    counts["closed"] += 1
+                elif "filtered" in p_state:
+                    counts["filtered"] += 1
                 continue
             try:
                 port_num = int(port_el.get("portid", "0"))
@@ -256,7 +275,7 @@ def parse_nmap_xml(xml_text: str) -> tuple[str, list[OpenPort]]:
                 )
             )
     ports.sort(key=lambda item: item.port)
-    return host_state, ports
+    return host_state, host_reason, ports, counts
 
 
 async def _read_bounded(stream: asyncio.StreamReader | None, limit: int) -> tuple[bytes, bool]:
@@ -384,28 +403,64 @@ async def run_network_audit(
         )
         stdout_task = asyncio.create_task(_read_bounded(proc.stdout, MAX_STDOUT_BYTES))
         stderr_task = asyncio.create_task(_read_bounded(proc.stderr, MAX_STDERR_BYTES))
+        io_future = asyncio.gather(stdout_task, stderr_task)
+
+        async def _watch_freeze() -> None:
+            while True:
+                if _is_frozen(policy_engine):
+                    return
+                await asyncio.sleep(0.25)
+
+        freeze_task = asyncio.create_task(_watch_freeze()) if policy_engine is not None else None
         try:
-            (out_bytes, out_overflow), (err_bytes, _err_overflow) = await asyncio.wait_for(
-                asyncio.gather(stdout_task, stderr_task),
+            wait_tasks = {io_future}
+            if freeze_task is not None:
+                wait_tasks.add(freeze_task)
+            done, _pending = await asyncio.wait(
+                wait_tasks,
                 timeout=max(5.0, float(timeout_seconds)),
+                return_when=asyncio.FIRST_COMPLETED,
             )
+            if freeze_task is not None and freeze_task in done and io_future not in done:
+                stdout_task.cancel()
+                stderr_task.cancel()
+                io_future.cancel()
+                await _terminate_proc(proc)
+                return NetworkAuditResult(
+                    audit_id=audit_id,
+                    target_ip=canon_ip,
+                    mac_address=clean_mac,
+                    profile=clean_profile,
+                    status="denied",
+                    duration_seconds=round(time.monotonic() - t0, 2),
+                    error_message="Ecosystem Freeze activated mid-audit; scan terminated.",
+                )
+            if io_future not in done:
+                if freeze_task is not None:
+                    freeze_task.cancel()
+                stdout_task.cancel()
+                stderr_task.cancel()
+                io_future.cancel()
+                await _terminate_proc(proc)
+                return NetworkAuditResult(
+                    audit_id=audit_id,
+                    target_ip=canon_ip,
+                    mac_address=clean_mac,
+                    profile=clean_profile,
+                    status="failed",
+                    duration_seconds=round(time.monotonic() - t0, 2),
+                    error_message=f"Network audit timed out after {int(timeout_seconds)}s.",
+                )
+            if freeze_task is not None:
+                freeze_task.cancel()
+            (out_bytes, out_overflow), (err_bytes, _err_overflow) = await io_future
             await asyncio.wait_for(proc.wait(), timeout=5.0)
-        except asyncio.TimeoutError:
-            stdout_task.cancel()
-            stderr_task.cancel()
-            await _terminate_proc(proc)
-            return NetworkAuditResult(
-                audit_id=audit_id,
-                target_ip=canon_ip,
-                mac_address=clean_mac,
-                profile=clean_profile,
-                status="failed",
-                duration_seconds=round(time.monotonic() - t0, 2),
-                error_message=f"Network audit timed out after {int(timeout_seconds)}s.",
-            )
         except asyncio.CancelledError:
+            if freeze_task is not None:
+                freeze_task.cancel()
             stdout_task.cancel()
             stderr_task.cancel()
+            io_future.cancel()
             await _terminate_proc(proc)
             raise
 
@@ -432,15 +487,21 @@ async def run_network_audit(
                 error_message=f"nmap exited with code {proc.returncode}.",
             )
 
-        host_state, open_ports = parse_nmap_xml(out_bytes.decode("utf-8", errors="replace"))
+        host_state, host_reason, open_ports, port_counts = parse_nmap_xml(out_bytes.decode("utf-8", errors="replace"))
         findings = assess_service_exposures(open_ports)
         high_cnt = sum(1 for f in findings if f.severity == "high")
         med_cnt = sum(1 for f in findings if f.severity == "medium")
         low_cnt = sum(1 for f in findings if f.severity == "low")
+        closed_cnt = port_counts.get("closed", 0)
+        filtered_cnt = port_counts.get("filtered", 0)
+
         if host_state == "down":
             res_status = "unreachable"
         elif high_cnt > 0 or med_cnt > 0:
             res_status = "findings"
+        elif len(open_ports) == 0 and closed_cnt == 0 and (filtered_cnt > 0 or host_reason == "user-set"):
+            # With -Pn, an all-filtered/no-response target must never be reported as clean.
+            res_status = "unreachable"
         else:
             res_status = "clean"
 
@@ -455,6 +516,8 @@ async def run_network_audit(
             findings=[f.to_dict() for f in findings],
             summary={
                 "open_port_count": len(open_ports),
+                "closed_port_count": closed_cnt,
+                "filtered_port_count": filtered_cnt,
                 "high_count": high_cnt,
                 "medium_count": med_cnt,
                 "low_count": low_cnt,
